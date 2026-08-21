@@ -1,0 +1,280 @@
+/**
+ * The one authorization function (PRD 18.2 rule 1).
+ * Every route handler calls `can` / `assertCan` before doing anything.
+ * The UI may call `can` to hide controls, but hiding is never the enforcement.
+ *
+ * Sources: permissions matrix 5.1, segregation of duties 5.2, per-endpoint roles in 20.x.
+ */
+import type { ActorConstraint, Role } from "./state-machines/types";
+
+export interface Actor {
+  id: string;
+  festId: string;
+  role: Role;
+  departmentId: string;
+}
+
+/** Everything `can` may need to know about the thing being acted on. */
+export interface Resource {
+  festId?: string;
+  /** The department that owns the resource (a request's dept, a line item's dept). */
+  departmentId?: string;
+  /** Work tickets have two departments. */
+  targetDepartmentId?: string;
+  requestingDepartmentId?: string;
+  /** Whoever created it — the person who may never approve or pay it. */
+  submitterId?: string;
+  requesterId?: string;
+  assigneeId?: string;
+  status?: string;
+  /** For reimbursement approval routing (5.2): the submitter's role. */
+  submitterRole?: Role;
+}
+
+export type Action =
+  // reads
+  | "fest.view" | "fest.settings.view"
+  | "department.view" | "department.budget.view"
+  | "lineItem.view" | "budgetReview.view"
+  | "reimbursement.view" | "vendor.view" | "vendorRequest.view"
+  | "vendor.bankDetails.view"
+  | "income.view" | "ticket.view" | "flag.view" | "audit.view" | "export.run"
+  // writes — budget
+  | "fest.manage" | "department.manage" | "budget.transfer"
+  | "lineItem.create" | "lineItem.edit" | "lineItem.close" | "lineItem.markReviewed"
+  | "lineItem.document.manage"
+  // writes — money
+  | "reimbursement.create" | "reimbursement.edit" | "reimbursement.endorse"
+  | "reimbursement.approve" | "reimbursement.recordPayment" | "reimbursement.hold"
+  | "vendor.manage" | "vendorRequest.create" | "vendorRequest.edit"
+  | "vendorRequest.approve" | "vendorRequest.confirmDelivery" | "vendorRequest.recordPayment"
+  | "income.manage"
+  // writes — everything else
+  | "ticket.create" | "ticket.triage" | "ticket.work" | "ticket.close"
+  | "comment.create" | "flag.resolve" | "user.manage" | "expenseType.manage";
+
+const isFinance = (a: Actor) => a.role === "FINANCE_HOD";
+const isManagement = (a: Actor) => a.role === "MANAGEMENT";
+const isHod = (a: Actor) => a.role === "DEPT_HOD";
+
+/** Finance HOD sees every department; a Dept HOD and Member see only their own. */
+function ownsDepartment(actor: Actor, r: Resource): boolean {
+  return r.departmentId !== undefined && r.departmentId === actor.departmentId;
+}
+
+function sameFest(actor: Actor, r: Resource): boolean {
+  return r.festId === undefined || r.festId === actor.festId;
+}
+
+/** A user is party to a ticket if either department is theirs, or they are assignee/requester. */
+function partyToTicket(actor: Actor, r: Resource): boolean {
+  return (
+    r.targetDepartmentId === actor.departmentId ||
+    r.requestingDepartmentId === actor.departmentId ||
+    r.assigneeId === actor.id ||
+    r.requesterId === actor.id
+  );
+}
+
+export function can(actor: Actor, action: Action, resource: Resource = {}): boolean {
+  // Fest scoping (18.2 rule 10) — no cross-fest access, ever.
+  if (!sameFest(actor, resource)) return false;
+
+  const finance = isFinance(actor);
+  const management = isManagement(actor);
+  const hod = isHod(actor);
+  const own = ownsDepartment(actor, resource);
+
+  switch (action) {
+    /* ---------------------------------------------------------------- reads */
+    case "fest.view":
+      return true;
+    case "fest.settings.view":
+      return finance;
+
+    case "department.view":
+    case "department.budget.view":
+    case "lineItem.view":
+      return finance || management || own;
+
+    case "budgetReview.view":
+      return finance;
+
+    case "reimbursement.view":
+      return finance || management || (hod && own) || resource.submitterId === actor.id;
+
+    case "vendor.view":
+      return finance || management || hod;
+    case "vendor.bankDetails.view":
+      // Full account numbers only for Finance and Management; masked for HODs (20.7).
+      return finance || management;
+    case "vendorRequest.view":
+      return finance || management || (hod && own);
+
+    case "income.view":
+      return finance || management;
+
+    case "ticket.view":
+      return finance || management || partyToTicket(actor, resource);
+
+    case "flag.view":
+      return finance || (hod && own);
+
+    case "audit.view":
+      return finance || management || (hod && own);
+
+    case "export.run":
+      return finance || management || (hod && own);
+
+    /* --------------------------------------------------------------- budget */
+    case "fest.manage":
+    case "department.manage":
+    case "budget.transfer":
+    case "lineItem.markReviewed":
+    case "user.manage":
+    case "expenseType.manage":
+    case "income.manage":
+    case "flag.resolve":
+      return finance;
+
+    case "lineItem.create":
+    case "lineItem.edit":
+    case "lineItem.close":
+    case "lineItem.document.manage":
+      return finance || (hod && own);
+
+    /* ---------------------------------------------------------------- money */
+    case "reimbursement.create":
+      return true; // every role may claim money they personally spent (5.1)
+
+    case "reimbursement.edit":
+      return (
+        resource.submitterId === actor.id &&
+        (resource.status === "DRAFT" || resource.status === "SENT_BACK")
+      );
+
+    case "reimbursement.endorse":
+      // Dept HOD of the request's department; Finance may override, and it is logged.
+      return resource.submitterId !== actor.id && (finance || (hod && own));
+
+    case "reimbursement.approve":
+      // 5.2: a Finance HOD's own request is approved by Management instead.
+      if (resource.submitterId === actor.id) return false;
+      return resource.submitterRole === "FINANCE_HOD" ? management : finance;
+
+    case "reimbursement.hold":
+      return management;
+
+    case "reimbursement.recordPayment":
+      // Management records payment, and never for their own request (5.2).
+      return management && resource.submitterId !== actor.id;
+
+    case "vendor.manage":
+      return finance || hod;
+
+    case "vendorRequest.create":
+      // An HOD raises vendor requests against their own department's line items only.
+      return finance || (hod && own);
+
+    case "vendorRequest.edit":
+      return (
+        resource.submitterId === actor.id &&
+        (resource.status === "DRAFT" || resource.status === "SENT_BACK")
+      );
+
+    case "vendorRequest.approve":
+      return finance && resource.submitterId !== actor.id;
+
+    case "vendorRequest.confirmDelivery":
+      return finance || (hod && own);
+
+    case "vendorRequest.recordPayment":
+      return management;
+
+    /* -------------------------------------------------------------- tickets */
+    case "ticket.create":
+      return true;
+
+    case "ticket.triage":
+      // The target department's HOD. Finance HOD triages tickets addressed to Finance.
+      return (finance || hod) && resource.targetDepartmentId === actor.departmentId;
+
+    case "ticket.work":
+      return (
+        resource.assigneeId === actor.id ||
+        ((finance || hod) && resource.targetDepartmentId === actor.departmentId)
+      );
+
+    case "ticket.close":
+      return (
+        resource.requesterId === actor.id ||
+        (hod && resource.requestingDepartmentId === actor.departmentId) ||
+        finance
+      );
+
+    /* ------------------------------------------------------------- comments */
+    case "comment.create":
+      // Anyone who can see the entity may comment on it (7.6). Callers pass the
+      // entity's own view action through `canComment` below.
+      return true;
+  }
+}
+
+export class Forbidden extends Error {
+  readonly code = "FORBIDDEN";
+  constructor(action: Action) {
+    super(`Not permitted: ${action}`);
+    this.name = "Forbidden";
+  }
+}
+
+export function assertCan(actor: Actor, action: Action, resource: Resource = {}): void {
+  if (!can(actor, action, resource)) throw new Forbidden(action);
+}
+
+/** 7.6 — commenting follows visibility of the parent entity. */
+export function canComment(actor: Actor, viewAction: Action, resource: Resource = {}): boolean {
+  return can(actor, viewAction, resource);
+}
+
+/**
+ * The actor constraints carried on state-machine transitions (5.2).
+ * `can` handles role and department; this handles "who exactly".
+ */
+export function satisfiesActorConstraints(
+  constraints: readonly ActorConstraint[] | undefined,
+  actor: Actor,
+  resource: Resource,
+): boolean {
+  for (const c of constraints ?? []) {
+    switch (c) {
+      case "SUBMITTER":
+        if ((resource.submitterId ?? resource.requesterId) !== actor.id) return false;
+        break;
+      case "NOT_SUBMITTER":
+        if ((resource.submitterId ?? resource.requesterId) === actor.id) return false;
+        break;
+      case "TARGET_DEPT_HOD":
+        if (actor.role !== "DEPT_HOD" && actor.role !== "FINANCE_HOD") return false;
+        if ((resource.targetDepartmentId ?? resource.departmentId) !== actor.departmentId) return false;
+        break;
+      case "REQUESTING_DEPT_HOD":
+        if (actor.role !== "DEPT_HOD" && actor.role !== "FINANCE_HOD") return false;
+        if (resource.requestingDepartmentId !== actor.departmentId) return false;
+        break;
+      case "ASSIGNEE":
+        if (resource.assigneeId !== actor.id) return false;
+        break;
+      case "REQUESTER":
+        if (resource.requesterId !== actor.id) return false;
+        break;
+    }
+  }
+  return true;
+}
+
+/** Account numbers are masked for anyone who may not see them in full (20.7). */
+export function maskAccountNumber(value: string | null): string | null {
+  if (!value) return value;
+  return value.length <= 4 ? "••••" : `••••${value.slice(-4)}`;
+}

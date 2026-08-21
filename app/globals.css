@@ -1,26 +1,97 @@
 @import "tailwindcss";
 
+/*
+ * Yugaantar brand tokens — PRD 9.1, read from yugaantar.org.
+ * Dark theme only in MVP (21.4). Emails and PDF exports are light regardless.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces */
+  --yg-bg:           #06061f;  /* landing background; sign-in screen */
+  --yg-bg-app:       #13141f;  /* app background */
+  --yg-surface:      #1a1b2e;  /* cards, sidebar, table rows */
+  --yg-surface-2:    #2a2b3d;  /* borders, dividers, hover, avatars */
+
+  /* Brand accents */
+  --yg-lime:         #d2fc3c;  /* logo, fest name, active nav, primary actions */
+  --yg-yellow:       #eece00;  /* the single most important CTA on a screen */
+  --yg-yellow-title: #ffd500;  /* title artwork only */
+  --yg-pink:         #f5449e;  /* secondary buttons, links */
+  --yg-sky:          #7fd5ff;  /* highlighted text */
+  --yg-violet:       #5119db;  /* nav gradient start (landing only) */
+  --yg-crimson:      #b12a36;  /* nav gradient end (landing only) */
+
+  /* Text */
+  --yg-text:         #ffffff;
+  --yg-text-soft:    #c0c0c0;
+  --yg-text-muted:   #a0a0b0;
+  --yg-on-accent:    #06061f;
+}
+
+/*
+ * Semantic state colours (9.1). Brand colours never encode a state.
+ * Always paired with a text label — never colour alone (rule 3, and 14 accessibility).
+ */
+:root {
+  --state-waiting-fg:  #f5c542;  --state-waiting-bg:  #3d2f0a;  /* DRAFT, SUBMITTED, HOD_ENDORSED, OPEN, NEEDS_INFO, Pending */
+  --state-moving-fg:   #7fd5ff;  --state-moving-bg:   #0e2a3d;  /* ACCEPTED, IN_PROGRESS, ADVANCE_PAID, DELIVERED */
+  --state-decided-fg:  #d2fc3c;  --state-decided-bg:  #263a0a;  /* APPROVED, BALANCE_APPROVED, DONE, Committed */
+  --state-done-fg:     #90ee90;  --state-done-bg:     #1f4d1f;  /* PAID, CLOSED, Spent */
+  --state-bad-fg:      #ee9090;  --state-bad-bg:      #4d1f1f;  /* DECLINED, REJECTED, CANCELLED, WITHDRAWN */
+  --state-stuck-fg:    #b39dff;  --state-stuck-bg:    #241452;  /* ON_HOLD, BLOCKED, SENT_BACK */
+
+  --flag-high-fg:      #ee9090;  --flag-high-bg:      #4d1f1f;
+  --flag-medium-fg:    #f5c542;  --flag-medium-bg:    #3d2f0a;
+  --flag-low-fg:       #a0a0b0;  --flag-low-bg:       #2a2b3d;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-bg: var(--yg-bg);
+  --color-bg-app: var(--yg-bg-app);
+  --color-surface: var(--yg-surface);
+  --color-surface-2: var(--yg-surface-2);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-lime: var(--yg-lime);
+  --color-brand-yellow: var(--yg-yellow);
+  --color-brand-pink: var(--yg-pink);
+  --color-sky: var(--yg-sky);
+  --color-violet: var(--yg-violet);
+  --color-crimson: var(--yg-crimson);
+
+  --color-text: var(--yg-text);
+  --color-text-soft: var(--yg-text-soft);
+  --color-text-muted: var(--yg-text-muted);
+  --color-on-accent: var(--yg-on-accent);
+
+  /* UI text; headings; amounts and references (9.1 typography) */
+  --font-sans: var(--font-lexend), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-reem-kufi), var(--font-lexend), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-source-code-pro), ui-monospace, "Cascadia Code", monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--yg-bg-app);
+  color: var(--yg-text);
+  font-family: var(--font-sans);
+}
+
+/* Amounts, UTRs, ticket IDs, table dates: tabular and right-aligned (9.1 rule 4). */
+.tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Chrome stays restrained inside the app; the sign-in screen gets the landing treatment (rule 5). */
+.landing-nav {
+  background: linear-gradient(90deg, var(--yg-violet), var(--yg-crimson));
+}
+
+::selection {
+  background: var(--yg-lime);
+  color: var(--yg-on-accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--yg-lime);
+  outline-offset: 2px;
 }
