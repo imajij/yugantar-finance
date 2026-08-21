@@ -5,21 +5,31 @@ vendor payments, income, work tickets, flags and audit. Spec: [`system_PRD.md`](
 
 ## Status
 
-**M1 foundation — in progress.** Built so far:
+**M1–M3 built.** Verified against a live database and the running app.
+
+| Milestone | State |
+|---|---|
+| M1 Foundation | Schema, `can()`, audit service, attachments upload, app shell, dev sign-in. **Clerk not wired** (dev sign-in stands in), no notifications inbox yet. |
+| M2 Budget | Fest total, allocations, transfers, line items with supporting documents, the `v_*` views, department and fest dashboards, flags F13/F14. Budget-review screen pending. |
+| M3 Reimbursements | Full 7.2 state machine, member form, request detail, the three queues, flags F1–F6, comments and email pending. |
+| M4 Vendors & income | Not started. |
+| M5 Work tickets | Not started. |
+| M6 Close-out | Not started. |
 
 | Piece | Where | Proven by |
 |---|---|---|
-| Database schema (PRD 19.2/19.3) | `db/schema.ts`, `db/migrations/0000_init.sql` | migrates clean on Postgres 18 |
+| Database schema (19.2/19.3) | `db/schema.ts`, `db/migrations/0000_init.sql` | migrates clean on Postgres 18 |
 | Budget arithmetic views (19.4) | `db/migrations/0001_views.sql` | `tests/db/budget-arithmetic.test.ts` — the 19.6 fixture |
+| The three hard blocks (4.7, 7.5) | `lib/services/{line-items,budget}.ts` | `tests/db/budget-guards.test.ts` |
+| Reimbursement flow + segregation | `lib/services/reimbursements.ts` | `tests/db/reimbursement-flow.test.ts` |
 | Money in paise (18.2 rule 4) | `lib/money.ts` | `tests/unit/money.test.ts` |
-| State machines (7.2 / 7.3 / 7.5 / 7.7) | `lib/state-machines/` | `tests/unit/state-machines.test.ts` — every `from × action` |
-| Authorization + segregation (5.1 / 5.2) | `lib/authz.ts` | `tests/unit/authz.test.ts` — the 5.1 matrix |
+| State machines (7.2/7.3/7.5/7.7) | `lib/state-machines/` | `tests/unit/state-machines.test.ts` — every `from × action` |
+| Authorization + segregation (5.1/5.2) | `lib/authz.ts` | `tests/unit/authz.test.ts` — the 5.1 matrix |
+| Flag rules (8.2) | `lib/flags/` | covered in the reimbursement flow tests |
 | Brand theme (9.1) | `app/globals.css`, `lib/state-chip.ts` | `tests/unit/state-chip.test.ts` |
-| Human IDs, audit service | `lib/human-id.ts`, `lib/services/audit.ts` | — |
-| Seed data | `db/seed.mts` | `pnpm db:seed` |
 
-Not yet built: Clerk auth and the Clerk webhook, R2 uploads, the route handlers under
-`app/api/v1`, the app shell and screens, email, flags, cron, exports.
+Not yet built: Clerk sign-in and its webhook, R2, email, comments, the ticket and
+vendor state machines' services and screens, income, cron jobs, exports.
 
 ## Setup
 
