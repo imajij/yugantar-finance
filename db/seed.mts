@@ -42,6 +42,7 @@ if (existing.length > 0) {
     sql`delete from vendors where fest_id = ${id}`,
     sql`delete from line_items where fest_id = ${id}`,
     sql`delete from expense_types where fest_id = ${id}`,
+    sql`delete from idempotency_keys where user_id in (select id from users where fest_id = ${id})`,
     sql`delete from users where fest_id = ${id}`,
     sql`delete from human_id_sequences where fest_id = ${id}`,
     sql`delete from budget_transfers where fest_id = ${id}`,
