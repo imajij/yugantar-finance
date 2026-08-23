@@ -54,15 +54,18 @@ export async function withAuditGuardLifted<T>(
 }
 
 /**
- * Tears down every fest whose slug starts with `prefix`, in foreign-key order.
+ * Tears down every fest matching a slug pattern, in foreign-key order.
  *
- * The database tests each build a fest, exercise it, and must leave nothing behind:
- * a run that leaks rows makes the next run's failures depend on the previous one's,
- * which is the fastest way to lose trust in a suite. Centralising the order here
- * also means a new table is one line, not six near-identical teardowns that drift.
+ * The order is the whole value of this function, and it is subtle: `budget_transfers`
+ * and `idempotency_keys` point at `users`, so they have to go first, and every table
+ * pointing at `fests` has to go before it. Getting that wrong fails loudly but only
+ * once there is data of the right shape, which is exactly when nobody is looking.
+ *
+ * So it lives here once, and both callers use it — the database tests, which must
+ * leave nothing behind (a run that leaks rows makes the next run's failures depend
+ * on the previous one's), and the seed's `--reset`.
  */
-export async function dropFests(exec: Executor, prefix: string): Promise<void> {
-  const like = `${prefix}%`;
+async function dropFestsMatching(exec: Executor, like: string): Promise<void> {
   const scope = sql`(select id from fests where slug like ${like})`;
 
   await withAuditGuardLifted(exec, async (tx) => {
@@ -84,6 +87,8 @@ export async function dropFests(exec: Executor, prefix: string): Promise<void> {
       sql`delete from vendors where fest_id in ${scope}`,
       sql`delete from line_items where fest_id in ${scope}`,
       sql`delete from expense_types where fest_id in ${scope}`,
+      sql`delete from sessions where user_id in (select id from users where fest_id in ${scope})`,
+      sql`delete from sign_in_tokens where user_id in (select id from users where fest_id in ${scope})`,
       sql`delete from idempotency_keys where user_id in (select id from users where fest_id in ${scope})`,
       sql`delete from budget_transfers where fest_id in ${scope}`,
       sql`delete from ticket_templates where fest_id in ${scope}`,
@@ -93,4 +98,16 @@ export async function dropFests(exec: Executor, prefix: string): Promise<void> {
       sql`delete from fests where slug like ${like}`,
     ]) await tx.execute(stmt);
   });
+}
+
+/** Every fest whose slug starts with `prefix` — how the database tests clean up. */
+export function dropFests(exec: Executor, prefix: string): Promise<void> {
+  return dropFestsMatching(exec, `${prefix}%`);
+}
+
+/** Exactly one fest — what the seed's `--reset` tears down before rebuilding. */
+export function dropFestBySlug(exec: Executor, slug: string): Promise<void> {
+  // `_` and `%` are LIKE wildcards, and a slug is allowed to contain neither, but
+  // escaping costs nothing and stops a stray one matching more than it should.
+  return dropFestsMatching(exec, slug.replace(/[\\%_]/g, "\\$&"));
 }

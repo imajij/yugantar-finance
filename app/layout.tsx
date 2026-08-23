@@ -23,6 +23,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
 
   // ClerkProvider throws without a publishable key, so it is only mounted once one
-  // exists. Everything below it works identically under the dev sign-in.
+  // exists. Everything below it works identically under emailed sign-in links.
   return clerkConfigured() ? <ClerkProvider>{shell}</ClerkProvider> : shell;
 }

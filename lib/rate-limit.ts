@@ -27,6 +27,13 @@ export const LIMITS = {
   invite: { max: 30, windowSeconds: 3600 },
   /** Writes in general — high enough that no honest user meets it. */
   write: { max: 300, windowSeconds: 60 },
+  /**
+   * Sign-in links, limited on two axes. Per address, so nobody can flood one
+   * person's inbox from many IPs; per caller, so nobody can rake many addresses
+   * from one. Five an hour is generous for something that arrives in seconds.
+   */
+  signInLink: { max: 5, windowSeconds: 3600 },
+  signInLinkPerIp: { max: 20, windowSeconds: 3600 },
 } as const satisfies Record<string, Limit>;
 
 export type LimitName = keyof typeof LIMITS;

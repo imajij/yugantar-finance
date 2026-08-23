@@ -43,6 +43,13 @@
       "when": 1787516531377,
       "tag": "0005_audit_guard_session_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787524232206,
+      "tag": "0006_sessions_and_sign_in_links",
+      "breakpoints": true
     }
   ]
 }

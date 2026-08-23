@@ -75,6 +75,9 @@ export async function proxy(request: NextRequest) {
   // (signature-authenticated) and cron (CRON_SECRET-authenticated).
   const isPublic = createRouteMatcher([
     "/sign-in(.*)",
+    // Sign-in links: no session yet, by definition.
+    "/auth/callback",
+    "/api/v1/auth(.*)",
     "/api/v1/webhooks(.*)",
     "/api/v1/cron(.*)",
     // Presigned upload and download URLs carry their own signature.

@@ -9,8 +9,8 @@
  *   - **Out.** Inviting someone from the admin screen creates the row here first and
  *     asks Clerk to email them an invitation.
  *
- * Every call degrades quietly when Clerk is not configured, so the dev sign-in path
- * keeps working and the admin screen still creates users.
+ * Every call degrades quietly when Clerk is not configured, so the emailed sign-in
+ * link path keeps working and the admin screen still creates users.
  */
 export const clerkConfigured = () => Boolean(process.env.CLERK_SECRET_KEY);
 

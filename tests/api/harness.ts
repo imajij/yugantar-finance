@@ -83,11 +83,15 @@ export async function buildFixture(slugPrefix: string): Promise<Fixture> {
   };
 
   const user = async (
-    name: string, email: string, role: Role, departmentId: string,
+    name: string, local: string, role: Role, departmentId: string,
   ): Promise<SessionUser> => {
+    // Unique per run so parallel test files do not collide on `users_fest_email`.
+    // The address is returned exactly as stored — a fixture whose `email` differs
+    // from the row is a fixture that lies to any test that signs in with it.
+    const email = `${local}-${crypto.randomUUID()}@sst.scaler.com`;
     const row = await one<{ id: string }>(sql`
       insert into users (fest_id, name, email, role, department_id, status, upi_id)
-      values (${festId}, ${name}, ${`${crypto.randomUUID()}-${email}`},
+      values (${festId}, ${name}, ${email},
               ${sql.raw(`'${role}'::user_role`)}, ${departmentId}, 'ACTIVE', 'x@upi')
       returning id`);
     return {
@@ -98,12 +102,12 @@ export async function buildFixture(slugPrefix: string): Promise<Fixture> {
   };
 
   const users = {
-    member: await user("Tech Member", "tm@x.test", "MEMBER", departments.tech),
-    otherMember: await user("Logi Member", "lm@x.test", "MEMBER", departments.logistics),
-    hod: await user("Tech HOD", "th@x.test", "DEPT_HOD", departments.tech),
-    otherHod: await user("Logi HOD", "lh@x.test", "DEPT_HOD", departments.logistics),
-    finance: await user("Finance HOD", "fh@x.test", "FINANCE_HOD", departments.finance),
-    management: await user("Management", "mg@x.test", "MANAGEMENT", departments.core),
+    member: await user("Tech Member", "tech-member", "MEMBER", departments.tech),
+    otherMember: await user("Logi Member", "logi-member", "MEMBER", departments.logistics),
+    hod: await user("Tech HOD", "tech-hod", "DEPT_HOD", departments.tech),
+    otherHod: await user("Logi HOD", "logi-hod", "DEPT_HOD", departments.logistics),
+    finance: await user("Finance HOD", "finance-hod", "FINANCE_HOD", departments.finance),
+    management: await user("Management", "management", "MANAGEMENT", departments.core),
   };
 
   const { id: expenseTypeId } = await one<{ id: string }>(sql`

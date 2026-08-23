@@ -13,7 +13,7 @@ list is deliberately not built — see [What is not built](#what-is-not-built).
 
 | Milestone | Delivers | State |
 |---|---|---|
-| M1 Foundation | Schema, `can()`, audit service, attachments, app shell, Clerk sign-in + webhook | ✅ |
+| M1 Foundation | Schema, `can()`, audit service, attachments, app shell, sign-in (Clerk *or* emailed links) | ✅ |
 | M2 Budget | Fest total, allocations, transfers, line items, documents, the `v_*` views, dashboards, budget review, F13/F14 | ✅ |
 | M3 Reimbursements | Full 7.2 state machine, the three queues, F1–F6, comments, timelines, email | ✅ |
 | M4 Vendors & income | 7.3 state machine with milestones, exposure, F8/F9/F12, income ledger and tranches, cash position | ✅ |
@@ -30,7 +30,7 @@ list is deliberately not built — see [What is not built](#what-is-not-built).
 | No `number` arithmetic on rupees; `money.ts` is the only formatter | `tests/unit/money.test.ts`; `lib/money.ts` |
 | Every write produces an audit event with `before`/`after`; `audit_events` takes no UPDATE or DELETE | `db/migrations/0003_append_only_audit.sql` (trigger + revoked grants), `tests/db/budget-guards.test.ts` |
 | Attachments are never served from a public URL | `lib/services/attachments.ts`; `tests/api/flows.test.ts` |
-| `pnpm test`, `pnpm lint`, `pnpm typecheck` pass; `pnpm db:seed` produces a usable demo | 379 tests across 14 files |
+| `pnpm test`, `pnpm lint`, `pnpm typecheck` pass; `pnpm db:seed` produces a working deployment | 398 tests across 15 files |
 
 ## Setup
 
@@ -48,9 +48,31 @@ pnpm dev
 
 `DATABASE_URL=postgres://postgres:dev@localhost:5433/yugantar`
 
-Every external service is optional in development and the app degrades honestly
-without it — see [Integrations](#integrations). With none of them configured you get
-a working app with a dev sign-in, local file storage, and emails written to the log.
+Every external service is optional and the app degrades honestly without it — see
+[Integrations](#integrations). With none of them configured you get a working app
+whose sign-in links are written to the server log instead of being emailed.
+
+### First run
+
+`pnpm db:seed` does not create sample data. It creates the smallest thing that can
+exist: the fest, the Finance and Core departments (the schema permits exactly one of
+each, so they cannot be made from the admin screen), the PRD 21.1 expense types, and
+**one Finance HOD**, who is the platform administrator — `ajij.24bcs10103@sst.scaler.com`
+unless `BOOTSTRAP_ADMIN_EMAIL` says otherwise. It is idempotent; `--reset` tears the
+fest down first and refuses to run in production.
+
+From there everything is done in the app, in this order:
+
+1. **Sign in.** Open `/sign-in`, enter that address, follow the emailed link. Without
+   `RESEND_API_KEY` the link is printed to the server log — that is how a fresh
+   deployment gets its first administrator in.
+2. **Set the total budget** on `/admin`. It starts at zero on purpose, so the first
+   figure is a deliberate act rather than an inherited one.
+3. **Add departments** on `/admin`. They start with nothing allocated.
+4. **Allocate** on `/budget` — money only ever moves by transfer, so every rupee that
+   changes hands carries a reason and an audit row.
+5. **Invite people** on `/admin`. Each invitation emails a sign-in link; following it
+   is what turns INVITED into ACTIVE.
 
 ## Scripts
 
@@ -61,32 +83,9 @@ a working app with a dev sign-in, local file storage, and emails written to the 
 | `pnpm test` | Vitest — unit, database and route-handler tests against `DATABASE_URL` |
 | `pnpm typecheck` · `pnpm lint` | `tsc --noEmit` · ESLint |
 | `pnpm db:generate` | Regenerate a migration after editing `db/schema.ts` |
-| `pnpm db:migrate` · `pnpm db:seed` | Apply migrations · reset and reseed the demo fest |
+| `pnpm db:migrate` | Apply migrations |
+| `pnpm db:seed` | Bootstrap the fest and its first administrator (idempotent; `--reset` starts over) |
 | `pnpm db:studio` | Drizzle Studio |
-
-## Demo path
-
-After `pnpm db:seed` the database holds Yugaantar '26 with a ₹25,00,000 total budget,
-₹19,00,000 allocated across five departments and ₹6,00,000 in Reserve, seven users
-(one per role), nine expense types, seven line items, two vendors, and **five open
-flags** the seed evaluates for real: four F13s on undocumented line items above the
-₹10,000 threshold, and one F14 on Transport, planned 29% above its own lowest quote.
-
-Sign in as `finance.hod@sst.scaler.com` (dev sign-in lists all seven), then:
-
-1. **`/flags`** — the five seeded flags, worst first. Acknowledge one; the note lands
-   in the audit log.
-2. **`/budget/review`** — every line item across departments, unreviewed-and-
-   undocumented first, with lowest quote against planned.
-3. **`/requests/new`** as `tech.member@` — submit against *Sound system* (it has
-   quotes, so it is above the document threshold and accepts requests). Then endorse
-   as `tech.hod@`, approve as `finance.hod@`, and record payment as `management@`.
-   Watch the five numbers move on `/dashboard` and the notifications arrive at
-   `/notifications` for each party.
-4. **`/tickets/new`** — raise a ticket at another department; the form shows similar
-   open tickets as you type the title.
-5. **`/close-out`** — the reconciliation pack. *Fest summary → Print* is the closing
-   report for the college; the Excel exports carry amounts as real numbers.
 
 ## Architecture
 
@@ -107,7 +106,7 @@ Follows PRD 18.2 exactly. The ten rules, and where each one lives:
 
 ```
 app/
-  (auth)/sign-in/[[...rest]]/   landing treatment; Clerk's <SignIn> or the dev list
+  (auth)/                       sign-in (Clerk or a link) and the link callback
   (app)/                        dashboard requests tickets budget vendors income
                                 queues flags notifications close-out audit admin
   api/v1/…                      route handlers: parse → can() → service → respond
@@ -119,6 +118,7 @@ lib/
   flags/  queries/              F1–F14; the five numbers, queues and dashboards
   money.ts  human-id.ts         paise and ₹; per-fest sequences
   storage.ts  email.tsx         R2 (SigV4, no SDK) or local disk; Resend
+  auth.ts  session.ts           sign-in links and sessions; who the caller is
   clerk.ts  rate-limit.ts       identity linking and invitations; fixed-window limits
   xlsx.ts  test-support.ts      a minimal XLSX writer; the audit-guard escape hatch
 emails/                         the notification template (light, table-based HTML)
@@ -127,11 +127,16 @@ db/                             schema, migrations (incl. the 19.4 views), seed
 tests/  unit/ db/ api/          state machines, money, flags · services + SQL · handlers
 ```
 
-Two deliberate deviations from PRD 18.1, both noted at the point of use:
+Three deliberate deviations from PRD 18.1, each noted at the point of use:
 
 - **Database driver.** `postgres-js` rather than the Neon HTTP driver, because rule 5
   ("every write is one transaction") needs interactive transactions, which the HTTP
   driver does not support. Works unchanged against a Neon pooled connection string.
+- **Sign-in without Clerk.** PRD 13 names Google Workspace via Clerk, and that is
+  still the path wherever Clerk is configured. Emailed one-time links are the
+  alternative when it is not, so a deployment is usable before those keys exist —
+  same passwordless shape, same domain restriction, same invitation-only rule. See
+  [Signing in](#signing-in).
 - **XLSX and PDF.** `lib/xlsx.ts` writes the ZIP and SpreadsheetML directly rather
   than pulling a spreadsheet library into a serverless bundle; it is unit-tested by
   reading the bytes back (`tests/unit/xlsx.test.ts`). PRD 12's PDF outputs are served
@@ -145,10 +150,35 @@ them configured. All are wired and ready for credentials.
 
 | Service | Configured | Not configured |
 |---|---|---|
-| **Clerk** (`CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`) | Google sign-in restricted to `ALLOWED_EMAIL_DOMAIN`; `POST /webhooks/clerk` links a Clerk account to the INVITED row with that email — unknown emails are refused; disabling a user revokes their Clerk sessions | A dev sign-in picks a seeded user. Refuses to run in production, where the sign-in page says plainly that no identity provider is configured |
+| **Clerk** (`CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`) | Google sign-in restricted to `ALLOWED_EMAIL_DOMAIN`; `POST /webhooks/clerk` links a Clerk account to the INVITED row with that email — unknown emails are refused | A one-time link emailed to an already-invited address (`lib/auth.ts`), backed by a server-side session. See [Signing in](#signing-in) |
 | **Cloudflare R2** (`R2_*`) | Private bucket; presigned PUT for upload, presigned GET for reads, both 15 minutes. SigV4 signed in `lib/storage.ts` — no AWS SDK | Files go to `./.uploads` with HMAC-signed URLs of the same shape and expiry. `UPLOAD_URL_SECRET` is required for this path in production |
 | **Resend** (`RESEND_API_KEY`, `EMAIL_FROM`) | Notifications are written in the same transaction as the write that caused them, then sent after the response commits (`after()`); failures retry on the `/cron/outbox` sweep | Rows stay unsent and the body is logged. The in-app inbox works either way |
 | **Anthropic** (`ANTHROPIC_API_KEY`) | — | Receipt OCR and the model-based flags are v1.1 (PRD 15). `attachments.ocr_json` exists, so adding them needs no migration |
+
+### Signing in
+
+Two providers, never both offered at once, and the app is identical downstream of
+either — `lib/session.ts` resolves both to a row in `users` with a role and a
+department, and authorization runs on that.
+
+Where Clerk is configured it wins, exactly as PRD 18.1 specifies. Where it is not,
+sign-in is a one-time link (`lib/auth.ts`). What makes that safe:
+
+- **An invitation is the gate.** A link is only ever issued to an address that already
+  has a `users` row. Nobody signs themselves up — the same rule the Clerk webhook
+  enforces.
+- **Only hashes are stored.** The token in the inbox is the secret; the database holds
+  its SHA-256. A database dump grants nobody a login.
+- **One use, fifteen minutes.** Consumption is a conditional `UPDATE`, so the database
+  settles the race when a link is clicked twice.
+- **No account enumeration.** The endpoint answers identically for an unknown address,
+  a disabled one and a real one, and is rate limited per address *and* per caller — so
+  one inbox cannot be flooded from many hosts, nor many addresses raked from one.
+- **Sessions are rows, not claims.** Disabling someone has to take effect now, and a
+  stateless token cannot be withdrawn before it expires. Signing out revokes the row,
+  so a copied cookie dies with it.
+
+`tests/api/auth.test.ts` covers each of those as a thing that must *not* work.
 
 ### Notifications
 
@@ -179,14 +209,14 @@ running one twice sends one reminder — and bounded.
   `frame-ancestors 'none'` and HSTS in production.
 - **Attachments** are only ever URL'd to someone who can see the parent record; an
   unbound upload belongs to its uploader alone. Both are tested.
-- **Rate limiting** on presigned uploads, exports and invitations, in Postgres rather
-  than memory because the app runs as several instances. The permission check runs
-  first, so a refused caller cannot spend anyone's quota.
+- **Rate limiting** on presigned uploads, exports, invitations and sign-in links, in
+  Postgres rather than memory because the app runs as several instances. The permission
+  check runs first, so a refused caller cannot spend anyone's quota.
 - **Audit log** is append-only at the database, by trigger *and* by revoked grants on
   the application role. The seed and tests use one documented, session-scoped
   exception (`lib/test-support.ts`); nothing under `app/` or `lib/services/` may.
 
-Run against a fresh database, `pnpm db:migrate && pnpm db:seed` produces 30 tables,
+Run against a fresh database, `pnpm db:migrate && pnpm db:seed` produces 32 tables,
 the four `v_*` views, `citext`/`pgcrypto`/`pg_trgm`, and both audit triggers.
 
 ## What is not built

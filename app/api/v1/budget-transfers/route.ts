@@ -53,13 +53,20 @@ export const GET = route(async ({ user }) => {
   };
 });
 
+/**
+ * PRD 20.4 writes both departments as nullable: a null source means the money comes
+ * out of Reserve, a null destination means it goes back in. Omitting one means the
+ * same thing as sending null — an opening allocation is naturally written as just a
+ * destination, and demanding an explicit `"from_department_id": null` is a validation
+ * error that teaches nobody anything.
+ */
 const schema = z.object({
-  from_department_id: z.uuid().nullable(),
-  to_department_id: z.uuid().nullable(),
+  from_department_id: z.uuid().nullish().default(null),
+  to_department_id: z.uuid().nullish().default(null),
   amount_paise: z.number().int().positive(),
   reason: z.string().min(3).max(300),
-}).refine((v) => v.from_department_id !== null || v.to_department_id !== null, {
-  message: "A transfer needs at least one department",
+}).refine((v) => v.from_department_id != null || v.to_department_id != null, {
+  message: "A transfer needs a source department, a destination, or both",
 });
 
 export const POST = route(async ({ user, request }) => {

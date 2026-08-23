@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { formatPaise } from "@/lib/money";
@@ -245,5 +246,200 @@ export function Thresholds({ values }: { values: Record<string, number> }) {
 
       {error && <p className="mt-2 text-sm" style={{ color: "var(--flag-high-fg)" }}>{error}</p>}
     </form>
+  );
+}
+
+/* -------------------------------------------------------------- departments */
+
+interface Dept {
+  id: string;
+  name: string;
+  slug: string;
+  kind: string;
+  allocatedPaise: number;
+  isActive: boolean;
+  openRecords: number;
+}
+
+/** A slug is derived, not typed: one less thing to get wrong, still editable. */
+const slugify = (name: string) =>
+  name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+
+/**
+ * Departments (PRD 20.4).
+ *
+ * Allocation is deliberately not editable here. Money only ever moves through a
+ * budget transfer, so that every rupee that changes hands has a reason and an audit
+ * row (7.1) — this screen links to that one rather than reproducing it.
+ *
+ * Finance and Core are shown but not editable: the schema permits exactly one of
+ * each per fest, and they are what the roles hang off.
+ */
+export function Departments({ departments }: { departments: Dept[] }) {
+  const { save, busy, error } = useSave();
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+
+  const budgetDepts = departments.filter((d) => d.kind === "BUDGET");
+
+  return (
+    <>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-text-muted">
+              <th className="pb-2 font-medium">Department</th>
+              <th className="pb-2 font-medium">Kind</th>
+              <th className="pb-2 pr-0 text-right font-medium">Allocated</th>
+              <th className="pb-2 font-medium"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {departments.map((d) => (
+              <tr key={d.id} style={{ borderTop: "1px solid var(--yg-surface-2)" }}>
+                <td className="py-2">
+                  {d.kind === "BUDGET" ? (
+                    <input
+                      defaultValue={d.name}
+                      disabled={busy}
+                      className={INPUT}
+                      onBlur={(e) => {
+                        const next = e.target.value.trim();
+                        if (next && next !== d.name) save(`/api/v1/departments/${d.id}`, "PATCH", { name: next });
+                      }}
+                    />
+                  ) : (
+                    <span>{d.name}</span>
+                  )}
+                  <p className="mt-0.5 text-xs text-text-muted">{d.slug}</p>
+                </td>
+                <td className="py-2 text-xs text-text-muted">{d.kind.toLowerCase()}</td>
+                <td className="tnum py-2 text-right">{formatPaise(d.allocatedPaise)}</td>
+                <td className="py-2 text-right">
+                  {d.kind === "BUDGET" && (
+                    <button
+                      disabled={busy}
+                      onClick={() => save(`/api/v1/departments/${d.id}`, "PATCH", { is_active: !d.isActive })}
+                      className="rounded-full px-3 py-1 text-xs"
+                      style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+                      title={
+                        d.isActive && (d.openRecords > 0 || d.allocatedPaise > 0)
+                          ? "Close its open records and move its allocation back to Reserve first"
+                          : undefined
+                      }
+                    >
+                      {d.isActive ? "Deactivate" : "Reactivate"}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {adding ? (
+        <form
+          className="mt-3 flex flex-wrap items-end gap-2"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget);
+            const ok = await save("/api/v1/departments", "POST", {
+              name: f.get("name"),
+              slug: f.get("slug"),
+              allocated_paise: 0,
+            });
+            if (ok) { setAdding(false); setName(""); }
+          }}
+        >
+          <input
+            name="name" required minLength={2} placeholder="Department name" className={INPUT}
+            value={name} onChange={(e) => setName(e.target.value)} autoFocus
+          />
+          <input
+            name="slug" required pattern="[a-z0-9\-]+" placeholder="slug" className={INPUT}
+            key={slugify(name)} defaultValue={slugify(name)}
+          />
+          <button type="submit" disabled={busy}
+            className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
+            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}>
+            Add department
+          </button>
+          <button type="button" onClick={() => setAdding(false)} className="text-sm text-text-muted">
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-pink)" }}>
+          + Add a department
+        </button>
+      )}
+
+      <p className="mt-3 text-xs text-text-muted">
+        New departments start with nothing allocated. Move money to them from Reserve on the{" "}
+        <Link href="/budget" style={{ color: "var(--yg-pink)" }}>budget screen</Link> — every transfer
+        carries a reason and is logged.
+        {budgetDepts.length === 0 && " Add your first department to get started."}
+      </p>
+
+      {error && <p className="mt-2 text-sm" style={{ color: "var(--flag-high-fg)" }}>{error}</p>}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------- fest budget */
+
+/**
+ * The fest total (PRD 20.4). It cannot drop below what is already allocated, and the
+ * API refuses if it would — the message says by how much.
+ */
+export function FestBudget({
+  totalBudgetPaise, allocatedPaise,
+}: { totalBudgetPaise: number; allocatedPaise: number }) {
+  const { save, busy, error } = useSave();
+  const [value, setValue] = useState(String(totalBudgetPaise / 100));
+
+  const rupees = Number(value);
+  const changed = Number.isFinite(rupees) && Math.round(rupees * 100) !== totalBudgetPaise;
+
+  return (
+    <>
+      <form
+        className="mt-3 flex flex-wrap items-end gap-2"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const f = new FormData(e.currentTarget);
+          await save("/api/v1/fest", "PATCH", {
+            total_budget_paise: Math.round(Number(f.get("total")) * 100),
+            reason: String(f.get("reason") || "Fest total set from admin"),
+          });
+        }}
+      >
+        <label className="text-xs text-text-muted">
+          Total budget (₹)
+          <input
+            name="total" type="number" min={0} step="0.01" required className={`mt-1 block ${INPUT}`}
+            value={value} onChange={(e) => setValue(e.target.value)}
+          />
+        </label>
+        <label className="min-w-56 flex-1 text-xs text-text-muted">
+          Reason
+          <input name="reason" required minLength={3} placeholder="Sanctioned by the college"
+            className={`mt-1 block w-full ${INPUT}`} />
+        </label>
+        <button type="submit" disabled={busy || !changed}
+          className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-40"
+          style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}>
+          Save
+        </button>
+      </form>
+
+      <p className="mt-2 text-xs text-text-muted">
+        {formatPaise(allocatedPaise)} is allocated to departments, so the total cannot go below
+        that. The remainder is Reserve, held by Finance.
+      </p>
+
+      {error && <p className="mt-2 text-sm" style={{ color: "var(--flag-high-fg)" }}>{error}</p>}
+    </>
   );
 }

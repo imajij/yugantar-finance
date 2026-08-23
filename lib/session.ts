@@ -1,10 +1,16 @@
 /**
  * Resolves the caller to an `Actor` (PRD 13, 18.2 rule 10).
  *
- * Clerk is identity only — role and department live in our `users` table. When Clerk
- * is not configured we fall back to a dev sign-in that picks a seeded user by email,
- * so the app is demoable before auth is wired. The fallback refuses to run in
- * production, and refuses to run at all once CLERK_SECRET_KEY is set.
+ * Two identity providers, checked in that order:
+ *
+ *   1. **Clerk**, when it is configured. Google sign-in restricted to the college
+ *      domain, exactly as PRD 18.1 specifies. Clerk is identity only — role and
+ *      department live in our `users` table and authorization is decided in our code.
+ *   2. **Sign-in links**, otherwise. A one-time link emailed to an already-invited
+ *      address, backed by a server-side session (`lib/auth.ts`).
+ *
+ * Both land in the same place: a row in `users`, with a role and a department. Nothing
+ * downstream of this file knows or cares which one the caller came through.
  */
 import { cookies } from "next/headers";
 import { and, eq } from "drizzle-orm";
@@ -12,10 +18,9 @@ import { db } from "@/db";
 import { departments, users } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import { clerkConfigured } from "@/lib/clerk";
+import { SESSION_COOKIE, resolveSession } from "@/lib/auth";
 
-export const DEV_USER_COOKIE = "yg_dev_user";
-
-export { clerkConfigured };
+export { clerkConfigured, SESSION_COOKIE };
 
 export class Unauthenticated extends Error {
   readonly code = "UNAUTHENTICATED";
@@ -32,22 +37,6 @@ export interface SessionUser extends Actor {
   departmentKind: "BUDGET" | "FINANCE" | "CORE";
   upiId: string | null;
   status: "INVITED" | "ACTIVE" | "DISABLED";
-}
-
-const devAuthAllowed = () => !clerkConfigured() && process.env.NODE_ENV !== "production";
-
-async function loadByEmail(email: string): Promise<SessionUser | null> {
-  const [row] = await db
-    .select({
-      id: users.id, festId: users.festId, role: users.role, departmentId: users.departmentId,
-      name: users.name, email: users.email, status: users.status, upiId: users.upiId,
-      departmentName: departments.name, departmentKind: departments.kind,
-    })
-    .from(users)
-    .innerJoin(departments, eq(departments.id, users.departmentId))
-    .where(eq(users.email, email))
-    .limit(1);
-  return row ?? null;
 }
 
 async function loadByClerkId(clerkUserId: string): Promise<SessionUser | null> {
@@ -74,12 +63,7 @@ export async function getSession(): Promise<SessionUser | null> {
     return loadByClerkId(userId);
   }
 
-  if (!devAuthAllowed()) return null;
-
-  const email = (await cookies()).get(DEV_USER_COOKIE)?.value;
-  if (!email) return null;
-  const user = await loadByEmail(email);
-  return user?.status === "DISABLED" ? null : user;
+  return resolveSession((await cookies()).get(SESSION_COOKIE)?.value);
 }
 
 export async function requireSession(): Promise<SessionUser> {
@@ -87,15 +71,4 @@ export async function requireSession(): Promise<SessionUser> {
   if (!user) throw new Unauthenticated();
   if (user.status === "DISABLED") throw new Unauthenticated("This account has been disabled");
   return user;
-}
-
-/** The dev sign-in screen lists these. Empty once Clerk is configured. */
-export async function devSignInCandidates(): Promise<{ email: string; name: string; role: string; department: string }[]> {
-  if (!devAuthAllowed()) return [];
-  return db
-    .select({ email: users.email, name: users.name, role: users.role, department: departments.name })
-    .from(users)
-    .innerJoin(departments, eq(departments.id, users.departmentId))
-    .where(eq(users.status, "ACTIVE"))
-    .orderBy(users.role, users.name);
 }
