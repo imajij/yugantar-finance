@@ -6,7 +6,9 @@ import { can, satisfiesActorConstraints } from "@/lib/authz";
 import { REIMBURSEMENT_TRANSITIONS } from "@/lib/state-machines/reimbursement";
 import { signedDownloadUrl } from "@/lib/storage";
 import { Amount, Card, FlagChip, PageTitle, StateChip } from "@/components/ui";
-import { TransitionActions } from "./actions";
+import { TransitionActions } from "@/components/transitions";
+import { Timeline } from "@/components/timeline";
+import { CommentThread } from "@/components/comments";
 
 export default async function RequestDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -102,26 +104,16 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
         <Card className="mt-4">
           <h2 className="font-display text-sm">Actions</h2>
           <TransitionActions
-            requestId={req.id}
+            endpoint={`/api/v1/reimbursements/${req.id}/transitions`}
             actions={actions}
-            hasOpenHighFlag={openFlags.some((f) => f.severity === "HIGH")}
+            extraFields={openFlags.some((f) => f.severity === "HIGH") ? { APPROVE: ["approval_note"] } : {}}
           />
         </Card>
       )}
 
-      <Card className="mt-4">
-        <h2 className="font-display text-sm">Timeline</h2>
-        <ol className="mt-3 space-y-3">
-          {req.timeline.map((e, i) => (
-            <li key={i} className="text-sm">
-              <span className="text-text">{humanAction(e.action)}</span>
-              <span className="text-text-muted"> · {e.actor ?? "System"} · </span>
-              <span className="tnum text-xs text-text-muted">{new Date(e.createdAt).toLocaleString("en-IN")}</span>
-              {e.reason && <p className="mt-0.5 text-xs text-text-soft">&ldquo;{e.reason}&rdquo;</p>}
-            </li>
-          ))}
-        </ol>
-      </Card>
+      <Timeline events={req.timeline} />
+
+      <CommentThread entityType="REIMBURSEMENT" entityId={req.id} comments={req.comments} />
     </div>
   );
 }
@@ -135,16 +127,4 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  SUBMIT: "Submitted", RESUBMIT: "Resubmitted", ENDORSE: "Endorsed by the department HOD",
-  SEND_BACK: "Sent back for changes", DECLINE: "Declined", APPROVE: "Approved by Finance",
-  HOLD: "Payment put on hold", RESOLVE_HOLD: "Hold resolved", RECORD_PAYMENT: "Payment recorded",
-  WITHDRAW: "Withdrawn by the submitter",
-};
 
-function humanAction(action: string): string {
-  if (action === "reimbursement.create") return "Created as a draft";
-  if (action === "reimbursement.update") return "Edited";
-  const key = action.replace("reimbursement.transition.", "").replace("reimbursement.", "").toUpperCase();
-  return ACTION_LABELS[key] ?? action;
-}

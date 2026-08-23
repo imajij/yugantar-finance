@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
-  ClipboardList, FileText, Gauge, HandCoins, ListChecks, ScrollText, Settings, Ticket, Truck,
+  Bell, ClipboardList, FileText, FileDown, Gauge, HandCoins, ListChecks,
+  ScrollText, Settings, Ticket, Truck,
 } from "lucide-react";
 import { getSession } from "@/lib/session";
 import { can, type Action } from "@/lib/authz";
@@ -15,6 +16,8 @@ const NAV: { href: string; label: string; icon: typeof Gauge; action: Action }[]
   { href: "/vendors", label: "Vendors", icon: Truck, action: "vendor.view" },
   { href: "/income", label: "Income", icon: HandCoins, action: "income.view" },
   { href: "/queues", label: "Queues", icon: ClipboardList, action: "reimbursement.create" },
+  { href: "/notifications", label: "Notifications", icon: Bell, action: "fest.view" },
+  { href: "/close-out", label: "Close-out", icon: FileDown, action: "export.run" },
   { href: "/audit", label: "Audit log", icon: ScrollText, action: "audit.view" },
   { href: "/admin", label: "Admin", icon: Settings, action: "user.manage" },
 ];

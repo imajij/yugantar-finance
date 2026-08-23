@@ -29,7 +29,21 @@ export default async function BudgetPage() {
 
   return (
     <>
-      <PageTitle>Budget</PageTitle>
+      <PageTitle
+        action={
+          can(user, "budgetReview.view", { festId: user.festId }) && (
+            <Link
+              href="/budget/review"
+              className="rounded-full px-4 py-2 text-sm"
+              style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+            >
+              Review line items
+            </Link>
+          )
+        }
+      >
+        Budget
+      </PageTitle>
 
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard label="Total budget" paise={totals?.totalBudgetPaise ?? 0} />

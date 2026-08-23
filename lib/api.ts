@@ -77,7 +77,7 @@ export interface Ctx<P = Record<string, string>> {
  * `Idempotency-Key` is honoured when `idempotent` is set (18.2 rule 9).
  */
 export function route<P extends Record<string, string> = Record<string, string>>(
-  handler: (ctx: Ctx<P>) => Promise<NextResponse | unknown>,
+  handler: (ctx: Ctx<P>) => Promise<Response | unknown>,
   options: { idempotent?: boolean } = {},
 ) {
   return async (request: Request, context: { params: Promise<P> } = { params: Promise.resolve({} as P) }) => {
@@ -92,7 +92,8 @@ export function route<P extends Record<string, string> = Record<string, string>>
       }
 
       const result = await handler({ user, params, request });
-      if (result instanceof NextResponse) return result;
+      // A handler that built its own Response (a CSV download, say) is returned as-is.
+      if (result instanceof Response) return result;
 
       if (key) await storeIdempotent(key, user.id, result);
       return NextResponse.json(result);

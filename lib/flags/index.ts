@@ -10,8 +10,9 @@ import type { Tx } from "@/db";
 import { flags } from "@/db/schema";
 import { lineItemTotals, departmentTotals } from "@/lib/queries/budget";
 import {
+  F8_largeAdvance, F9_invoiceMismatch, F12_deliveryOverdue,
   F13_missingSupport, F14_aboveQuote, REIMBURSEMENT_RULES,
-  type LineItemFacts, type ReimbursementFacts,
+  type LineItemFacts, type ReimbursementFacts, type VendorFacts,
 } from "./rules";
 import { thresholdsFrom, type FlagResult } from "./types";
 
@@ -166,6 +167,51 @@ export async function evaluateLineItemFlags(tx: Tx, lineItemId: string): Promise
     .filter((r): r is FlagResult => r !== null);
 
   await reconcile(tx, String(row.fest_id), "LINE_ITEM", lineItemId, results);
+  return results;
+}
+
+/**
+ * F8, F9 and F12 on a vendor request (8.2). F12 is also swept nightly by
+ * /api/v1/cron/vendor-overdue, because "the date passed" needs no write to become true.
+ */
+export async function evaluateVendorFlags(tx: Tx, requestId: string): Promise<FlagResult[]> {
+  const [row] = (await tx.execute(sql`
+    select vr.id, vr.fest_id, vr.total_value_paise, vr.approved_value_paise,
+           vr.expected_delivery_on, vr.delivered_at, vr.status, f.settings,
+           current_date::text as today,
+           coalesce((select planned_paise from vendor_milestones
+                      where vendor_request_id = vr.id and kind = 'ADVANCE'
+                      order by sort_order limit 1), 0) as advance_paise,
+           (select quoted_amount_paise from attachments
+             where entity_type = 'VENDOR_REQUEST' and entity_id = vr.id
+               and purpose = 'INVOICE' and removed_at is null
+               and quoted_amount_paise is not null
+             order by created_at desc limit 1) as invoice_total
+    from vendor_requests vr join fests f on f.id = vr.fest_id
+    where vr.id = ${requestId} and vr.deleted_at is null
+  `)) as unknown as Record<string, unknown>[];
+  if (!row) return [];
+
+  const thresholds = thresholdsFrom(row.settings);
+  const facts: VendorFacts = {
+    totalValuePaise: Number(row.total_value_paise),
+    advancePaise: Number(row.advance_paise),
+    approvedValuePaise: row.approved_value_paise === null ? null : Number(row.approved_value_paise),
+    invoiceTotalPaise: row.invoice_total === null ? null : Number(row.invoice_total),
+    expectedDeliveryOn: (row.expected_delivery_on as string) ?? null,
+    deliveredAt: (row.delivered_at as Date) ?? null,
+    today: String(row.today),
+  };
+
+  // A settled request is history — stop nagging about its delivery date.
+  const settled = ["CLOSED", "DECLINED", "CANCELLED"].includes(String(row.status));
+  const results = [
+    F8_largeAdvance(facts, thresholds),
+    F9_invoiceMismatch(facts),
+    settled ? null : F12_deliveryOverdue(facts),
+  ].filter((r): r is FlagResult => r !== null);
+
+  await reconcile(tx, String(row.fest_id), "VENDOR_REQUEST", requestId, results);
   return results;
 }
 
