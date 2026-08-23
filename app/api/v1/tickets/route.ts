@@ -3,20 +3,37 @@ import { parseBody, parseQuery, route } from "@/lib/api";
 import { createTicket, listTickets } from "@/lib/services/tickets";
 import { TICKET_STATES } from "@/lib/state-machines/ticket";
 
+const VIEWS = ["inbox", "outgoing", "mine", "raised", "all"] as const;
+
 const listQuery = z.object({
-  scope: z.enum(["inbox", "outgoing", "mine", "all"]).default("inbox"),
+  /** 20.9 calls it `view`; `scope` is the older name and still works. */
+  view: z.enum(VIEWS).optional(),
+  scope: z.enum(VIEWS).optional(),
   status: z.string().optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
+  department_id: z.uuid().optional(),
+  assignee_id: z.uuid().optional(),
   overdue: z.enum(["0", "1"]).optional(),
+  escalated: z.enum(["0", "1"]).optional(),
+  q: z.string().max(120).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(200),
 });
 
+/** PRD 20.9 — `view=inbox|outgoing|mine|raised|all`, scoped to what the caller may see. */
 export const GET = route(async ({ user, request }) => {
   const f = parseQuery(request, listQuery);
   const status = f.status?.split(",").filter((s) => (TICKET_STATES as readonly string[]).includes(s));
   return {
     data: await listTickets(user, {
-      scope: f.scope, status, priority: f.priority, overdue: f.overdue === "1", limit: f.limit,
+      view: f.view ?? f.scope ?? "inbox",
+      status,
+      priority: f.priority,
+      departmentId: f.department_id,
+      assigneeId: f.assignee_id,
+      overdue: f.overdue === "1",
+      escalated: f.escalated === "1",
+      q: f.q,
+      limit: f.limit,
     }),
     next_cursor: null,
   };

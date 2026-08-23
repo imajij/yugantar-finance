@@ -2,7 +2,7 @@
  * Route-handler plumbing (PRD 20.1). Handlers parse, call `can`, call a service,
  * and respond — no business logic here or in them.
  */
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { eq } from "drizzle-orm";
 import { ZodError, type ZodType } from "zod";
 import { db } from "@/db";
@@ -10,6 +10,7 @@ import { idempotencyKeys } from "@/db/schema";
 import { Forbidden } from "@/lib/authz";
 import { InvalidTransition, ValidationError } from "@/lib/state-machines/types";
 import { Unauthenticated, requireSession, type SessionUser } from "@/lib/session";
+import { flushOutbox } from "@/lib/services/notifications";
 
 export type ErrorCode =
   | "VALIDATION_ERROR" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND"
@@ -92,6 +93,21 @@ export function route<P extends Record<string, string> = Record<string, string>>
       }
 
       const result = await handler({ user, params, request });
+
+      // Notifications are written inside the same transaction as the write that
+      // caused them, then delivered here — after the response, so a slow mail
+      // provider costs the user nothing and a failed send costs them nothing either
+      // (the row stays unsent and the sweep retries it).
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        after(async () => {
+          try {
+            await flushOutbox();
+          } catch (error) {
+            console.error("[outbox] flush failed", error);
+          }
+        });
+      }
+
       // A handler that built its own Response (a CSV download, say) is returned as-is.
       if (result instanceof Response) return result;
 

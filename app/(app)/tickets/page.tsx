@@ -8,6 +8,7 @@ const SCOPES: { key: TicketScope; label: string; hint: string }[] = [
   { key: "inbox", label: "Inbox", hint: "Asked of your department" },
   { key: "outgoing", label: "Sent", hint: "Your department's asks of others" },
   { key: "mine", label: "Mine", hint: "Assigned to you" },
+  { key: "raised", label: "Raised by me", hint: "Tickets you asked for" },
   { key: "all", label: "All", hint: "Everything you can see" },
 ];
 
@@ -28,12 +29,13 @@ export default async function TicketsPage({
   const overdue = q.overdue === "1";
 
   const [rows, counts] = await Promise.all([
-    listTickets(user, { scope, overdue }),
+    listTickets(user, { view: scope, overdue }),
     ticketCounts(user),
   ]);
 
   const badge: Record<TicketScope, number> = {
-    inbox: counts.inbox, outgoing: counts.outgoing, mine: counts.mine, all: 0,
+    inbox: counts.inbox, outgoing: counts.outgoing, mine: counts.mine,
+    raised: counts.awaitingMyConfirmation, all: 0,
   };
 
   return (

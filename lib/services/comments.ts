@@ -6,47 +6,25 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { commentMentions, comments, users } from "@/db/schema";
 import { ApiError, notFound } from "@/lib/api";
-import { canComment, type Action } from "@/lib/authz";
+import { canComment } from "@/lib/authz";
+import { VIEW_ACTION, resolveEntity, type EntityType } from "@/lib/entities";
 import type { SessionUser } from "@/lib/session";
 import { notify } from "./notifications";
 
-export type CommentableType = "REIMBURSEMENT" | "VENDOR_REQUEST" | "TICKET" | "LINE_ITEM" | "INCOME_ENTRY";
+export type CommentableType = Extract<
+  EntityType, "REIMBURSEMENT" | "VENDOR_REQUEST" | "TICKET" | "LINE_ITEM" | "INCOME_ENTRY"
+>;
 
-const VIEW_ACTION: Record<CommentableType, Action> = {
-  REIMBURSEMENT: "reimbursement.view",
-  VENDOR_REQUEST: "vendorRequest.view",
-  TICKET: "ticket.view",
-  LINE_ITEM: "lineItem.view",
-  INCOME_ENTRY: "income.view",
-};
+/** PRD 20.10 — an author may correct a typo, not rewrite history an hour later. */
+export const EDIT_WINDOW_MS = 5 * 60 * 1000;
 
 /** Resolves the parent so visibility is checked against the real row, not the caller's claim. */
-async function parentResource(actor: SessionUser, type: CommentableType, id: string) {
-  const table = {
-    REIMBURSEMENT: "reimbursement_requests", VENDOR_REQUEST: "vendor_requests",
-    TICKET: "tickets", LINE_ITEM: "line_items", INCOME_ENTRY: "income_entries",
-  }[type];
-
-  const [row] = (await db.execute(sql`
-    select ${type === "TICKET" ? sql`requesting_department_id` : sql`department_id`} as department_id,
-           ${type === "TICKET" ? sql`target_department_id` : sql`null::uuid`}        as target_department_id,
-           ${type === "TICKET" ? sql`requester_id`
-             : type === "REIMBURSEMENT" ? sql`requester_id`
-             : type === "VENDOR_REQUEST" ? sql`requested_by`
-             : sql`null::uuid`}                                                       as submitter_id,
-           ${type === "TICKET" ? sql`assignee_id` : sql`null::uuid`}                  as assignee_id
-      from ${sql.raw(table)}
-     where id = ${id} and fest_id = ${actor.festId}
-  `)) as unknown as Record<string, string | null>[];
-  if (!row) throw notFound(type.toLowerCase().replace("_", " "));
-
-  return {
-    festId: actor.festId,
-    departmentId: row.department_id ?? undefined,
-    targetDepartmentId: row.target_department_id ?? undefined,
-    submitterId: row.submitter_id ?? undefined,
-    assigneeId: row.assignee_id ?? undefined,
-  };
+async function assertVisible(actor: SessionUser, type: CommentableType, id: string) {
+  const resource = await resolveEntity(actor.festId, type, id);
+  if (!canComment(actor, VIEW_ACTION[type], resource)) {
+    throw new ApiError("FORBIDDEN", "You cannot see this thread");
+  }
+  return resource;
 }
 
 const MENTION = /@([a-z0-9._-]+@[a-z0-9.-]+)/gi;
@@ -54,10 +32,7 @@ const MENTION = /@([a-z0-9._-]+@[a-z0-9.-]+)/gi;
 export async function addComment(
   actor: SessionUser, type: CommentableType, entityId: string, body: string,
 ) {
-  const resource = await parentResource(actor, type, entityId);
-  if (!canComment(actor, VIEW_ACTION[type], resource)) {
-    throw new ApiError("FORBIDDEN", "You cannot comment on this");
-  }
+  await assertVisible(actor, type, entityId);
 
   return db.transaction(async (tx) => {
     const [row] = await tx.insert(comments).values({
@@ -82,10 +57,7 @@ export async function addComment(
 }
 
 export async function listComments(actor: SessionUser, type: CommentableType, entityId: string) {
-  const resource = await parentResource(actor, type, entityId);
-  if (!canComment(actor, VIEW_ACTION[type], resource)) {
-    throw new ApiError("FORBIDDEN", "You cannot see this thread");
-  }
+  await assertVisible(actor, type, entityId);
   return db
     .select({
       id: comments.id, body: comments.body, author: users.name,
@@ -96,12 +68,25 @@ export async function listComments(actor: SessionUser, type: CommentableType, en
     .orderBy(asc(comments.createdAt));
 }
 
-/** Authors may edit their own comment; nobody edits anyone else's (7.6). */
+/**
+ * Authors may edit their own comment within five minutes (20.10); nobody edits
+ * anyone else's, ever. Past the window the record keeps what was actually said —
+ * a comment is often the reason attached to a decision.
+ */
 export async function editComment(actor: SessionUser, id: string, body: string) {
+  const [existing] = await db.select().from(comments)
+    .where(and(eq(comments.id, id), eq(comments.festId, actor.festId))).limit(1);
+  if (!existing) throw notFound("Comment");
+  if (existing.authorId !== actor.id) {
+    throw new ApiError("FORBIDDEN", "You can only edit your own comments");
+  }
+  if (Date.now() - existing.createdAt.getTime() > EDIT_WINDOW_MS) {
+    throw new ApiError("VALIDATION_ERROR", "Comments can only be edited within five minutes of posting");
+  }
+
   const [row] = await db.update(comments)
     .set({ body, editedAt: new Date() })
-    .where(and(eq(comments.id, id), eq(comments.authorId, actor.id), eq(comments.festId, actor.festId)))
+    .where(eq(comments.id, id))
     .returning();
-  if (!row) throw notFound("Comment");
   return row;
 }

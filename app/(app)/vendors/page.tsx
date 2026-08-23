@@ -4,7 +4,7 @@ import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { departments, vendorRequests, vendors } from "@/db/schema";
 import { getSession } from "@/lib/session";
-import { can } from "@/lib/authz";
+import { can, canFestWide } from "@/lib/authz";
 import { redactVendor, vendorExposure } from "@/lib/services/vendors";
 import { Amount, Card, Empty, PageTitle, StateChip } from "@/components/ui";
 
@@ -32,7 +32,7 @@ export default async function VendorsPage() {
       .where(and(
         eq(vendorRequests.festId, user.festId),
         isNull(vendorRequests.deletedAt),
-        can(user, "vendorRequest.view", { festId: user.festId, departmentId: "any" })
+        canFestWide(user, "vendorRequest.view")
           ? undefined
           : eq(vendorRequests.departmentId, user.departmentId),
       ))

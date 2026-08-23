@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { departments, lineItems, vendorRequests, vendors } from "@/db/schema";
-import { can } from "@/lib/authz";
+import { assertCan, canFestWide } from "@/lib/authz";
 import { page, parseBody, parseQuery, route } from "@/lib/api";
 import { createVendorRequest } from "@/lib/services/vendors";
 import { VENDOR_STATES } from "@/lib/state-machines/vendor";
@@ -15,9 +15,11 @@ const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+/** PRD 20.7 — H sees their own department; F and Mg see all. A Member sees none. */
 export const GET = route(async ({ user, request }) => {
+  assertCan(user, "vendorRequest.view", { festId: user.festId, departmentId: user.departmentId });
   const f = parseQuery(request, listQuery);
-  const seesAll = can(user, "vendorRequest.view", { festId: user.festId, departmentId: "any" });
+  const seesAll = canFestWide(user, "vendorRequest.view");
   const statuses = f.status?.split(",").filter((s) => (VENDOR_STATES as readonly string[]).includes(s));
 
   const rows = await db

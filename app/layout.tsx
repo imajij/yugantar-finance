@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Lexend, Reem_Kufi_Fun, Source_Code_Pro } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
+import { clerkConfigured } from "@/lib/clerk";
 import "./globals.css";
 
 // PRD 9.1 typography — the three faces the fest site already loads.
@@ -10,12 +12,17 @@ const sourceCodePro = Source_Code_Pro({ subsets: ["latin"], weight: ["400", "600
 export const metadata: Metadata = {
   title: "Yugaantar Finance & Operations",
   description: "Budget, reimbursements, vendors, income and work tickets for Yugaantar '26.",
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (
+  const shell = (
     <html lang="en" className={`${lexend.variable} ${reemKufi.variable} ${sourceCodePro.variable}`}>
       <body>{children}</body>
     </html>
   );
+
+  // ClerkProvider throws without a publishable key, so it is only mounted once one
+  // exists. Everything below it works identically under the dev sign-in.
+  return clerkConfigured() ? <ClerkProvider>{shell}</ClerkProvider> : shell;
 }

@@ -10,11 +10,12 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import { attachments, departments, lineItems } from "@/db/schema";
-import { assertCan, type Actor } from "@/lib/authz";
+import { assertCan, can, type Actor } from "@/lib/authz";
 import { ApiError, notFound, overAllocation } from "@/lib/api";
 import { assertLineItemTransition, type LineItemAction } from "@/lib/state-machines/line-item";
 import { satisfiesActorConstraints } from "@/lib/authz";
 import { lineItemTotals } from "@/lib/queries/budget";
+import { evaluateLineItemFlags } from "@/lib/flags";
 import { recordAudit, snapshot } from "./audit";
 
 const AUDITED = ["name", "description", "plannedPaise", "status", "defaultExpenseTypeId", "reviewedAt"] as const;
@@ -236,4 +237,214 @@ export async function openLineItemsFor(departmentId: string, festId: string) {
       eq(lineItems.status, "OPEN"),
       isNull(lineItems.deletedAt),
     ));
+}
+
+/* -------------------------------------------------- supporting documents (20.5) */
+
+export interface DocumentInput {
+  /** A file already uploaded through the presign flow… */
+  attachmentId?: string;
+  /** …or a link to an online listing, which skips the upload entirely (20.2 step 5). */
+  url?: string;
+  label: string;
+  sourceName?: string | null;
+  quotedAmountPaise?: number | null;
+  purpose?: "QUOTE" | "LISTING" | "OTHER";
+}
+
+/**
+ * Adding a supporting document re-runs F13 and F14: the document threshold is what
+ * makes a line item attachable at all (21.4), and the lowest quote is what F14
+ * compares the planned amount against. Both have to be reconsidered here, in the
+ * same transaction, or the flags describe a state that no longer exists.
+ */
+export async function addDocument(actor: Actor, lineItemId: string, input: DocumentInput) {
+  if (!input.attachmentId && !input.url) {
+    throw new ApiError("VALIDATION_ERROR", "A document needs either an uploaded file or a link");
+  }
+
+  return db.transaction(async (tx) => {
+    const item = await loadForWrite(tx, actor, lineItemId, "lineItem.document.manage");
+
+    const [{ count }] = (await tx.execute<{ count: string }>(sql`
+      select count(*) as count from attachments
+      where entity_type = 'LINE_ITEM' and entity_id = ${lineItemId} and removed_at is null
+    `)) as unknown as { count: string }[];
+    if (Number(count) + 1 > MAX_DOCUMENTS) {
+      throw new ApiError("VALIDATION_ERROR", `A line item may carry at most ${MAX_DOCUMENTS} supporting documents`);
+    }
+
+    let doc;
+    if (input.attachmentId) {
+      const [updated] = await tx.update(attachments)
+        .set({
+          entityType: "LINE_ITEM", entityId: lineItemId,
+          label: input.label,
+          sourceName: input.sourceName ?? null,
+          quotedAmountPaise: input.quotedAmountPaise ?? null,
+        })
+        .where(and(
+          eq(attachments.id, input.attachmentId),
+          eq(attachments.festId, actor.festId),
+          eq(attachments.uploadedBy, actor.id),
+          isNull(attachments.entityId),
+          isNull(attachments.removedAt),
+        ))
+        .returning();
+      if (!updated) {
+        throw new ApiError("VALIDATION_ERROR", "That upload was already used, removed, or is not yours");
+      }
+      doc = updated;
+    } else {
+      let parsed: URL;
+      try {
+        parsed = new URL(input.url!);
+      } catch {
+        throw new ApiError("VALIDATION_ERROR", "That is not a valid URL");
+      }
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+        throw new ApiError("VALIDATION_ERROR", "Links must be http or https");
+      }
+      const [created] = await tx.insert(attachments).values({
+        festId: actor.festId,
+        entityType: "LINE_ITEM",
+        entityId: lineItemId,
+        purpose: input.purpose ?? "LISTING",
+        kind: "LINK",
+        url: parsed.toString(),
+        label: input.label,
+        sourceName: input.sourceName ?? null,
+        quotedAmountPaise: input.quotedAmountPaise ?? null,
+        uploadedBy: actor.id,
+      }).returning();
+      doc = created;
+    }
+
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "LINE_ITEM", entityId: item.id, actorId: actor.id,
+      action: "line_item.document.add",
+      after: {
+        attachment_id: doc.id, kind: doc.kind, label: doc.label,
+        source_name: doc.sourceName, quoted_amount_paise: doc.quotedAmountPaise,
+      },
+    });
+
+    await evaluateLineItemFlags(tx, item.id);
+    return doc;
+  });
+}
+
+/** 20.5 — correcting a label, a source or a quoted amount. Also re-runs F14. */
+export async function updateDocument(
+  actor: Actor, lineItemId: string, attachmentId: string,
+  patch: { label?: string; sourceName?: string | null; quotedAmountPaise?: number | null },
+) {
+  return db.transaction(async (tx) => {
+    const item = await loadForWrite(tx, actor, lineItemId, "lineItem.document.manage");
+
+    const [before] = await tx.select().from(attachments)
+      .where(and(
+        eq(attachments.id, attachmentId),
+        eq(attachments.entityType, "LINE_ITEM"),
+        eq(attachments.entityId, lineItemId),
+        isNull(attachments.removedAt),
+      )).limit(1);
+    if (!before) throw notFound("Document");
+
+    const [after] = await tx.update(attachments).set({
+      label: patch.label ?? before.label,
+      sourceName: patch.sourceName === undefined ? before.sourceName : patch.sourceName,
+      quotedAmountPaise: patch.quotedAmountPaise === undefined ? before.quotedAmountPaise : patch.quotedAmountPaise,
+    }).where(eq(attachments.id, attachmentId)).returning();
+
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "LINE_ITEM", entityId: item.id, actorId: actor.id,
+      action: "line_item.document.update",
+      before: { label: before.label, source_name: before.sourceName, quoted_amount_paise: before.quotedAmountPaise },
+      after: { label: after.label, source_name: after.sourceName, quoted_amount_paise: after.quotedAmountPaise },
+    });
+
+    await evaluateLineItemFlags(tx, item.id);
+    return after;
+  });
+}
+
+/** 20.5 — the documents on a line item, with the lowest quote F14 compares against. */
+export async function listDocuments(actor: Actor, lineItemId: string, opts: { includeRemoved?: boolean } = {}) {
+  const [item] = await db.select().from(lineItems)
+    .where(and(eq(lineItems.id, lineItemId), eq(lineItems.festId, actor.festId), isNull(lineItems.deletedAt)))
+    .limit(1);
+  if (!item) throw notFound("Line item");
+  assertCan(actor, "lineItem.view", { festId: actor.festId, departmentId: item.departmentId });
+
+  // Removed documents are Finance's business only — they are the audit trail of a
+  // quote that was swapped out, which is exactly what 8.2's F14 is about.
+  const includeRemoved = opts.includeRemoved && can(actor, "budgetReview.view", { festId: actor.festId });
+
+  const docs = await db.select().from(attachments)
+    .where(and(
+      eq(attachments.entityType, "LINE_ITEM"),
+      eq(attachments.entityId, lineItemId),
+      includeRemoved ? undefined : isNull(attachments.removedAt),
+    ))
+    .orderBy(attachments.createdAt);
+
+  const quotes = docs
+    .filter((d) => !d.removedAt && d.quotedAmountPaise !== null)
+    .map((d) => d.quotedAmountPaise as number);
+
+  return {
+    documents: docs,
+    lowest_quote_paise: quotes.length ? Math.min(...quotes) : null,
+    planned_paise: item.plannedPaise,
+  };
+}
+
+/**
+ * 20.5 `/budget-review` — Finance's sweep across every department.
+ *
+ * Ordered so the items that need a decision come first: unreviewed items above the
+ * document threshold, then anything whose planned amount sits above its lowest
+ * quote (F14), then the rest. That ordering *is* the screen's purpose.
+ */
+export async function budgetReview(actor: Actor) {
+  assertCan(actor, "budgetReview.view", { festId: actor.festId });
+
+  return (await db.execute(sql`
+    with docs as (
+      select a.entity_id as line_item_id,
+             count(*)::int as document_count,
+             min(a.quoted_amount_paise) as lowest_quote_paise
+        from attachments a
+       where a.entity_type = 'LINE_ITEM' and a.removed_at is null
+       group by a.entity_id
+    )
+    select li.id, li.name, li.status::text as status, li.planned_paise,
+           li.reviewed_at, ru.name as reviewed_by,
+           d.id as department_id, d.name as department,
+           coalesce(docs.document_count, 0) as document_count,
+           docs.lowest_quote_paise,
+           v.pending_paise, v.committed_paise, v.spent_paise, v.available_paise,
+           threshold.value as doc_threshold_paise,
+           (li.planned_paise >= threshold.value and coalesce(docs.document_count, 0) = 0) as needs_documents,
+           (docs.lowest_quote_paise is not null and li.planned_paise > docs.lowest_quote_paise) as above_lowest_quote,
+           (select count(*)::int from flags f
+             where f.entity_type = 'LINE_ITEM' and f.entity_id = li.id and f.status = 'OPEN') as open_flags
+      from line_items li
+      join departments d on d.id = li.department_id
+      left join docs on docs.line_item_id = li.id
+      left join v_line_item_totals v on v.line_item_id = li.id
+      left join users ru on ru.id = li.reviewed_by
+      cross join lateral (
+        select coalesce((f.settings->>'line_item_doc_threshold_paise')::bigint, 0) as value
+          from fests f where f.id = li.fest_id
+      ) threshold
+     where li.fest_id = ${actor.festId} and li.deleted_at is null
+     order by
+       (li.reviewed_at is null and li.planned_paise >= threshold.value
+        and coalesce(docs.document_count, 0) = 0) desc,
+       (docs.lowest_quote_paise is not null and li.planned_paise > docs.lowest_quote_paise) desc,
+       li.reviewed_at nulls first,
+       li.planned_paise desc
+  `)) as unknown as Record<string, unknown>[];
 }

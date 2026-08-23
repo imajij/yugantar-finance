@@ -2,7 +2,7 @@
  * PRD 7.4 / 6.3 — income. Status is derived from the tranches, never typed in, and
  * in-kind sponsorship is excluded from the cash position by the view, not by JS.
  */
-import { beforeEach, expect, test } from "vitest";
+import { afterAll, beforeEach, expect, test } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import type { Actor } from "@/lib/authz";
@@ -11,6 +11,9 @@ import {
   createIncome, incomeLedger, recordTranche, sponsorStatement, transitionIncome,
 } from "@/lib/services/income";
 import { festTotals, incomeTotalsByType } from "@/lib/queries/budget";
+import { dropFests } from "@/lib/test-support";
+
+afterAll(() => dropFests(db, "inc-"));
 
 let festId: string, techId: string, financeDeptId: string, coreId: string;
 let finance: Actor, techHod: Actor, mgmt: Actor;

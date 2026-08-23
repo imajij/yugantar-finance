@@ -11,8 +11,11 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { departments, users } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
+import { clerkConfigured } from "@/lib/clerk";
 
 export const DEV_USER_COOKIE = "yg_dev_user";
+
+export { clerkConfigured };
 
 export class Unauthenticated extends Error {
   readonly code = "UNAUTHENTICATED";
@@ -30,8 +33,6 @@ export interface SessionUser extends Actor {
   upiId: string | null;
   status: "INVITED" | "ACTIVE" | "DISABLED";
 }
-
-export const clerkConfigured = () => Boolean(process.env.CLERK_SECRET_KEY);
 
 const devAuthAllowed = () => !clerkConfigured() && process.env.NODE_ENV !== "production";
 

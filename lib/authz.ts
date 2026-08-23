@@ -220,6 +220,18 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
   }
 }
 
+/**
+ * "May they do this fest-wide, or only for their own department?"
+ *
+ * Asking `can` with no department in the resource answers it: the own-department
+ * clause cannot match, so only the roles with fest-wide reach return true. List
+ * endpoints use this to decide whether to add a department filter, which keeps the
+ * scoping decision inside `can` rather than duplicating role checks in queries.
+ */
+export function canFestWide(actor: Actor, action: Action): boolean {
+  return can(actor, action, { festId: actor.festId });
+}
+
 export class Forbidden extends Error {
   readonly code = "FORBIDDEN";
   constructor(action: Action) {

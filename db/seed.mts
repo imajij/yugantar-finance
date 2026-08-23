@@ -9,6 +9,8 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema.js";
 import { rupeesToPaise } from "../lib/money.js";
+import { withAuditGuardLifted } from "../lib/test-support.js";
+import { evaluateLineItemFlags } from "../lib/flags/index.js";
 
 const {
   fests, departments, users, expenseTypes, lineItems, attachments, vendors,
@@ -24,6 +26,9 @@ const existing = await db.select({ id: fests.id }).from(fests).where(sql`slug = 
 if (existing.length > 0) {
   console.log("seed: yugaantar-26 already exists — dropping and reseeding");
   const id = existing[0].id;
+  // `audit_events` is append-only in normal operation; a reseed is the documented
+  // exception and says so out loud rather than quietly deleting.
+  await withAuditGuardLifted(db, async (tx) => {
   for (const stmt of [
     sql`delete from income_tranches where income_entry_id in (select id from income_entries where fest_id = ${id})`,
     sql`delete from income_entries where fest_id = ${id}`,
@@ -49,7 +54,8 @@ if (existing.length > 0) {
     sql`delete from ticket_templates where fest_id = ${id}`,
     sql`delete from departments where fest_id = ${id}`,
     sql`delete from fests where id = ${id}`,
-  ]) await db.execute(stmt);
+  ]) await tx.execute(stmt);
+  });
 }
 
 const [fest] = await db.insert(fests).values({
@@ -141,13 +147,29 @@ await db.insert(vendors).values([
   { festId: fest.id, name: "Sri Travels", contactName: "Kumar", phone: "+91 90000 00002", bankAccountName: "Sri Travels", bankAccountNumber: "123456789012", bankIfsc: "HDFC0001234", createdBy: user["logistics.hod"].id },
 ]);
 
+/**
+ * Flags are evaluated on write (8.3), and nothing here goes through a service, so
+ * the demo would open with an empty flags panel. Running the rules once at the end
+ * makes the seeded state honest: Stage lighting and the other undocumented items
+ * above the threshold raise F13, and Sound system raises F14 for being planned
+ * above its own lowest quote.
+ */
+await db.transaction(async (tx) => {
+  for (const li of items) await evaluateLineItemFlags(tx as never, li.id);
+});
+
 const [totals] = await db.execute<Record<string, string>>(
   sql`select * from v_fest_totals where fest_id = ${fest.id}`,
+) as unknown as Record<string, string>[];
+
+const [flagged] = await db.execute<Record<string, string>>(
+  sql`select count(*) as n from flags where fest_id = ${fest.id} and status = 'OPEN'`,
 ) as unknown as Record<string, string>[];
 
 console.log(`seeded ${fest.name}`);
 console.log(`  departments   ${deptRows.length}   users ${userRows.length}   line items ${items.length}`);
 console.log(`  total budget  ${Number(totals.total_budget_paise) / 100}`);
 console.log(`  reserve       ${Number(totals.reserve_paise) / 100}`);
+console.log(`  open flags    ${flagged.n}`);
 console.log(`  sign in as    finance.hod@${DOMAIN}`);
 await client.end();
