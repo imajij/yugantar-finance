@@ -94,21 +94,32 @@ for (const m of machines) {
 }
 
 describe("segregation of duties (PRD 5.2)", () => {
-  test("an HOD skips endorsement on their own department's budget, and only there", () => {
-    // Nobody endorses their own request, so an HOD spending their own department's
-    // allocation goes straight to HOD_ENDORSED (7.2).
-    expect(landingStateForSubmit("DEPT_HOD", true)).toBe("HOD_ENDORSED");
-    expect(landingStateForSubmit("FINANCE_HOD", true)).toBe("HOD_ENDORSED");
+  test("a lone HOD skips endorsement on their own department's budget, and only there", () => {
+    // Nobody endorses their own request, so the sole head of a department spending
+    // its own allocation goes straight to HOD_ENDORSED (7.2).
+    expect(landingStateForSubmit("DEPT_HOD", true, false)).toBe("HOD_ENDORSED");
+    expect(landingStateForSubmit("FINANCE_HOD", true, false)).toBe("HOD_ENDORSED");
 
     // But an HOD spending *another* department's allocation must still be endorsed
     // by that department — skipping on role alone would be a way around it.
-    expect(landingStateForSubmit("DEPT_HOD", false)).toBe("SUBMITTED");
-    expect(landingStateForSubmit("FINANCE_HOD", false)).toBe("SUBMITTED");
+    expect(landingStateForSubmit("DEPT_HOD", false, false)).toBe("SUBMITTED");
+    expect(landingStateForSubmit("FINANCE_HOD", false, false)).toBe("SUBMITTED");
 
     // A Member is endorsed wherever they spend.
-    expect(landingStateForSubmit("MEMBER", true)).toBe("SUBMITTED");
-    expect(landingStateForSubmit("MEMBER", false)).toBe("SUBMITTED");
-    expect(landingStateForSubmit("MANAGEMENT", true)).toBe("SUBMITTED");
+    expect(landingStateForSubmit("MEMBER", true, false)).toBe("SUBMITTED");
+    expect(landingStateForSubmit("MEMBER", false, false)).toBe("SUBMITTED");
+    expect(landingStateForSubmit("MANAGEMENT", true, false)).toBe("SUBMITTED");
+  });
+
+  test("where a department has a second head, that head does the endorsing", () => {
+    // 7.2 skips the step because the only eligible endorser is the submitter. That
+    // stops being true the moment a department has more than one head, and a peer
+    // reviewing it is the whole point of endorsement.
+    expect(landingStateForSubmit("DEPT_HOD", true, true)).toBe("SUBMITTED");
+    expect(landingStateForSubmit("FINANCE_HOD", true, true)).toBe("SUBMITTED");
+
+    // A peer elsewhere changes nothing about a claim on another department.
+    expect(landingStateForSubmit("DEPT_HOD", false, true)).toBe("SUBMITTED");
   });
 
   test("a Finance HOD's own reimbursement is approved by Management", () => {
