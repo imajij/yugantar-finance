@@ -84,6 +84,7 @@ From there everything is done in the app, in this order:
 | `pnpm typecheck` · `pnpm lint` | `tsc --noEmit` · ESLint |
 | `pnpm db:generate` | Regenerate a migration after editing `db/schema.ts` |
 | `pnpm db:migrate` | Apply migrations |
+| `pnpm vercel-build` | What the deploy runs: migrate, then build |
 | `pnpm db:seed` | Bootstrap the fest and its first administrator (idempotent; `--reset` starts over) |
 | `pnpm db:studio` | Drizzle Studio |
 | `pnpm env:check` | Which API keys are set, what they unlock, what is missing |

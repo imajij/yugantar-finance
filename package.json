@@ -5,17 +5,18 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "vercel-build": "tsx db/migrate.mts && next build",
     "start": "next start",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=.env.local db/migrate.mts",
     "db:seed": "tsx --env-file=.env.local db/seed.mts",
     "db:studio": "drizzle-kit studio",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "r2:check": "tsx --env-file=.env.local infra/r2-check.mts",
     "env:check": "tsx infra/env-check.mts",
-    "smoke": "tsx --env-file=.env.local infra/smoke.mts"
+    "r2:check": "tsx --env-file=.env.local infra/r2-check.mts",
+    "smoke": "tsx --env-file=.env.local infra/smoke.mts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.7.9",
