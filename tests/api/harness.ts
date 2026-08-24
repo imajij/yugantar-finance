@@ -52,6 +52,8 @@ export interface Fixture {
   >;
   lineItemId: string;
   otherLineItemId: string;
+  /** On the Finance department, so a Finance HOD can spend their own budget. */
+  financeLineItemId: string;
   expenseTypeId: string;
   vendorId: string;
 }
@@ -142,6 +144,7 @@ export async function buildFixture(slugPrefix: string): Promise<Fixture> {
     users,
     lineItemId: await lineItem(departments.tech, "Sound"),
     otherLineItemId: await lineItem(departments.logistics, "Chairs"),
+    financeLineItemId: await lineItem(departments.finance, "Office supplies"),
     expenseTypeId,
     vendorId,
   };

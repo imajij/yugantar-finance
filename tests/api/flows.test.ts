@@ -43,16 +43,79 @@ async function receipt(userId: string): Promise<string> {
   return row.id;
 }
 
-const newRequest = (attachmentId: string) => ({
-  line_item_id: fx.lineItemId,
-  expense_type_id: fx.expenseTypeId,
-  description: "Cables and gaffer tape for the main stage",
-  transaction_on: "2026-11-20",
-  amount_paise: 250000,
-  merchant: "Sound Works",
-  payee_name: "Tech Member",
-  payee_upi_id: "tm@upi",
-  attachment_ids: [attachmentId],
+/**
+ * A distinct claim each time. F1 flags a repeat of the same amount + date + merchant
+ * as a duplicate receipt, and rightly so — but a fixture that reuses one set of
+ * details makes every test after the first fight a High flag it never meant to
+ * create. Varying the merchant is enough to keep them genuinely different.
+ */
+let claimCount = 0;
+const newRequest = (attachmentId: string, overrides: Record<string, unknown> = {}) => {
+  claimCount += 1;
+  return {
+    line_item_id: fx.lineItemId,
+    expense_type_id: fx.expenseTypeId,
+    description: "Cables and gaffer tape for the main stage",
+    transaction_on: "2026-11-20",
+    amount_paise: 250000 + claimCount,
+    merchant: `Sound Works ${claimCount}`,
+    payee_name: "Tech Member",
+    payee_upi_id: `payee-${claimCount}@upi`,
+    attachment_ids: [attachmentId],
+    ...overrides,
+  };
+};
+
+/* ---------------------------------------------------- who endorses (PRD 7.2) */
+
+test("a Dept HOD cannot even reach another department's line item", async () => {
+  const create = (await load("reimbursements")).POST;
+
+  // `lineItem.view` is the gate: a Tech HOD has no business spending Logistics'
+  // allocation, so the claim never gets as far as a routing decision.
+  const created = await callAs(fx.users.hod, create, {
+    method: "POST",
+    body: { ...newRequest(await receipt(fx.users.hod.id), { line_item_id: fx.otherLineItemId }), submit: true },
+  });
+  expect(created.code).toBe("FORBIDDEN");
+});
+
+test("a Finance HOD spending another department's budget is still endorsed by them", async () => {
+  const create = (await load("reimbursements")).POST;
+  const transitions = (await load("reimbursements/[id]/transitions")).POST;
+
+  // Finance can see every line item, so this one does reach the routing decision.
+  // It must land in SUBMITTED: routing on role alone would let Finance spend Tech's
+  // allocation with the Tech HOD never seeing it.
+  const created = await callAs(fx.users.finance, create, {
+    method: "POST",
+    body: { ...newRequest(await receipt(fx.users.finance.id), { line_item_id: fx.lineItemId }), submit: true },
+  });
+  expect(created.status).toBe(200);
+  expect(created.json!.status).toBe("SUBMITTED");
+
+  const id = String(created.json!.id);
+  expect((await callAs(fx.users.hod, transitions, {
+    method: "POST", params: { id }, body: { action: "ENDORSE" },
+  })).json!.status).toBe("HOD_ENDORSED");
+});
+
+test("an HOD spending their own department's budget is never left unendorsable", async () => {
+  const create = (await load("reimbursements")).POST;
+
+  // Nobody may endorse their own request, and a fest has one Finance HOD — so if
+  // this landed in SUBMITTED there would be no one able to move it at all.
+  for (const [who, lineItemId] of [
+    [fx.users.hod, fx.lineItemId],
+    [fx.users.finance, fx.financeLineItemId],
+  ] as const) {
+    const created = await callAs(who, create, {
+      method: "POST",
+      body: { ...newRequest(await receipt(who.id), { line_item_id: lineItemId }), submit: true },
+    });
+    expect(created.status, `${who.role} submitting against their own department`).toBe(200);
+    expect(created.json!.status).toBe("HOD_ENDORSED");
+  }
 });
 
 /* -------------------------------------------------------- the reimbursement flow */

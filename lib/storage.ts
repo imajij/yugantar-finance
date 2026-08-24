@@ -18,6 +18,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { env, envOr } from "@/lib/env";
+import { NotConfigured } from "@/lib/api";
 
 /** PRD 14 — file types and sizes. */
 export const ALLOWED_MIME = [
@@ -177,7 +178,13 @@ function signingSecret(): string {
   const secret = env("UPLOAD_URL_SECRET");
   if (secret) return secret;
   if (process.env.NODE_ENV === "production") {
-    throw new Error("UPLOAD_URL_SECRET must be set when running without R2");
+    // Signing production upload URLs with a hard-coded development key would let
+    // anyone forge one, so this refuses rather than degrading quietly.
+    throw new NotConfigured(
+      "File uploads",
+      "Set the R2_* variables, or UPLOAD_URL_SECRET to keep using local disk. "
+      + "Run `pnpm env:check` to see what is missing.",
+    );
   }
   return "dev-upload-secret";
 }

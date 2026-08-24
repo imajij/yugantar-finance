@@ -14,7 +14,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "r2:check": "tsx --env-file=.env.local infra/r2-check.mts",
-    "env:check": "tsx infra/env-check.mts"
+    "env:check": "tsx infra/env-check.mts",
+    "smoke": "tsx --env-file=.env.local infra/smoke.mts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.7.9",

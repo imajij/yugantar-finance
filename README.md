@@ -30,7 +30,7 @@ list is deliberately not built — see [What is not built](#what-is-not-built).
 | No `number` arithmetic on rupees; `money.ts` is the only formatter | `tests/unit/money.test.ts`; `lib/money.ts` |
 | Every write produces an audit event with `before`/`after`; `audit_events` takes no UPDATE or DELETE | `db/migrations/0003_append_only_audit.sql` (trigger + revoked grants), `tests/db/budget-guards.test.ts` |
 | Attachments are never served from a public URL | `lib/services/attachments.ts`; `tests/api/flows.test.ts` |
-| `pnpm test`, `pnpm lint`, `pnpm typecheck` pass; `pnpm db:seed` produces a working deployment | 410 tests across 16 files |
+| `pnpm test`, `pnpm lint`, `pnpm typecheck` pass; `pnpm db:seed` produces a working deployment | 413 tests across 16 files, plus `pnpm smoke` over HTTP |
 
 ## Setup
 
@@ -87,6 +87,7 @@ From there everything is done in the app, in this order:
 | `pnpm db:seed` | Bootstrap the fest and its first administrator (idempotent; `--reset` starts over) |
 | `pnpm db:studio` | Drizzle Studio |
 | `pnpm env:check` | Which API keys are set, what they unlock, what is missing |
+| `pnpm smoke` | Drive every endpoint against a running server over HTTP, then tidy up |
 | `pnpm r2:check` | Round-trip the real R2 bucket: presign, upload, read back, delete |
 
 ## Architecture

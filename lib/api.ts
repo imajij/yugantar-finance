@@ -14,7 +14,11 @@ import { flushOutbox } from "@/lib/services/notifications";
 
 export type ErrorCode =
   | "VALIDATION_ERROR" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND"
-  | "INVALID_TRANSITION" | "CONFLICT" | "OVER_ALLOCATION" | "RATE_LIMITED";
+  | "INVALID_TRANSITION" | "CONFLICT" | "OVER_ALLOCATION" | "RATE_LIMITED"
+  // Beyond PRD 20.1's list: the request was fine, the deployment is not. A missing
+  // environment variable surfacing as "Something went wrong" costs an afternoon,
+  // and the operator is the one who needs to be told.
+  | "NOT_CONFIGURED";
 
 const STATUS: Record<ErrorCode, number> = {
   VALIDATION_ERROR: 422,
@@ -25,6 +29,7 @@ const STATUS: Record<ErrorCode, number> = {
   CONFLICT: 409,
   OVER_ALLOCATION: 409,
   RATE_LIMITED: 429,
+  NOT_CONFIGURED: 503,
 };
 
 export class ApiError extends Error {
@@ -43,6 +48,18 @@ export const overAllocation = (message: string, details?: Record<string, unknown
   new ApiError("OVER_ALLOCATION", message, details);
 export const conflict = (message: string, details?: Record<string, unknown>) =>
   new ApiError("CONFLICT", message, details);
+
+/**
+ * Thrown where the code cannot proceed because the deployment is missing something.
+ * Carries what to set, because whoever sees it is an operator, not an attacker —
+ * and naming an environment variable gives nothing away.
+ */
+export class NotConfigured extends ApiError {
+  constructor(what: string, fix: string) {
+    super("NOT_CONFIGURED", `${what} is not configured on this deployment.`, { fix });
+    this.name = "NotConfigured";
+  }
+}
 
 export function errorResponse(code: ErrorCode, message: string, details?: Record<string, unknown>) {
   return NextResponse.json({ error: { code, message, ...(details ? { details } : {}) } }, { status: STATUS[code] });

@@ -53,7 +53,11 @@ export async function createReimbursement(actor: Actor, input: CreateInput) {
     await assertDocumentThreshold(tx, actor.festId, item.id, item.plannedPaise);
 
     const humanId = await nextHumanId(tx, actor.festId, "RB");
-    const status: ReimbursementState = input.submit ? landingStateForSubmit(actor.role) : "DRAFT";
+    // The claim is charged to the line item's department, which is not necessarily
+    // the submitter's — that distinction is the whole point of the routing rule.
+    const status: ReimbursementState = input.submit
+      ? landingStateForSubmit(actor.role, item.departmentId === actor.departmentId)
+      : "DRAFT";
 
     const [row] = await tx.insert(reimbursementRequests).values({
       festId: actor.festId,
@@ -185,7 +189,7 @@ export async function transitionReimbursement(
       }
     }
 
-    const to = resolveTarget(before, action, submitter.role);
+    const to = resolveTarget(before, action, submitter.role, submitter.departmentId);
     const now = new Date();
     const reason = body.reason ?? body.note ?? null;
 
@@ -260,9 +264,14 @@ function assertActionPermission(
 
 /** SUBMIT and RESUBMIT land differently for an HOD (7.2 special routing). */
 function resolveTarget(
-  row: { status: ReimbursementState }, action: ReimbursementAction, submitterRole: Actor["role"],
+  row: { status: ReimbursementState; departmentId: string },
+  action: ReimbursementAction,
+  submitterRole: Actor["role"],
+  submitterDepartmentId: string,
 ): ReimbursementState {
-  if (action === "SUBMIT" || action === "RESUBMIT") return landingStateForSubmit(submitterRole);
+  if (action === "SUBMIT" || action === "RESUBMIT") {
+    return landingStateForSubmit(submitterRole, row.departmentId === submitterDepartmentId);
+  }
   const map: Partial<Record<ReimbursementAction, ReimbursementState>> = {
     ENDORSE: "HOD_ENDORSED", SEND_BACK: "SENT_BACK", DECLINE: "DECLINED",
     APPROVE: "APPROVED", HOLD: "ON_HOLD", RESOLVE_HOLD: "APPROVED",
