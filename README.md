@@ -86,6 +86,7 @@ From there everything is done in the app, in this order:
 | `pnpm db:migrate` | Apply migrations |
 | `pnpm db:seed` | Bootstrap the fest and its first administrator (idempotent; `--reset` starts over) |
 | `pnpm db:studio` | Drizzle Studio |
+| `pnpm env:check` | Which API keys are set, what they unlock, what is missing |
 | `pnpm r2:check` | Round-trip the real R2 bucket: presign, upload, read back, delete |
 
 ## Architecture
@@ -181,6 +182,47 @@ sign-in is a one-time link (`lib/auth.ts`). What makes that safe:
   so a copied cookie dies with it.
 
 `tests/api/auth.test.ts` covers each of those as a thing that must *not* work.
+
+### API keys
+
+Every key lives in **`.env.local`**, which is gitignored. Nothing is committed, and
+nothing is read from anywhere else in development.
+
+```bash
+cp .env.example .env.local     # if you have not already
+$EDITOR .env.local             # paste values after the `=`
+pnpm env:check                 # what is set, what it unlocks, what is missing
+```
+
+`pnpm env:check` reads the files the way Next does and reports which keys landed,
+which are present-but-blank, and what each missing one costs you. It never prints a
+value. Restart the dev server after editing — env files are read at startup.
+
+| Key | Where it comes from | Without it |
+|---|---|---|
+| `DATABASE_URL` | Neon connection string, or the local container | The app cannot start |
+| `APP_URL` | The address people actually reach the app on | Emailed links point at localhost |
+| `RESEND_API_KEY`, `EMAIL_FROM` | resend.com → API Keys; the from-address must be on a verified domain | Mail is logged, not sent — nobody you invite can sign in |
+| `R2_*` | Cloudflare → R2 → API → Manage API tokens ([full steps](#setting-up-r2)) | Files go to `./.uploads`, lost on redeploy |
+| `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | clerk.com → API Keys | Sign-in is an emailed link instead (both are fine) |
+| `CRON_SECRET` | `openssl rand -hex 32` | Every `/api/v1/cron/*` returns 403 |
+| `UPLOAD_URL_SECRET` | `openssl rand -hex 32` | Only needed when running **without** R2 in production |
+| `ANTHROPIC_API_KEY` | Nothing yet — OCR is v1.1 | No effect |
+
+**Blank is not the same as a value.** `.env.example` lists every optional key with
+nothing after the `=`, so a copied file is full of empty strings. The app treats
+blank as unset everywhere (`lib/env.ts`), which is why a half-filled `R2_*` block
+falls back to local disk rather than failing strangely.
+
+**Only keep one env file.** Next reads `.env`, then `.env.local` on top, so a key in
+both is a silent override — `env:check` warns when it finds one. Use `.env.local`.
+
+**In production the files are not used at all.** On Vercel, keys go in Project →
+Settings → Environment Variables, and a **redeploy** is what picks up a change.
+`NEXT_PUBLIC_`-prefixed values are baked into the client bundle at build time, so
+changing one needs a rebuild, not just a restart. `env:check` also flags the things
+that are fine locally and wrong in production: an `APP_URL` still on localhost, the
+example `CRON_SECRET`, and mail that goes nowhere.
 
 ### Setting up R2
 
