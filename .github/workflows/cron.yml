@@ -1,0 +1,69 @@
+# The time-sensitive scheduled jobs, for deployments whose host cannot run them
+# often enough.
+#
+# Vercel's Hobby plan runs cron at most once a day, and `vercel.json` is set up for
+# that: one daily call to `/api/v1/cron/all`. Daily is fine for delivery dates,
+# pledge follow-ups and the digest. It is not fine for the ticket SLA clock — PRD 14
+# wants an urgent ticket reaching the target department within a minute on fest days,
+# and a triage reminder that arrives tomorrow is not a reminder.
+#
+# So this drives the two jobs that care about minutes. It is free, and it is a
+# stopgap: GitHub's scheduler is best-effort and skews under load — five minutes is
+# the floor, ten is common, and it drops runs entirely during busy periods. Before
+# fest week, move to something with a real guarantee (Vercel Pro, a Cloudflare Worker
+# cron, or any hosted scheduler) pointed at the same endpoints.
+#
+# Setup — repository → Settings → Secrets and variables → Actions:
+#   secret   CRON_SECRET   the same value as the deployment's
+#   variable APP_URL       https://your-app.vercel.app
+#
+# Without both, every run no-ops rather than failing, so a fork does not turn red.
+
+name: Scheduled jobs
+
+on:
+  schedule:
+    # Every five minutes: GitHub's minimum, and it will not hit it exactly.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+# A late run is better than two at once against the same rows. The jobs are
+# idempotent, but overlapping them buys nothing.
+concurrency:
+  group: scheduled-jobs
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ticket SLA and email outbox
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${CRON_SECRET}" ] || [ -z "${APP_URL}" ]; then
+            echo "::notice::CRON_SECRET or APP_URL is not configured — nothing to do."
+            exit 0
+          fi
+
+          failed=0
+          for job in ticket-sla outbox; do
+            # --fail-with-body so a 4xx/5xx is an error *and* the reason is printed.
+            # The secret goes in a header, never the URL, so it stays out of logs.
+            body=$(curl --silent --show-error --fail-with-body --max-time 60 \
+                        --retry 2 --retry-delay 5 \
+                        -X POST \
+                        -H "authorization: Bearer ${CRON_SECRET}" \
+                        "${APP_URL}/api/v1/cron/${job}" 2>&1) || {
+              echo "::error title=${job} failed::${body}"
+              failed=1
+              continue
+            }
+            echo "${job}: ${body}"
+          done
+
+          exit "${failed}"

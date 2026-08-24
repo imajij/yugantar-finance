@@ -312,18 +312,33 @@ schema change (PRD 21.4).
 
 ### Scheduled jobs
 
-`vercel.json` registers six crons against `/api/v1/cron/*`, all guarded by a
-constant-time `CRON_SECRET` comparison that fails closed. Each is idempotent —
-running one twice sends one reminder — and bounded.
+Six jobs, all guarded by a constant-time `CRON_SECRET` comparison that fails closed,
+all idempotent — running one twice sends one reminder — and all bounded.
 
-| Job | Schedule | Does |
+| Job | Does | Cares about |
 |---|---|---|
-| `ticket-sla` | every 5 min | Triage reminders, second-interval escalation, due-date notices, DONE reminder at 24 h, auto-close at 48 h |
-| `outbox` | every 5 min | Retries email that did not go out on the write |
-| `vendor-overdue` | hourly | F12 for expected delivery dates that have passed, and clears it when goods arrive |
-| `daily-digest` | daily | PRD 10's digest to Finance, Management and opted-in HODs — only what is still outstanding, and nothing at all when there is nothing |
-| `income-followups` | daily | Pledges unreceived past `income_followup_days` |
-| `gc-attachments` | daily | Uploads that never found a parent, plus spent rate-limit windows |
+| `ticket-sla` | Triage reminders, second-interval escalation, due-date notices, DONE reminder at 24 h, auto-close at 48 h | **minutes** |
+| `outbox` | Retries email that did not go out on the write | minutes |
+| `vendor-overdue` | F12 for delivery dates that have passed, and clears it when goods arrive | days |
+| `daily-digest` | PRD 10's digest — only what is still outstanding, and nothing at all when there is nothing | days |
+| `income-followups` | Pledges unreceived past `income_followup_days` | days |
+| `gc-attachments` | Uploads that never found a parent, spent rate-limit windows, dead sessions | days |
+
+Each has its own endpoint, and `/api/v1/cron/all` runs the lot in one request,
+reporting each separately and failing only if something actually failed.
+
+**On Vercel Hobby, cron runs at most once a day.** `vercel.json` is set up for that:
+one daily call to `/api/v1/cron/all`. That is fine for the four jobs that think in
+days — and wrong for the ticket SLA clock, because PRD 14 wants an urgent ticket
+reaching the target department within a minute on fest days, and a triage reminder
+that arrives tomorrow is not a reminder.
+
+So `.github/workflows/cron.yml` drives `ticket-sla` and `outbox` every five minutes
+from GitHub Actions. It needs a `CRON_SECRET` secret and an `APP_URL` variable on the
+repository, and no-ops without them. Treat it as a stopgap: GitHub's scheduler is
+best-effort, skews under load and drops runs entirely when busy. **Before fest week**,
+move to something with a real guarantee — Vercel Pro, a Cloudflare Worker cron, or any
+hosted scheduler — pointed at the same endpoints. Nothing in the app changes.
 
 ### Security
 
