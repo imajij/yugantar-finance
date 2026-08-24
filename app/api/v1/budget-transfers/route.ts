@@ -8,7 +8,7 @@ import { transferBudget } from "@/lib/services/budget";
 
 /** PRD 20.4 — Finance and Management see every transfer; an HOD sees their own department's. */
 export const GET = route(async ({ user }) => {
-  assertCan(user, "audit.view", { festId: user.festId, departmentId: user.departmentId });
+  assertCan(user, "department.budget.view", { festId: user.festId, departmentId: user.departmentId });
   const seesAll = can(user, "budget.transfer", { festId: user.festId }) || user.role === "MANAGEMENT";
 
   const rows = await db

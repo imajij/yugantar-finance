@@ -24,7 +24,7 @@ const FORMAT_LABEL = { csv: "CSV", xlsx: "Excel", print: "Print" } as const;
 export default async function CloseOutPage() {
   const user = await getSession();
   if (!user) redirect("/sign-in");
-  if (!can(user, "export.run", { festId: user.festId })) nf();
+  if (!can(user, "closeOut.view", { festId: user.festId })) nf();
 
   const [totals, departments, [loose]] = await Promise.all([
     festTotals(user.festId),

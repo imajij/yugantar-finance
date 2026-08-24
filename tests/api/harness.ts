@@ -47,7 +47,7 @@ export interface Fixture {
   festId: string;
   departments: Record<"tech" | "logistics" | "finance" | "core", string>;
   users: Record<
-    "member" | "otherMember" | "hod" | "otherHod" | "finance" | "management",
+    "member" | "otherMember" | "hod" | "otherHod" | "finance" | "management" | "superAdmin",
     SessionUser
   >;
   lineItemId: string;
@@ -86,18 +86,19 @@ export async function buildFixture(slugPrefix: string): Promise<Fixture> {
 
   const user = async (
     name: string, local: string, role: Role, departmentId: string,
+    { superAdmin = false } = {},
   ): Promise<SessionUser> => {
     // Unique per run so parallel test files do not collide on `users_fest_email`.
     // The address is returned exactly as stored — a fixture whose `email` differs
     // from the row is a fixture that lies to any test that signs in with it.
     const email = `${local}-${crypto.randomUUID()}@sst.scaler.com`;
     const row = await one<{ id: string }>(sql`
-      insert into users (fest_id, name, email, role, department_id, status, upi_id)
+      insert into users (fest_id, name, email, role, department_id, status, upi_id, is_super_admin)
       values (${festId}, ${name}, ${email},
-              ${sql.raw(`'${role}'::user_role`)}, ${departmentId}, 'ACTIVE', 'x@upi')
+              ${sql.raw(`'${role}'::user_role`)}, ${departmentId}, 'ACTIVE', 'x@upi', ${superAdmin})
       returning id`);
     return {
-      id: row.id, festId, role, departmentId,
+      id: row.id, festId, role, departmentId, isSuperAdmin: superAdmin,
       name, email, departmentName: "d", departmentKind: "BUDGET",
       upiId: "x@upi", status: "ACTIVE",
     };
@@ -110,6 +111,10 @@ export async function buildFixture(slugPrefix: string): Promise<Fixture> {
     otherHod: await user("Logi HOD", "logi-hod", "DEPT_HOD", departments.logistics),
     finance: await user("Finance HOD", "finance-hod", "FINANCE_HOD", departments.finance),
     management: await user("Management", "management", "MANAGEMENT", departments.core),
+    // Deliberately a Member. The flag grants oversight, never spending authority, and
+    // a fixture where the administrator is also the Finance HOD could not tell the
+    // two apart.
+    superAdmin: await user("Super Admin", "super-admin", "MEMBER", departments.tech, { superAdmin: true }),
   };
 
   const { id: expenseTypeId } = await one<{ id: string }>(sql`

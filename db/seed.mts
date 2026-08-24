@@ -151,6 +151,9 @@ const [created] = await db
     departmentId: financeDept.id,
     // ACTIVE rather than INVITED: there is nobody else who could accept for them.
     status: "ACTIVE",
+    // And an administrator, or the fest has nobody who can appoint one — and no way
+    // into the audit log or the close-out pack.
+    isSuperAdmin: true,
     digestOptIn: true,
   })
   .onConflictDoNothing()
@@ -176,7 +179,7 @@ console.log(`  expense types  ${counts.expense_types}`);
 console.log(`  users          ${counts.users}`);
 console.log(`  line items     ${counts.line_items}`);
 console.log(`  total budget   ${fest.totalBudgetPaise / 100}  (set it from /admin)`);
-console.log(`\n  administrator  ${administrator.name} <${administrator.email}> — finance hod\n`);
+console.log(`\n  administrator  ${administrator.name} <${administrator.email}> — finance hod, super admin\n`);
 console.log(`Next: open /sign-in, enter that address, and follow the emailed link.`);
 console.log(`Then set the total budget and add departments from /admin.\n`);
 

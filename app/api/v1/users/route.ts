@@ -11,6 +11,8 @@ const schema = z.object({
   department_id: z.uuid(),
   upi_id: z.string().max(80).nullish(),
   phone: z.string().max(20).nullish(),
+  /** Only an administrator may set this; `inviteUser` enforces that. */
+  is_super_admin: z.boolean().optional(),
 });
 
 export const POST = route(async ({ user, request }) => {
@@ -18,5 +20,6 @@ export const POST = route(async ({ user, request }) => {
   return inviteUser(user, {
     name: b.name, email: b.email, role: b.role,
     departmentId: b.department_id, upiId: b.upi_id, phone: b.phone,
+    isSuperAdmin: b.is_super_admin,
   });
 });

@@ -33,12 +33,18 @@ function useSave() {
 
 interface Person {
   id: string; name: string; email: string; role: string;
-  status: string; department: string; departmentId: string;
+  status: string; department: string; departmentId: string; isSuperAdmin: boolean;
 }
 
 export function People({
-  users, departments, meId,
-}: { users: Person[]; departments: { id: string; name: string }[]; meId: string }) {
+  users, departments, meId, canManageAdmins,
+}: {
+  users: Person[];
+  departments: { id: string; name: string }[];
+  meId: string;
+  /** Only an administrator may appoint one, so only they see the control. */
+  canManageAdmins: boolean;
+}) {
   const { save, busy, error } = useSave();
   const [adding, setAdding] = useState(false);
 
@@ -51,6 +57,7 @@ export function People({
               <th className="pb-2 font-medium">Name</th>
               <th className="pb-2 font-medium">Role</th>
               <th className="pb-2 font-medium">Department</th>
+              {canManageAdmins && <th className="pb-2 font-medium">Admin</th>}
               <th className="pb-2 font-medium">Status</th>
             </tr>
           </thead>
@@ -77,6 +84,20 @@ export function People({
                     {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                   </select>
                 </td>
+                {canManageAdmins && (
+                  <td className="py-2">
+                    <label className="flex items-center gap-1.5 text-xs text-text-muted">
+                      <input
+                        type="checkbox"
+                        defaultChecked={u.isSuperAdmin}
+                        disabled={busy}
+                        onChange={(e) =>
+                          save(`/api/v1/users/${u.id}`, "PATCH", { is_super_admin: e.target.checked })}
+                      />
+                      {u.isSuperAdmin ? "admin" : ""}
+                    </label>
+                  </td>
+                )}
                 <td className="py-2">
                   {u.id === meId ? (
                     <span className="text-xs text-text-muted">you</span>
@@ -108,6 +129,7 @@ export function People({
             const ok = await save("/api/v1/users", "POST", {
               name: f.get("name"), email: f.get("email"),
               role: f.get("role"), department_id: f.get("department_id"),
+              is_super_admin: f.get("is_super_admin") === "on",
             });
             if (ok) setAdding(false);
           }}
@@ -121,6 +143,12 @@ export function People({
             <option value="" disabled>Department</option>
             {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
+          {canManageAdmins && (
+            <label className="flex items-center gap-1.5 pb-2 text-xs text-text-soft">
+              <input type="checkbox" name="is_super_admin" />
+              Administrator
+            </label>
+          )}
           <button type="submit" disabled={busy}
             className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
             style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}>

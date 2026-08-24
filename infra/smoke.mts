@@ -184,14 +184,16 @@ const mkDept = async (name: string, slug: string, kind: string) =>
 const financeDeptId = await mkDept("Finance", "finance", "FINANCE");
 const coreDeptId = await mkDept("Core", "core", "CORE");
 
-const mkUser = async (name: string, role: string, departmentId: string) =>
+const mkUser = async (name: string, role: string, departmentId: string, superAdmin = false) =>
   (await one<{ id: string }>(sql`
-    insert into users (fest_id, name, email, role, department_id, status, upi_id)
+    insert into users (fest_id, name, email, role, department_id, status, upi_id, is_super_admin)
     values (${fest.id}, ${name}, ${`${randomBytes(6).toString("hex")}@sst.scaler.com`},
-            ${sql.raw(`'${role}'::user_role`)}, ${departmentId}, 'ACTIVE', 'x@upi')
+            ${sql.raw(`'${role}'::user_role`)}, ${departmentId}, 'ACTIVE', 'x@upi', ${superAdmin})
     returning id`)).id;
 
-const financeId = await mkUser("Finance HOD", "FINANCE_HOD", financeDeptId);
+// An administrator, mirroring the bootstrap: the audit log and the close-out pack
+// answer to that flag rather than to a role.
+const financeId = await mkUser("Finance HOD", "FINANCE_HOD", financeDeptId, true);
 const mgmtId = await mkUser("Management", "MANAGEMENT", coreDeptId);
 
 await db.execute(sql`
@@ -521,6 +523,12 @@ for (const page of ["/dashboard", "/requests", "/tickets", "/budget", "/budget/r
   await hit("GET", page, { as: finance, expect: 200 });
 }
 await hit("GET", "/dashboard", { as: anonymous, expect: [307, 302], label: "/dashboard (anonymous)" });
+
+// Oversight is the administrator flag's, not a role's. The target department's HOD
+// is as senior as anyone gets without it, and must not reach either.
+await hit("GET", "/audit", { as: techHod, expect: 404, label: "/audit (not an administrator)" });
+await hit("GET", "/close-out", { as: techHod, expect: 404, label: "/close-out (not an administrator)" });
+await hit("GET", "/api/v1/audit", { as: techHod, expect: 403, label: "/api/v1/audit (not an administrator)" });
 
 section("Security headers");
 const headers = (await fetch(`${BASE}/sign-in`)).headers;

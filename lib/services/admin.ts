@@ -12,7 +12,7 @@ import { clerkConfigured, emailDomainAllowed, revokeClerkSessions, sendClerkInvi
 import type { Role } from "@/lib/state-machines/types";
 import { recordAudit, snapshot } from "./audit";
 
-const USER_AUDITED = ["name", "email", "role", "departmentId", "status", "upiId"] as const;
+const USER_AUDITED = ["name", "email", "role", "departmentId", "status", "upiId", "isSuperAdmin"] as const;
 
 export interface UserInput {
   name: string;
@@ -21,6 +21,18 @@ export interface UserInput {
   departmentId: string;
   upiId?: string | null;
   phone?: string | null;
+  isSuperAdmin?: boolean;
+}
+
+/**
+ * Only an administrator may appoint another, and only an administrator may take the
+ * flag away. Any other rule and it draws no boundary: if a Finance HOD could grant
+ * it, everyone who could reach the admin screen could read the audit log by first
+ * making themselves able to.
+ */
+function assertMaySetSuperAdmin(actor: Actor, wanted: boolean | undefined, current = false) {
+  if (wanted === undefined || wanted === current) return;
+  assertCan(actor, "superAdmin.manage", { festId: actor.festId });
 }
 
 /**
@@ -43,6 +55,7 @@ async function assertSeatFree(festId: string, role: Role, exceptUserId?: string)
 
 export async function inviteUser(actor: Actor, input: UserInput) {
   assertCan(actor, "user.manage", { festId: actor.festId });
+  assertMaySetSuperAdmin(actor, input.isSuperAdmin);
   await assertSeatFree(actor.festId, input.role);
 
   // 13: college domain, with invited external Management users as the exception.
@@ -70,6 +83,7 @@ export async function inviteUser(actor: Actor, input: UserInput) {
       departmentId: input.departmentId,
       upiId: input.upiId ?? null,
       phone: input.phone ?? null,
+      isSuperAdmin: input.isSuperAdmin ?? false,
       status: "INVITED",
     }).returning();
 
@@ -95,7 +109,8 @@ export async function inviteUser(actor: Actor, input: UserInput) {
 
 export async function updateUser(
   actor: Actor, id: string,
-  input: Partial<Pick<UserInput, "name" | "role" | "departmentId" | "upiId" | "phone">> & { status?: "ACTIVE" | "DISABLED" },
+  input: Partial<Pick<UserInput, "name" | "role" | "departmentId" | "upiId" | "phone" | "isSuperAdmin">>
+    & { status?: "ACTIVE" | "DISABLED" },
 ) {
   assertCan(actor, "user.manage", { festId: actor.festId });
   if (input.role) await assertSeatFree(actor.festId, input.role, id);
@@ -105,9 +120,30 @@ export async function updateUser(
       .where(and(eq(users.id, id), eq(users.festId, actor.festId))).limit(1);
     if (!before) throw notFound("User");
 
+    assertMaySetSuperAdmin(actor, input.isSuperAdmin, before.isSuperAdmin);
+
     // Locking yourself out is the one mistake nobody can undo from inside the app.
     if (id === actor.id && (input.status === "DISABLED" || (input.role && input.role !== before.role))) {
       throw new ApiError("VALIDATION_ERROR", "You cannot change your own role or deactivate yourself");
+    }
+
+    // Nor can the last administrator remove the flag — from themselves or anyone
+    // else. A fest with none has nobody who can appoint one, and no way back in to
+    // the audit log short of a database console.
+    const losingAdmin = before.isSuperAdmin
+      && (input.isSuperAdmin === false || input.status === "DISABLED");
+    if (losingAdmin) {
+      const [{ others }] = (await tx.execute<{ others: number }>(sql`
+        select count(*)::int as others from users
+         where fest_id = ${actor.festId} and is_super_admin
+           and status <> 'DISABLED' and id <> ${id}
+      `)) as unknown as { others: number }[];
+      if (Number(others) === 0) {
+        throw new ApiError(
+          "VALIDATION_ERROR",
+          "This is the only administrator. Appoint another before removing this one.",
+        );
+      }
     }
 
     const [after] = await tx.update(users).set({ ...input, updatedAt: new Date() })
@@ -137,6 +173,7 @@ export async function listUsers(actor: Actor) {
     .select({
       id: users.id, name: users.name, email: users.email, role: users.role,
       status: users.status, upiId: users.upiId, phone: users.phone,
+      isSuperAdmin: users.isSuperAdmin,
       department: departments.name, departmentId: users.departmentId,
     })
     .from(users).innerJoin(departments, eq(departments.id, users.departmentId))

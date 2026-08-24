@@ -211,6 +211,7 @@ export async function resolveSession(raw: string | undefined): Promise<SessionUs
     .select({
       sessionId: sessions.id,
       id: users.id, festId: users.festId, role: users.role, departmentId: users.departmentId,
+      isSuperAdmin: users.isSuperAdmin,
       name: users.name, email: users.email, status: users.status, upiId: users.upiId,
       departmentName: departments.name, departmentKind: departments.kind,
     })

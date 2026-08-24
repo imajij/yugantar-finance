@@ -109,6 +109,16 @@ export const users = pgTable("users", {
   upiId: text("upi_id"),
   phone: text("phone"),
   status: userStatus("status").notNull().default("INVITED"),
+  /**
+   * Platform administrator: sees the audit log and the close-out pack, and is the
+   * only one who can grant this to anyone else.
+   *
+   * A flag rather than a fifth role, because PRD 5.1's four roles decide what someone
+   * does with money and 5.2's segregation rules turn on them — "the submitter may not
+   * approve" has to keep meaning the same thing whoever holds this. So it sits
+   * alongside the role: any of the four may or may not be an administrator.
+   */
+  isSuperAdmin: boolean("is_super_admin").notNull().default(false),
   digestOptIn: boolean("digest_opt_in").notNull().default(false),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),

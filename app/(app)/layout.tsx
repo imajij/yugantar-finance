@@ -22,7 +22,7 @@ const NAV: { href: string; label: string; icon: typeof Gauge; action: Action }[]
   { href: "/income", label: "Income", icon: HandCoins, action: "income.view" },
   { href: "/queues", label: "Queues", icon: ClipboardList, action: "reimbursement.create" },
   { href: "/flags", label: "Flags", icon: Flag, action: "flag.view" },
-  { href: "/close-out", label: "Close-out", icon: FileDown, action: "export.run" },
+  { href: "/close-out", label: "Close-out", icon: FileDown, action: "closeOut.view" },
   { href: "/audit", label: "Audit log", icon: ScrollText, action: "audit.view" },
   { href: "/admin", label: "Admin", icon: Settings, action: "user.manage" },
 ];

@@ -34,6 +34,9 @@ export const GET = route(async ({ user }) => {
       view_income: can(user, "income.view", scope),
       resolve_flags: can(user, "flag.resolve", scope),
       run_exports: can(user, "export.run", scope),
+      view_close_out: can(user, "closeOut.view", scope),
+      view_audit: can(user, "audit.view", scope),
+      manage_super_admins: can(user, "superAdmin.manage", scope),
     },
   };
 });

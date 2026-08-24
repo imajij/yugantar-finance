@@ -9,6 +9,8 @@ const schema = z.object({
   status: z.enum(["ACTIVE", "DISABLED"]).optional(),
   upi_id: z.string().max(80).nullish(),
   phone: z.string().max(20).nullish(),
+  /** Only an administrator may change this; `updateUser` enforces that. */
+  is_super_admin: z.boolean().optional(),
 });
 
 export const PATCH = route<{ id: string }>(async ({ user, params, request }) => {
@@ -16,5 +18,6 @@ export const PATCH = route<{ id: string }>(async ({ user, params, request }) => 
   return updateUser(user, params.id, {
     name: b.name, role: b.role, departmentId: b.department_id,
     status: b.status, upiId: b.upi_id, phone: b.phone,
+    isSuperAdmin: b.is_super_admin,
   });
 });
