@@ -1,18 +1,32 @@
 /**
- * `pnpm db:seed` — a usable demo (PRD 21.3): one fest, the Finance and Core departments
- * plus five budget departments, one user per role, expense types, and line items with
- * supporting documents on both sides of the ₹10,000 document threshold.
+ * `pnpm db:seed` — bootstraps a real, empty fest.
+ *
+ * This is not demo data. It creates exactly what the schema and the PRD require
+ * before anyone can do anything, and nothing else:
+ *
+ *   - the fest, with the section 19.5 settings;
+ *   - the Finance and Core departments, which the schema requires exactly one of
+ *     each and which therefore cannot be created from the admin screen;
+ *   - the expense types from PRD 21.1 (reference data, not sample data);
+ *   - one Finance HOD, who is the platform administrator (open question 14, draft).
+ *
+ * Everything else — budget departments, their allocations, line items, vendors,
+ * people — the administrator creates through the app, because that is the workflow
+ * the fest actually has to run.
+ *
+ * Idempotent: running it again leaves existing records alone and fills in what is
+ * missing. Pass `--reset` to tear the fest down first — that deletes real records,
+ * so it refuses to run in production.
  */
 import "dotenv/config";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema.js";
 import { rupeesToPaise } from "../lib/money.js";
+import { dropFestBySlug } from "../lib/test-support.js";
 
-const {
-  fests, departments, users, expenseTypes, lineItems, attachments, vendors,
-} = schema;
+const { fests, departments, users, expenseTypes } = schema;
 
 const client = postgres(process.env.DATABASE_URL!, { max: 1 });
 const db = drizzle(client, { schema, casing: "snake_case" });
@@ -20,134 +34,150 @@ const db = drizzle(client, { schema, casing: "snake_case" });
 const DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN || "sst.scaler.com";
 const R = rupeesToPaise;
 
-const existing = await db.select({ id: fests.id }).from(fests).where(sql`slug = 'yugaantar-26'`);
-if (existing.length > 0) {
-  console.log("seed: yugaantar-26 already exists — dropping and reseeding");
-  const id = existing[0].id;
-  for (const stmt of [
-    sql`delete from income_tranches where income_entry_id in (select id from income_entries where fest_id = ${id})`,
-    sql`delete from income_entries where fest_id = ${id}`,
-    sql`delete from vendor_milestones where vendor_request_id in (select id from vendor_requests where fest_id = ${id})`,
-    sql`delete from vendor_requests where fest_id = ${id}`,
-    sql`delete from reimbursement_requests where fest_id = ${id}`,
-    sql`delete from comment_mentions where comment_id in (select id from comments where fest_id = ${id})`,
-    sql`delete from comments where fest_id = ${id}`,
-    sql`delete from ticket_watchers where ticket_id in (select id from tickets where fest_id = ${id})`,
-    sql`delete from tickets where fest_id = ${id}`,
-    sql`delete from entity_links where fest_id = ${id}`,
-    sql`delete from notifications where fest_id = ${id}`,
-    sql`delete from flags where fest_id = ${id}`,
-    sql`delete from audit_events where fest_id = ${id}`,
-    sql`delete from attachments where fest_id = ${id}`,
-    sql`delete from vendors where fest_id = ${id}`,
-    sql`delete from line_items where fest_id = ${id}`,
-    sql`delete from expense_types where fest_id = ${id}`,
-    sql`delete from idempotency_keys where user_id in (select id from users where fest_id = ${id})`,
-    sql`delete from users where fest_id = ${id}`,
-    sql`delete from human_id_sequences where fest_id = ${id}`,
-    sql`delete from budget_transfers where fest_id = ${id}`,
-    sql`delete from ticket_templates where fest_id = ${id}`,
-    sql`delete from departments where fest_id = ${id}`,
-    sql`delete from fests where id = ${id}`,
-  ]) await db.execute(stmt);
+/**
+ * The first administrator. Overridable so another deployment needs no code change,
+ * but it has to be somebody: a fest with no Finance HOD has nobody who can invite one.
+ */
+const ADMIN_EMAIL = (process.env.BOOTSTRAP_ADMIN_EMAIL || `ajij.24bcs10103@${DOMAIN}`).toLowerCase();
+const ADMIN_NAME = process.env.BOOTSTRAP_ADMIN_NAME || "Ajij Uttam";
+
+const FEST_SLUG = process.env.BOOTSTRAP_FEST_SLUG || "yugaantar-26";
+const FEST_NAME = process.env.BOOTSTRAP_FEST_NAME || "Yugaantar '26";
+
+const reset = process.argv.includes("--reset");
+
+/* -------------------------------------------------------------------- reset */
+
+const [existing] = await db.select({ id: fests.id }).from(fests).where(eq(fests.slug, FEST_SLUG));
+
+if (existing && reset) {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("--reset deletes real records and will not run in production");
+  }
+  console.log(`seed: --reset given, tearing down ${FEST_SLUG}`);
+  // One teardown, shared with the database tests (`lib/test-support.ts`). The
+  // foreign-key order is subtle enough that a second copy would drift and only
+  // fail once there was data of the right shape to notice.
+  await dropFestBySlug(db, FEST_SLUG);
 }
 
-const [fest] = await db.insert(fests).values({
-  name: "Yugaantar '26",
-  slug: "yugaantar-26",
-  startsOn: "2026-11-27",
-  endsOn: "2026-11-29",
-  // Default receipt window: start − 60 days to end + 15 days (PRD 6.1).
-  receiptWindowStart: "2026-09-28",
-  receiptWindowEnd: "2026-12-14",
-  totalBudgetPaise: R(2500000),
-  settings: {
-    fest_days: ["2026-11-27", "2026-11-28", "2026-11-29"],
-    line_item_doc_threshold_paise: 1000000,
-    request_aging_amber_days: 3,
-    request_aging_red_days: 7,
-    ticket_auto_close_hours: 48,
-    ticket_done_reminder_hours: 24,
-    ticket_sla_minutes: {
-      URGENT: { fest: 30, other: 120 },
-      HIGH: { fest: 120, other: 480 },
-      MEDIUM: { fest: 1440, other: 1440 },
-      LOW: { fest: 4320, other: 4320 },
+/* --------------------------------------------------------------------- fest */
+
+const [inserted] = await db
+  .insert(fests)
+  .values({
+    name: FEST_NAME,
+    slug: FEST_SLUG,
+    startsOn: "2026-11-27",
+    endsOn: "2026-11-29",
+    // Default receipt window: start − 60 days to end + 15 days (PRD 6.1).
+    receiptWindowStart: "2026-09-28",
+    receiptWindowEnd: "2026-12-14",
+    // Finance sets the real figure from the budget screen. Starting at zero means
+    // the first allocation is a deliberate act rather than an inherited number.
+    totalBudgetPaise: 0,
+    settings: {
+      fest_days: ["2026-11-27", "2026-11-28", "2026-11-29"],
+      line_item_doc_threshold_paise: R(10000),
+      request_aging_amber_days: 3,
+      request_aging_red_days: 7,
+      ticket_auto_close_hours: 48,
+      ticket_done_reminder_hours: 24,
+      ticket_sla_minutes: {
+        URGENT: { fest: 30, other: 120 },
+        HIGH: { fest: 120, other: 480 },
+        MEDIUM: { fest: 1440, other: 1440 },
+        LOW: { fest: 4320, other: 4320 },
+      },
+      flag_thresholds: {
+        F2_abs_paise: 5000, F2_pct: 5,
+        F4_before_days: 60, F4_after_days: 15,
+        F6_count: 5, F6_total_paise: 2500000,
+        F8_pct: 50, F10_threshold_paise: 1000000,
+        F11_multiplier: 3, F11_min_samples: 10,
+        F14_pct: 20,
+        income_followup_days: 30,
+      },
     },
-    flag_thresholds: {
-      F2_abs_paise: 5000, F2_pct: 5,
-      F4_before_days: 60, F4_after_days: 15,
-      F6_count: 5, F6_total_paise: 2500000,
-      F8_pct: 50, F10_threshold_paise: 1000000,
-      F11_multiplier: 3, F11_min_samples: 10,
-      F14_pct: 20,
-      income_followup_days: 30,
-    },
-  },
-}).returning();
+  })
+  .onConflictDoNothing()
+  .returning();
 
-const deptRows = await db.insert(departments).values([
-  { festId: fest.id, name: "Finance", slug: "finance", kind: "FINANCE", allocatedPaise: 0 },
-  { festId: fest.id, name: "Core", slug: "core", kind: "CORE", allocatedPaise: 0 },
-  { festId: fest.id, name: "Tech", slug: "tech", allocatedPaise: R(600000) },
-  { festId: fest.id, name: "Logistics", slug: "logistics", allocatedPaise: R(500000) },
-  { festId: fest.id, name: "Hospitality", slug: "hospitality", allocatedPaise: R(300000) },
-  { festId: fest.id, name: "Cultural", slug: "cultural", allocatedPaise: R(400000) },
-  { festId: fest.id, name: "Sponsorship", slug: "sponsorship", allocatedPaise: R(100000) },
-]).returning();
-const dept = Object.fromEntries(deptRows.map((d) => [d.slug, d]));
-// Σ allocations ₹19,00,000 of a ₹25,00,000 total — ₹6,00,000 stays in Reserve (6.3).
+const [fest] = inserted
+  ? [inserted]
+  : await db.select().from(fests).where(eq(fests.slug, FEST_SLUG));
 
-const userRows = await db.insert(users).values([
-  { festId: fest.id, email: `finance.hod@${DOMAIN}`, name: "Finance HOD", role: "FINANCE_HOD", departmentId: dept.finance.id, status: "ACTIVE", upiId: `finance@upi` },
-  { festId: fest.id, email: `management@${DOMAIN}`, name: "Management", role: "MANAGEMENT", departmentId: dept.core.id, status: "ACTIVE" },
-  { festId: fest.id, email: `tech.hod@${DOMAIN}`, name: "Tech HOD", role: "DEPT_HOD", departmentId: dept.tech.id, status: "ACTIVE", upiId: `tech.hod@upi` },
-  { festId: fest.id, email: `logistics.hod@${DOMAIN}`, name: "Logistics HOD", role: "DEPT_HOD", departmentId: dept.logistics.id, status: "ACTIVE", upiId: `logi.hod@upi` },
-  { festId: fest.id, email: `sponsorship.hod@${DOMAIN}`, name: "Sponsorship HOD", role: "DEPT_HOD", departmentId: dept.sponsorship.id, status: "ACTIVE" },
-  { festId: fest.id, email: `tech.member@${DOMAIN}`, name: "Tech Member", role: "MEMBER", departmentId: dept.tech.id, status: "ACTIVE", upiId: `tech.member@upi` },
-  { festId: fest.id, email: `logistics.member@${DOMAIN}`, name: "Logistics Member", role: "MEMBER", departmentId: dept.logistics.id, status: "ACTIVE", upiId: `logi.member@upi` },
-]).returning();
-const user = Object.fromEntries(userRows.map((u) => [u.email.split("@")[0], u]));
+/* -------------------------------------------------------------- departments */
 
-const typeRows = await db.insert(expenseTypes).values(
-  ["Food & Beverages", "Travel & Transport", "Printing & Stationery", "Equipment Rental",
-   "Decor & Props", "Prizes & Gifts", "Marketing & Promotion", "Accommodation", "Miscellaneous"]
-    .map((name, sortOrder) => ({ festId: fest.id, name, sortOrder })),
-).returning();
-const type = Object.fromEntries(typeRows.map((t) => [t.name, t]));
+/**
+ * Finance and Core only. The schema permits exactly one of each per fest
+ * (`departments_one_finance` / `departments_one_core`), so they cannot come from the
+ * admin screen — which creates BUDGET departments — and they have to exist before
+ * anyone can be given a role.
+ */
+await db
+  .insert(departments)
+  .values([
+    { festId: fest.id, name: "Finance", slug: "finance", kind: "FINANCE" as const, allocatedPaise: 0 },
+    { festId: fest.id, name: "Core", slug: "core", kind: "CORE" as const, allocatedPaise: 0 },
+  ])
+  .onConflictDoNothing();
 
-const items = await db.insert(lineItems).values([
-  { festId: fest.id, departmentId: dept.tech.id, name: "Sound system", plannedPaise: R(200000), defaultExpenseTypeId: type["Equipment Rental"].id, createdBy: user["tech.hod"].id, description: "Main stage PA, three days" },
-  { festId: fest.id, departmentId: dept.tech.id, name: "Stage lighting", plannedPaise: R(180000), defaultExpenseTypeId: type["Equipment Rental"].id, createdBy: user["tech.hod"].id },
-  { festId: fest.id, departmentId: dept.tech.id, name: "Cables & consumables", plannedPaise: R(8000), defaultExpenseTypeId: type["Miscellaneous"].id, createdBy: user["tech.hod"].id },
-  { festId: fest.id, departmentId: dept.logistics.id, name: "Chairs & tables rental", plannedPaise: R(150000), defaultExpenseTypeId: type["Equipment Rental"].id, createdBy: user["logistics.hod"].id },
-  { festId: fest.id, departmentId: dept.logistics.id, name: "Transport", plannedPaise: R(90000), defaultExpenseTypeId: type["Travel & Transport"].id, createdBy: user["logistics.hod"].id },
-  { festId: fest.id, departmentId: dept.hospitality.id, name: "Artist accommodation", plannedPaise: R(200000), defaultExpenseTypeId: type["Accommodation"].id, createdBy: user["finance.hod"].id },
-  { festId: fest.id, departmentId: dept.cultural.id, name: "Headline artist fee", plannedPaise: R(300000), defaultExpenseTypeId: type["Miscellaneous"].id, createdBy: user["finance.hod"].id },
-]).returning();
-const item = Object.fromEntries(items.map((i) => [i.name, i]));
+const deptRows = await db.select().from(departments).where(eq(departments.festId, fest.id));
+const financeDept = deptRows.find((d) => d.kind === "FINANCE")!;
 
-// Three quotes on one line item is the normal case (7.1). Links need no upload.
-await db.insert(attachments).values([
-  { festId: fest.id, entityType: "LINE_ITEM", entityId: item["Sound system"].id, purpose: "QUOTE", kind: "LINK", url: "https://www.indiamart.com/example-sound-rental", label: "Quotation — ABC Sound", sourceName: "ABC Sound Systems", quotedAmountPaise: R(195000), uploadedBy: user["tech.hod"].id },
-  { festId: fest.id, entityType: "LINE_ITEM", entityId: item["Sound system"].id, purpose: "QUOTE", kind: "LINK", url: "https://www.indiamart.com/example-sound-rental-2", label: "Quotation — Bengaluru Audio", sourceName: "Bengaluru Audio", quotedAmountPaise: R(210000), uploadedBy: user["tech.hod"].id },
-  { festId: fest.id, entityType: "LINE_ITEM", entityId: item["Sound system"].id, purpose: "LISTING", kind: "LINK", url: "https://www.amazon.in/example-listing", label: "Amazon listing — reference", sourceName: "Amazon", quotedAmountPaise: R(205000), uploadedBy: user["tech.hod"].id },
-  // Stage lighting is above the threshold with no document — seeds flag F13.
-  { festId: fest.id, entityType: "LINE_ITEM", entityId: item["Transport"].id, purpose: "QUOTE", kind: "LINK", url: "https://example.com/tempo-traveller-quote", label: "Quotation — Sri Travels", sourceName: "Sri Travels", quotedAmountPaise: R(70000), uploadedBy: user["logistics.hod"].id },
-]);
+/* ------------------------------------------------------------ expense types */
 
-await db.insert(vendors).values([
-  { festId: fest.id, name: "ABC Sound Systems", contactName: "Ravi", phone: "+91 90000 00001", upiId: "abcsound@upi", createdBy: user["tech.hod"].id },
-  { festId: fest.id, name: "Sri Travels", contactName: "Kumar", phone: "+91 90000 00002", bankAccountName: "Sri Travels", bankAccountNumber: "123456789012", bankIfsc: "HDFC0001234", createdBy: user["logistics.hod"].id },
-]);
+// PRD 21.1's list: reference data every fest needs. Finance edits it from /admin.
+await db
+  .insert(expenseTypes)
+  .values(
+    ["Equipment Rental", "Printing & Signage", "Food & Refreshments", "Travel & Transport",
+     "Decor & Props", "Prizes & Gifts", "Marketing & Promotion", "Accommodation", "Miscellaneous"]
+      .map((name, sortOrder) => ({ festId: fest.id, name, sortOrder })),
+  )
+  .onConflictDoNothing();
 
-const [totals] = await db.execute<Record<string, string>>(
-  sql`select * from v_fest_totals where fest_id = ${fest.id}`,
-) as unknown as Record<string, string>[];
+/* -------------------------------------------- the first administrator (5.1) */
 
-console.log(`seeded ${fest.name}`);
-console.log(`  departments   ${deptRows.length}   users ${userRows.length}   line items ${items.length}`);
-console.log(`  total budget  ${Number(totals.total_budget_paise) / 100}`);
-console.log(`  reserve       ${Number(totals.reserve_paise) / 100}`);
-console.log(`  sign in as    finance.hod@${DOMAIN}`);
+const [created] = await db
+  .insert(users)
+  .values({
+    festId: fest.id,
+    name: ADMIN_NAME,
+    email: ADMIN_EMAIL,
+    // Open question 14, draft: the Finance HOD is the platform administrator.
+    role: "FINANCE_HOD",
+    departmentId: financeDept.id,
+    // ACTIVE rather than INVITED: there is nobody else who could accept for them.
+    status: "ACTIVE",
+    digestOptIn: true,
+  })
+  .onConflictDoNothing()
+  .returning();
+
+const [administrator] = created
+  ? [created]
+  : await db.select().from(users).where(eq(users.email, ADMIN_EMAIL));
+
+/* ------------------------------------------------------------------- report */
+
+const [counts] = (await db.execute(sql`
+  select
+    (select count(*)::int from departments   where fest_id = ${fest.id}) as departments,
+    (select count(*)::int from users         where fest_id = ${fest.id}) as users,
+    (select count(*)::int from expense_types where fest_id = ${fest.id}) as expense_types,
+    (select count(*)::int from line_items    where fest_id = ${fest.id}) as line_items
+`)) as unknown as Record<string, number>[];
+
+console.log(`\nbootstrapped ${fest.name}`);
+console.log(`  departments    ${counts.departments}  (Finance, Core — add the rest from /admin)`);
+console.log(`  expense types  ${counts.expense_types}`);
+console.log(`  users          ${counts.users}`);
+console.log(`  line items     ${counts.line_items}`);
+console.log(`  total budget   ${fest.totalBudgetPaise / 100}  (set it from /admin)`);
+console.log(`\n  administrator  ${administrator.name} <${administrator.email}> — finance hod\n`);
+console.log(`Next: open /sign-in, enter that address, and follow the emailed link.`);
+console.log(`Then set the total budget and add departments from /admin.\n`);
+
 await client.end();

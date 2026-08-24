@@ -3,10 +3,13 @@
  * came from, escalation marks without moving state, only the target department
  * triages, and only the requester closes.
  */
-import { beforeEach, expect, test } from "vitest";
+import { afterAll, beforeEach, expect, test } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import type { SessionUser } from "@/lib/session";
+import { dropFests } from "@/lib/test-support";
+
+afterAll(() => dropFests(db, "tick-"));
 import {
   createTicket, getTicketDetail, listTickets, ticketCounts, transitionTicket,
 } from "@/lib/services/tickets";
@@ -153,10 +156,10 @@ test("the boards separate inbox, outgoing and mine", async () => {
   await transitionTicket(logiHod, t.id, "ACCEPT");
   await transitionTicket(logiHod, t.id, "REASSIGN", { assignee_id: logiMember.id });
 
-  expect((await listTickets(logiHod, { scope: "inbox" })).map((r) => r.id)).toContain(t.id);
-  expect((await listTickets(techMember, { scope: "outgoing" })).map((r) => r.id)).toContain(t.id);
-  expect((await listTickets(logiMember, { scope: "mine" })).map((r) => r.id)).toContain(t.id);
-  expect((await listTickets(techMember, { scope: "inbox" })).map((r) => r.id)).not.toContain(t.id);
+  expect((await listTickets(logiHod, { view: "inbox" })).map((r) => r.id)).toContain(t.id);
+  expect((await listTickets(techMember, { view: "outgoing" })).map((r) => r.id)).toContain(t.id);
+  expect((await listTickets(logiMember, { view: "mine" })).map((r) => r.id)).toContain(t.id);
+  expect((await listTickets(techMember, { view: "inbox" })).map((r) => r.id)).not.toContain(t.id);
 
   const counts = await ticketCounts(logiHod);
   expect(counts.inbox).toBe(1);

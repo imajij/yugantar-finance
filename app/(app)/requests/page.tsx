@@ -5,7 +5,7 @@ import { Plus } from "lucide-react";
 import { db } from "@/db";
 import { departments, lineItems, reimbursementRequests, users } from "@/db/schema";
 import { getSession } from "@/lib/session";
-import { can } from "@/lib/authz";
+import { canFestWide } from "@/lib/authz";
 import { Amount, Card, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
 import { waitingOn } from "@/lib/services/reimbursements";
 
@@ -13,7 +13,7 @@ export default async function RequestsPage() {
   const user = await getSession();
   if (!user) redirect("/sign-in");
 
-  const seesAll = can(user, "reimbursement.view", { festId: user.festId, departmentId: "any" });
+  const seesAll = canFestWide(user, "reimbursement.view");
   const scope = seesAll ? undefined
     : user.role === "DEPT_HOD" ? eq(reimbursementRequests.departmentId, user.departmentId)
     : eq(reimbursementRequests.submitterId, user.id);

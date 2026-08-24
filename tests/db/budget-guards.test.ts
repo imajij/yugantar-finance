@@ -14,6 +14,7 @@ import { createLineItem, updateLineItem, transitionLineItem } from "@/lib/servic
 import { transferBudget, setTotalBudget } from "@/lib/services/budget";
 import { departmentTotals } from "@/lib/queries/budget";
 import { rupeesToPaise as R } from "@/lib/money";
+import { dropFests } from "@/lib/test-support";
 
 let festId: string, techId: string, logisticsId: string, financeDeptId: string, expenseTypeId: string;
 let finance: Actor, techHod: Actor, member: Actor;
@@ -52,17 +53,7 @@ beforeEach(async () => {
     insert into expense_types (fest_id, name) values (${festId}, 'Equipment Rental') returning id`)).id;
 });
 
-afterAll(async () => {
-  await db.execute(sql`delete from audit_events where fest_id in (select id from fests where slug like 'guard-%')`);
-  await db.execute(sql`delete from budget_transfers where fest_id in (select id from fests where slug like 'guard-%')`);
-  await db.execute(sql`delete from reimbursement_requests where fest_id in (select id from fests where slug like 'guard-%')`);
-  await db.execute(sql`delete from line_items where fest_id in (select id from fests where slug like 'guard-%')`);
-  await db.execute(sql`delete from expense_types where fest_id in (select id from fests where slug like 'guard-%')`);
-  await db.execute(sql`delete from human_id_sequences where fest_id in (select id from fests where slug like 'guard-%')`);
-  await db.execute(sql`delete from users where fest_id in (select id from fests where slug like 'guard-%')`);
-  await db.execute(sql`delete from departments where fest_id in (select id from fests where slug like 'guard-%')`);
-  await db.execute(sql`delete from fests where slug like 'guard-%'`);
-});
+afterAll(() => dropFests(db, "guard-"));
 
 test("line items may fill the allocation exactly, but not exceed it", async () => {
   await createLineItem(techHod, { departmentId: techId, name: "Sound", plannedPaise: R(250000) });

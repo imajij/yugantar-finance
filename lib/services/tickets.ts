@@ -5,7 +5,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import {
-  auditEvents, comments, departments, lineItems, tickets, ticketWatchers, users,
+  auditEvents, comments, departments, entityLinks, lineItems, tickets, ticketWatchers, users,
 } from "@/db/schema";
 import { ApiError, conflict, notFound } from "@/lib/api";
 import { assertCan, satisfiesActorConstraints, type Actor } from "@/lib/authz";
@@ -300,21 +300,33 @@ export async function getTicketDetail(actor: Actor, id: string) {
   return { ...row, ...names, comments: thread, timeline, watchers };
 }
 
-export type TicketScope = "inbox" | "outgoing" | "mine" | "all";
+/** PRD 20.9 — the board views. `scope` is kept as an alias for the older name. */
+export type TicketScope = "inbox" | "outgoing" | "mine" | "raised" | "all";
 
-/** The four board views of 9.5, all from one query shape. */
-export async function listTickets(
-  actor: Actor,
-  opts: { scope: TicketScope; status?: string[]; priority?: string; overdue?: boolean; limit?: number } = { scope: "inbox" },
-) {
+export interface TicketFilters {
+  view: TicketScope;
+  status?: string[];
+  priority?: string;
+  departmentId?: string;
+  assigneeId?: string;
+  overdue?: boolean;
+  escalated?: boolean;
+  q?: string;
+  limit?: number;
+}
+
+/** The board views of 9 and 20.9, all from one query shape. */
+export async function listTickets(actor: Actor, opts: TicketFilters = { view: "inbox" }) {
   const scopeFilter = {
     inbox: sql`t.target_department_id = ${actor.departmentId}`,
     outgoing: sql`t.requesting_department_id = ${actor.departmentId}`,
     mine: sql`t.assignee_id = ${actor.id}`,
+    raised: sql`t.requester_id = ${actor.id}`,
+    // Open question 13 draft: own only; Management and Finance see everything.
     all: actor.role === "MANAGEMENT" || actor.role === "FINANCE_HOD"
       ? sql`true`
       : sql`(t.target_department_id = ${actor.departmentId} or t.requesting_department_id = ${actor.departmentId})`,
-  }[opts.scope];
+  }[opts.view];
 
   const rows = (await db.execute(sql`
     select t.id, t.human_id, t.title, t.status, t.priority, t.due_at, t.escalated_at,
@@ -335,6 +347,12 @@ export async function listTickets(
        ${opts.status?.length ? sql`and t.status = any(${opts.status}::ticket_status[])` : sql``}
        ${opts.priority ? sql`and t.priority = ${opts.priority}::ticket_priority` : sql``}
        ${opts.overdue ? sql`and t.due_at < now() and t.status not in ('CLOSED','REJECTED','CANCELLED')` : sql``}
+       ${opts.escalated ? sql`and t.escalated_at is not null` : sql``}
+       ${opts.departmentId
+         ? sql`and (t.target_department_id = ${opts.departmentId} or t.requesting_department_id = ${opts.departmentId})`
+         : sql``}
+       ${opts.assigneeId ? sql`and t.assignee_id = ${opts.assigneeId}` : sql``}
+       ${opts.q ? sql`and (t.title ilike ${`%${opts.q}%`} or t.human_id ilike ${`%${opts.q}%`})` : sql``}
      order by
        case t.priority when 'URGENT' then 0 when 'HIGH' then 1 when 'MEDIUM' then 2 else 3 end,
        t.due_at asc
@@ -386,4 +404,252 @@ export async function ticketCounts(actor: Actor) {
     mine: Number(row.mine), awaitingMyConfirmation: Number(row.awaiting_my_confirmation),
     overdue: Number(row.overdue),
   };
+}
+
+/* ------------------------------------------------------ edits and extras (20.9) */
+
+export interface UpdateTicketInput {
+  title?: string;
+  description?: string;
+  priority?: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+  dueAt?: string;
+  assigneeId?: string | null;
+  location?: string | null;
+  estimatedCostPaise?: number | null;
+}
+
+/**
+ * PRD 20.9 — two different edits behind one endpoint.
+ *
+ * The requester may correct what they asked for, but only while nobody has started
+ * on it (OPEN or NEEDS_INFO). The target HOD may change how the work is scheduled —
+ * priority, due date, assignee, location — at any point, because that is triage and
+ * it continues after work begins. Neither may do the other's half.
+ *
+ * A due-date or priority change notifies the requester: those are the two fields
+ * whose silent change makes people stop trusting the board.
+ */
+export async function updateTicket(actor: SessionUser, id: string, input: UpdateTicketInput) {
+  return db.transaction(async (tx) => {
+    const before = await load(tx, actor, id);
+
+    const resource = {
+      festId: actor.festId,
+      departmentId: before.requestingDepartmentId,
+      requestingDepartmentId: before.requestingDepartmentId,
+      targetDepartmentId: before.targetDepartmentId,
+      requesterId: before.requesterId,
+      submitterId: before.requesterId,
+      assigneeId: before.assigneeId ?? undefined,
+    };
+
+    const isRequester = before.requesterId === actor.id;
+    const canTriage = (() => {
+      try {
+        assertCan(actor, "ticket.triage", resource);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+
+    const asksRequesterFields = input.title !== undefined || input.description !== undefined;
+    const asksTriageFields =
+      input.priority !== undefined || input.dueAt !== undefined ||
+      input.assigneeId !== undefined || input.location !== undefined ||
+      input.estimatedCostPaise !== undefined;
+
+    if (asksRequesterFields) {
+      if (!isRequester) {
+        throw new ApiError("FORBIDDEN", "Only the person who raised a ticket can reword it");
+      }
+      if (before.status !== "OPEN" && before.status !== "NEEDS_INFO") {
+        throw new ApiError("VALIDATION_ERROR",
+          "A ticket can only be reworded before it is accepted; add a comment instead");
+      }
+    }
+    if (asksTriageFields && !canTriage) {
+      throw new ApiError("FORBIDDEN", "Only the target department's HOD can retriage a ticket");
+    }
+    if (!asksRequesterFields && !asksTriageFields) {
+      throw new ApiError("VALIDATION_ERROR", "Nothing to change");
+    }
+
+    if (input.assigneeId) {
+      // An assignee has to be someone in the department doing the work.
+      const [assignee] = await tx.select({ id: users.id }).from(users).where(and(
+        eq(users.id, input.assigneeId),
+        eq(users.festId, actor.festId),
+        eq(users.departmentId, before.targetDepartmentId),
+        eq(users.status, "ACTIVE"),
+      )).limit(1);
+      if (!assignee) {
+        throw new ApiError("VALIDATION_ERROR", "The assignee must be an active member of the target department");
+      }
+    }
+
+    const [after] = await tx.update(tickets).set({
+      title: input.title ?? before.title,
+      description: input.description ?? before.description,
+      priority: input.priority ?? before.priority,
+      dueAt: input.dueAt ? new Date(input.dueAt) : before.dueAt,
+      assigneeId: input.assigneeId === undefined ? before.assigneeId : input.assigneeId,
+      location: input.location === undefined ? before.location : input.location,
+      estimatedCostPaise: input.estimatedCostPaise === undefined
+        ? before.estimatedCostPaise : input.estimatedCostPaise,
+      updatedAt: new Date(),
+    }).where(eq(tickets.id, id)).returning();
+
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "TICKET", entityId: id, actorId: actor.id,
+      action: "ticket.update",
+      before: snapshot(before, AUDITED), after: snapshot(after, AUDITED),
+    });
+
+    const dueChanged = input.dueAt && after.dueAt.getTime() !== before.dueAt.getTime();
+    const priorityChanged = input.priority && input.priority !== before.priority;
+    if (dueChanged || priorityChanged) {
+      await notify(tx, {
+        festId: actor.festId, type: "ticket.retriaged", entityType: "TICKET", entityId: id,
+        title: `${after.humanId}: ${dueChanged ? "due date" : "priority"} changed`,
+        body: `${after.title} — now ${after.priority}, due ${after.dueAt.toISOString().slice(0, 10)}`,
+        toUsers: [before.requesterId, ...(after.assigneeId ? [after.assigneeId] : [])],
+        exceptUserId: actor.id,
+      });
+    }
+
+    return after;
+  });
+}
+
+/** PRD 20.9 — watch or unwatch. Anyone who can see the ticket can watch it. */
+export async function setWatcher(actor: SessionUser, ticketId: string, userId: string, watching: boolean) {
+  return db.transaction(async (tx) => {
+    const ticket = await load(tx, actor, ticketId);
+
+    // You may always watch on your own behalf; adding somebody else is triage.
+    if (userId !== actor.id) {
+      assertCan(actor, "ticket.triage", {
+        festId: actor.festId,
+        targetDepartmentId: ticket.targetDepartmentId,
+        requestingDepartmentId: ticket.requestingDepartmentId,
+      });
+    }
+
+    if (watching) {
+      await tx.insert(ticketWatchers).values({ ticketId, userId }).onConflictDoNothing();
+    } else {
+      await tx.delete(ticketWatchers).where(and(
+        eq(ticketWatchers.ticketId, ticketId),
+        eq(ticketWatchers.userId, userId),
+      ));
+    }
+    return { ticket_id: ticketId, user_id: userId, watching };
+  });
+}
+
+export type LinkableType = "REIMBURSEMENT" | "VENDOR_REQUEST" | "TICKET";
+
+/**
+ * PRD 20.9 — relate a ticket to the money it caused, or to a sibling ticket.
+ * "Stage needs a generator" and the ₹40,000 vendor request for one are the same
+ * fact; linking them is how the close-out report reconciles.
+ */
+export async function linkTicket(actor: SessionUser, ticketId: string, toType: LinkableType, toId: string) {
+  return db.transaction(async (tx) => {
+    await load(tx, actor, ticketId);
+    if (toType === "TICKET" && toId === ticketId) {
+      throw new ApiError("VALIDATION_ERROR", "A ticket cannot be linked to itself");
+    }
+
+    // The target has to exist in this fest and be something the caller can see.
+    const { resolveEntity } = await import("@/lib/entities");
+    const { can } = await import("@/lib/authz");
+    const { VIEW_ACTION } = await import("@/lib/entities");
+    const target = await resolveEntity(actor.festId, toType, toId, tx);
+    if (!can(actor, VIEW_ACTION[toType], target)) {
+      throw new ApiError("FORBIDDEN", "You cannot see the record you are linking to");
+    }
+
+    const [row] = await tx.insert(entityLinks).values({
+      festId: actor.festId,
+      fromType: "TICKET", fromId: ticketId,
+      toType, toId,
+      createdBy: actor.id,
+    }).onConflictDoNothing().returning();
+
+    if (row) {
+      await recordAudit(tx, {
+        festId: actor.festId, entityType: "TICKET", entityId: ticketId, actorId: actor.id,
+        action: "ticket.link", after: { to_type: toType, to_id: toId },
+      });
+    }
+    return row ?? { already_linked: true };
+  });
+}
+
+/**
+ * PRD 20.9 — up to five open tickets with similar titles, shown while someone is
+ * typing a new one. Half the tickets raised during a fest are the same ask twice;
+ * this is the cheapest place to catch that.
+ *
+ * Trigram similarity, so "genrator for stage" still finds "Generator for main stage".
+ */
+export async function similarTickets(actor: Actor, targetDepartmentId: string, title: string) {
+  if (title.trim().length < 4) return [];
+
+  return (await db.execute(sql`
+    select t.id, t.human_id, t.title, t.status::text as status, t.priority::text as priority,
+           t.due_at, u.name as requester, d.name as requesting_department,
+           similarity(t.title, ${title}) as score
+      from tickets t
+      join users u on u.id = t.requester_id
+      join departments d on d.id = t.requesting_department_id
+     where t.fest_id = ${actor.festId} and t.deleted_at is null
+       and t.target_department_id = ${targetDepartmentId}
+       and t.status not in ('CLOSED','REJECTED','CANCELLED')
+       and similarity(t.title, ${title}) > 0.25
+     order by score desc, t.created_at desc
+     limit 5
+  `)) as unknown as Record<string, unknown>[];
+}
+
+/**
+ * PRD 20.9 — counts by department × priority × status, plus overdue and escalated.
+ * Management's picture of where the fest is straining; an HOD sees their own column.
+ */
+export async function ticketWorkload(actor: Actor) {
+  assertCan(actor, "ticket.view", {
+    festId: actor.festId,
+    targetDepartmentId: actor.departmentId,
+    requestingDepartmentId: actor.departmentId,
+  });
+  const festWide = actor.role === "MANAGEMENT" || actor.role === "FINANCE_HOD";
+
+  const rows = (await db.execute(sql`
+    select d.id as department_id, d.name as department,
+           t.priority::text as priority, t.status::text as status,
+           count(*)::int as n,
+           count(*) filter (where t.due_at < now()
+                              and t.status not in ('CLOSED','REJECTED','CANCELLED'))::int as overdue,
+           count(*) filter (where t.escalated_at is not null
+                              and t.status not in ('CLOSED','REJECTED','CANCELLED'))::int as escalated
+      from tickets t
+      join departments d on d.id = t.target_department_id
+     where t.fest_id = ${actor.festId} and t.deleted_at is null
+       ${festWide ? sql`` : sql`and t.target_department_id = ${actor.departmentId}`}
+     group by d.id, d.name, t.priority, t.status
+     order by d.name, t.priority
+  `)) as unknown as Record<string, unknown>[];
+
+  const totals = rows.reduce<{ tickets: number; overdue: number; escalated: number }>(
+    (acc, r) => ({
+      tickets: acc.tickets + Number(r.n),
+      overdue: acc.overdue + Number(r.overdue),
+      escalated: acc.escalated + Number(r.escalated),
+    }),
+    { tickets: 0, overdue: 0, escalated: 0 },
+  );
+
+  return { rows, totals };
 }

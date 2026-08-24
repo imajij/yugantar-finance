@@ -15,6 +15,41 @@
       "when": 1787346173241,
       "tag": "0001_views",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787516531374,
+      "tag": "0002_outbox_and_cron",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787516531375,
+      "tag": "0003_append_only_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787516531376,
+      "tag": "0004_ticket_similarity",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787516531377,
+      "tag": "0005_audit_guard_session_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787524232206,
+      "tag": "0006_sessions_and_sign_in_links",
+      "breakpoints": true
     }
   ]
 }

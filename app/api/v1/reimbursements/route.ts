@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { departments, expenseTypes, flags, lineItems, reimbursementRequests, users } from "@/db/schema";
-import { can } from "@/lib/authz";
+import { canFestWide } from "@/lib/authz";
 import { page, parseBody, parseQuery, route } from "@/lib/api";
 import { createReimbursement } from "@/lib/services/reimbursements";
 import { REIMBURSEMENT_STATES } from "@/lib/state-machines/reimbursement";
@@ -23,7 +23,8 @@ const listQuery = z.object({
 export const GET = route(async ({ user, request }) => {
   const f = parseQuery(request, listQuery);
 
-  const seesAll = can(user, "reimbursement.view", { festId: user.festId, departmentId: "any" });
+  // No department in scope: only the roles with fest-wide reach come back true.
+  const seesAll = canFestWide(user, "reimbursement.view");
   const scope = seesAll
     ? undefined
     : user.role === "DEPT_HOD"

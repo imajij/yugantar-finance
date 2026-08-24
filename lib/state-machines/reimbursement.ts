@@ -42,11 +42,30 @@ export const REIMBURSEMENT_TRANSITIONS: readonly T[] = [
 ];
 
 /**
- * Special routing (PRD 7.2): a Department HOD's own request skips endorsement.
- * Applies to SUBMIT and RESUBMIT alike.
+ * Special routing (PRD 7.2): a submitter who would otherwise endorse their own
+ * request skips the endorsement step entirely.
+ *
+ * The test is not "is the submitter an HOD" but "is the submitter the HOD *of the
+ * department this claim is against*", and the difference matters both ways:
+ *
+ *   - A Tech HOD claiming against Logistics' budget must still be endorsed by
+ *     Logistics. Skipping on role alone would let any HOD spend another
+ *     department's allocation without that department's HOD ever seeing it.
+ *   - A Finance HOD claiming against the Finance department's own budget has no
+ *     one else who could endorse it — `can` forbids self-endorsement and a fest has
+ *     exactly one Finance HOD — so routing them through SUBMITTED strands the
+ *     request with nobody able to move it.
+ *
+ * Applies to SUBMIT and RESUBMIT alike. Who *approves* is a separate question,
+ * answered by `approverRoleFor` (5.2).
  */
-export function landingStateForSubmit(submitterRole: string): ReimbursementState {
-  return submitterRole === "DEPT_HOD" ? "HOD_ENDORSED" : "SUBMITTED";
+export function landingStateForSubmit(
+  submitterRole: string,
+  /** True when the submitter is the HOD of the department the claim is charged to. */
+  ownsClaimDepartment: boolean,
+): ReimbursementState {
+  const isHod = submitterRole === "DEPT_HOD" || submitterRole === "FINANCE_HOD";
+  return isHod && ownsClaimDepartment ? "HOD_ENDORSED" : "SUBMITTED";
 }
 
 /** A Finance HOD's own request is approved by Management, not Finance (PRD 5.2). */

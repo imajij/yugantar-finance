@@ -3,7 +3,7 @@
  * The money model this pins down: approving commits the WHOLE contract, each paid
  * milestone converts its slice to spent, and reducing the balance gives the rest back.
  */
-import { beforeEach, expect, test } from "vitest";
+import { afterAll, beforeEach, expect, test } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import type { Actor } from "@/lib/authz";
@@ -14,6 +14,9 @@ import {
   transitionVendorRequest, vendorExposure,
 } from "@/lib/services/vendors";
 import { lineItemTotals } from "@/lib/queries/budget";
+import { dropFests } from "@/lib/test-support";
+
+afterAll(() => dropFests(db, "vend-"));
 
 let festId: string, techId: string, financeDeptId: string, coreId: string;
 let lineItemId: string, vendorId: string;

@@ -94,10 +94,21 @@ for (const m of machines) {
 }
 
 describe("segregation of duties (PRD 5.2)", () => {
-  test("a Dept HOD's own reimbursement skips endorsement", () => {
-    expect(landingStateForSubmit("DEPT_HOD")).toBe("HOD_ENDORSED");
-    expect(landingStateForSubmit("MEMBER")).toBe("SUBMITTED");
-    expect(landingStateForSubmit("FINANCE_HOD")).toBe("SUBMITTED");
+  test("an HOD skips endorsement on their own department's budget, and only there", () => {
+    // Nobody endorses their own request, so an HOD spending their own department's
+    // allocation goes straight to HOD_ENDORSED (7.2).
+    expect(landingStateForSubmit("DEPT_HOD", true)).toBe("HOD_ENDORSED");
+    expect(landingStateForSubmit("FINANCE_HOD", true)).toBe("HOD_ENDORSED");
+
+    // But an HOD spending *another* department's allocation must still be endorsed
+    // by that department — skipping on role alone would be a way around it.
+    expect(landingStateForSubmit("DEPT_HOD", false)).toBe("SUBMITTED");
+    expect(landingStateForSubmit("FINANCE_HOD", false)).toBe("SUBMITTED");
+
+    // A Member is endorsed wherever they spend.
+    expect(landingStateForSubmit("MEMBER", true)).toBe("SUBMITTED");
+    expect(landingStateForSubmit("MEMBER", false)).toBe("SUBMITTED");
+    expect(landingStateForSubmit("MANAGEMENT", true)).toBe("SUBMITTED");
   });
 
   test("a Finance HOD's own reimbursement is approved by Management", () => {

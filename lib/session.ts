@@ -1,18 +1,26 @@
 /**
  * Resolves the caller to an `Actor` (PRD 13, 18.2 rule 10).
  *
- * Clerk is identity only — role and department live in our `users` table. When Clerk
- * is not configured we fall back to a dev sign-in that picks a seeded user by email,
- * so the app is demoable before auth is wired. The fallback refuses to run in
- * production, and refuses to run at all once CLERK_SECRET_KEY is set.
+ * Two identity providers, checked in that order:
+ *
+ *   1. **Clerk**, when it is configured. Google sign-in restricted to the college
+ *      domain, exactly as PRD 18.1 specifies. Clerk is identity only — role and
+ *      department live in our `users` table and authorization is decided in our code.
+ *   2. **Sign-in links**, otherwise. A one-time link emailed to an already-invited
+ *      address, backed by a server-side session (`lib/auth.ts`).
+ *
+ * Both land in the same place: a row in `users`, with a role and a department. Nothing
+ * downstream of this file knows or cares which one the caller came through.
  */
 import { cookies } from "next/headers";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { departments, users } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
+import { clerkConfigured, currentClerkIdentity } from "@/lib/clerk";
+import { SESSION_COOKIE, resolveSession } from "@/lib/auth";
 
-export const DEV_USER_COOKIE = "yg_dev_user";
+export { clerkConfigured, SESSION_COOKIE };
 
 export class Unauthenticated extends Error {
   readonly code = "UNAUTHENTICATED";
@@ -29,24 +37,6 @@ export interface SessionUser extends Actor {
   departmentKind: "BUDGET" | "FINANCE" | "CORE";
   upiId: string | null;
   status: "INVITED" | "ACTIVE" | "DISABLED";
-}
-
-export const clerkConfigured = () => Boolean(process.env.CLERK_SECRET_KEY);
-
-const devAuthAllowed = () => !clerkConfigured() && process.env.NODE_ENV !== "production";
-
-async function loadByEmail(email: string): Promise<SessionUser | null> {
-  const [row] = await db
-    .select({
-      id: users.id, festId: users.festId, role: users.role, departmentId: users.departmentId,
-      name: users.name, email: users.email, status: users.status, upiId: users.upiId,
-      departmentName: departments.name, departmentKind: departments.kind,
-    })
-    .from(users)
-    .innerJoin(departments, eq(departments.id, users.departmentId))
-    .where(eq(users.email, email))
-    .limit(1);
-  return row ?? null;
 }
 
 async function loadByClerkId(clerkUserId: string): Promise<SessionUser | null> {
@@ -70,15 +60,58 @@ export async function getSession(): Promise<SessionUser | null> {
     const { auth } = await import("@clerk/nextjs/server");
     const { userId } = await auth();
     if (!userId) return null;
-    return loadByClerkId(userId);
+
+    const linked = await loadByClerkId(userId);
+    if (linked) return linked;
+
+    // No link yet. The webhook may be unconfigured or may have missed this account,
+    // and without a link Clerk says signed-in while the app says not — a loop with
+    // no error. Bind it here instead, on the same terms (see `linkClerkAccount`).
+    return linkClerkAccount(userId);
   }
 
-  if (!devAuthAllowed()) return null;
+  return resolveSession((await cookies()).get(SESSION_COOKIE)?.value);
+}
 
-  const email = (await cookies()).get(DEV_USER_COOKIE)?.value;
-  if (!email) return null;
-  const user = await loadByEmail(email);
-  return user?.status === "DISABLED" ? null : user;
+/**
+ * Establishes the Clerk ↔ `users` link on first sign-in when the webhook has not.
+ * Returns null — and logs why — for anyone who was never invited, which is the
+ * access-control decision this file must not get wrong.
+ */
+async function linkClerkAccount(clerkUserId: string): Promise<SessionUser | null> {
+  const identity = await currentClerkIdentity();
+  if (!identity || identity.clerkUserId !== clerkUserId) return null;
+
+  const [invited] = await db
+    .select({ id: users.id, status: users.status, clerkUserId: users.clerkUserId })
+    .from(users)
+    .where(eq(users.email, identity.email))
+    .limit(1);
+
+  if (!invited) {
+    console.warn(`[clerk] ${identity.email} signed in but was never invited — refusing`);
+    return null;
+  }
+  if (invited.status === "DISABLED") {
+    console.warn(`[clerk] ${identity.email} signed in but the account is disabled — refusing`);
+    return null;
+  }
+  if (invited.clerkUserId && invited.clerkUserId !== clerkUserId) {
+    console.warn(`[clerk] ${identity.email} is already linked to a different Clerk account — refusing`);
+    return null;
+  }
+
+  await db.update(users).set({
+    clerkUserId,
+    name: identity.name ?? undefined,
+    // Accepting the invitation is what makes someone active, exactly as the webhook
+    // and the sign-in-link path both do.
+    status: invited.status === "INVITED" ? "ACTIVE" : invited.status,
+    updatedAt: new Date(),
+  }).where(eq(users.id, invited.id));
+
+  console.info(`[clerk] linked ${identity.email} on first sign-in (webhook had not)`);
+  return loadByClerkId(clerkUserId);
 }
 
 export async function requireSession(): Promise<SessionUser> {
@@ -86,15 +119,4 @@ export async function requireSession(): Promise<SessionUser> {
   if (!user) throw new Unauthenticated();
   if (user.status === "DISABLED") throw new Unauthenticated("This account has been disabled");
   return user;
-}
-
-/** The dev sign-in screen lists these. Empty once Clerk is configured. */
-export async function devSignInCandidates(): Promise<{ email: string; name: string; role: string; department: string }[]> {
-  if (!devAuthAllowed()) return [];
-  return db
-    .select({ email: users.email, name: users.name, role: users.role, department: departments.name })
-    .from(users)
-    .innerJoin(departments, eq(departments.id, users.departmentId))
-    .where(eq(users.status, "ACTIVE"))
-    .orderBy(users.role, users.name);
 }

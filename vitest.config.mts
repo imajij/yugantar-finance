@@ -17,6 +17,31 @@ function loadLocalEnv(): Record<string, string> {
 }
 
 export default defineConfig({
-  test: { env: loadLocalEnv(), include: ["tests/**/*.test.ts"] },
+  test: {
+    env: loadLocalEnv(),
+    /**
+     * Two projects, because route-handler tests need the session and `after()` seams
+     * installed before any handler module is imported, and the unit and database
+     * tests must run without them — a mocked session would hide exactly the bugs
+     * the permission matrix exists to find.
+     */
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit-and-db",
+          include: ["tests/unit/**/*.test.ts", "tests/db/**/*.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "api",
+          include: ["tests/api/**/*.test.ts"],
+          setupFiles: ["./tests/api/setup.ts"],
+        },
+      },
+    ],
+  },
   resolve: { alias: { "@": fileURLToPath(new URL(".", import.meta.url)) } },
 });

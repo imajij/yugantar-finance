@@ -20,6 +20,9 @@ import {
 } from "@/lib/state-machines/reimbursement";
 import { evaluateReimbursementFlags } from "@/lib/flags";
 import { recordAudit, snapshot } from "./audit";
+import {
+  notifyHighFlags, notifyMoneyTransition, REIMBURSEMENT_RULES, type Party,
+} from "./notify-routing";
 
 const AUDITED = [
   "status", "amountPaise", "lineItemId", "expenseTypeId", "description", "transactionOn",
@@ -50,7 +53,11 @@ export async function createReimbursement(actor: Actor, input: CreateInput) {
     await assertDocumentThreshold(tx, actor.festId, item.id, item.plannedPaise);
 
     const humanId = await nextHumanId(tx, actor.festId, "RB");
-    const status: ReimbursementState = input.submit ? landingStateForSubmit(actor.role) : "DRAFT";
+    // The claim is charged to the line item's department, which is not necessarily
+    // the submitter's — that distinction is the whole point of the routing rule.
+    const status: ReimbursementState = input.submit
+      ? landingStateForSubmit(actor.role, item.departmentId === actor.departmentId)
+      : "DRAFT";
 
     const [row] = await tx.insert(reimbursementRequests).values({
       festId: actor.festId,
@@ -77,9 +84,25 @@ export async function createReimbursement(actor: Actor, input: CreateInput) {
       after: snapshot(row, AUDITED),
     });
 
-    if (input.submit) await evaluateReimbursementFlags(tx, row.id);
+    if (input.submit) {
+      const raised = await evaluateReimbursementFlags(tx, row.id);
+      const party = partyOf(row, actor.id);
+      await notifyMoneyTransition(tx, REIMBURSEMENT_RULES, "SUBMIT", party, {
+        humanId: row.humanId, description: row.description,
+        amountPaise: row.amountPaise, actorName: await actorNameOf(tx, actor.id),
+      });
+      await notifyHighFlags(tx, party, row.humanId, raised);
+    }
     return row;
   });
+}
+
+/** The parties PRD 10 routes a reimbursement notification to. */
+function partyOf(row: { festId: string; id: string; submitterId: string; departmentId: string }, actorId: string): Party {
+  return {
+    festId: row.festId, entityType: "REIMBURSEMENT", entityId: row.id,
+    submitterId: row.submitterId, departmentId: row.departmentId, actorId,
+  };
 }
 
 export interface UpdateInput extends Partial<Omit<CreateInput, "submit" | "attachmentIds">> {
@@ -166,7 +189,7 @@ export async function transitionReimbursement(
       }
     }
 
-    const to = resolveTarget(before, action, submitter.role);
+    const to = resolveTarget(before, action, submitter.role, submitter.departmentId);
     const now = new Date();
     const reason = body.reason ?? body.note ?? null;
 
@@ -199,9 +222,30 @@ export async function transitionReimbursement(
       before: snapshot(before, AUDITED), after: snapshot(after, AUDITED), reason,
     });
 
-    await evaluateReimbursementFlags(tx, id);
+    const raised = await evaluateReimbursementFlags(tx, id);
+
+    // PRD 10 — who hears about this is a table, not a branch (see notify-routing).
+    const party = partyOf(after, actor.id);
+    const [dept] = await tx.execute<{ name: string }>(
+      sql`select name from departments where id = ${after.departmentId}`,
+    ) as unknown as { name: string }[];
+    await notifyMoneyTransition(tx, REIMBURSEMENT_RULES, action, party, {
+      humanId: after.humanId,
+      description: after.description,
+      amountPaise: after.amountPaise,
+      actorName: await actorNameOf(tx, actor.id),
+      reason,
+      departmentName: dept?.name,
+    });
+    await notifyHighFlags(tx, party, after.humanId, raised);
+
     return after;
   });
+}
+
+async function actorNameOf(tx: Tx, actorId: string): Promise<string> {
+  const [row] = await tx.select({ name: users.name }).from(users).where(eq(users.id, actorId)).limit(1);
+  return row?.name ?? "Someone";
 }
 
 /**
@@ -220,9 +264,14 @@ function assertActionPermission(
 
 /** SUBMIT and RESUBMIT land differently for an HOD (7.2 special routing). */
 function resolveTarget(
-  row: { status: ReimbursementState }, action: ReimbursementAction, submitterRole: Actor["role"],
+  row: { status: ReimbursementState; departmentId: string },
+  action: ReimbursementAction,
+  submitterRole: Actor["role"],
+  submitterDepartmentId: string,
 ): ReimbursementState {
-  if (action === "SUBMIT" || action === "RESUBMIT") return landingStateForSubmit(submitterRole);
+  if (action === "SUBMIT" || action === "RESUBMIT") {
+    return landingStateForSubmit(submitterRole, row.departmentId === submitterDepartmentId);
+  }
   const map: Partial<Record<ReimbursementAction, ReimbursementState>> = {
     ENDORSE: "HOD_ENDORSED", SEND_BACK: "SENT_BACK", DECLINE: "DECLINED",
     APPROVE: "APPROVED", HOLD: "ON_HOLD", RESOLVE_HOLD: "APPROVED",
@@ -367,4 +416,79 @@ export async function getReimbursementDetail(actor: Actor, id: string) {
     waiting_on: waitingOn(row.status, submitter[0].role),
     attachments: receipts, flags: openFlags, comments: thread, timeline,
   };
+}
+
+/**
+ * PRD 20.6 / 12 — Finance clearing a batch after the fest.
+ *
+ * Deliberately *not* a loop that approves everything: anything carrying an open
+ * High flag is skipped, because a High flag exists precisely to force one person
+ * to look at one request. Approving those still requires the single-request path
+ * and its acknowledgement note (8.3).
+ *
+ * Each request is its own transaction. One bad row should not roll back forty good
+ * ones, and the caller gets a per-id verdict either way.
+ */
+export interface BulkApproveResult {
+  id: string;
+  human_id: string | null;
+  approved: boolean;
+  reason?: string;
+}
+
+export async function bulkApprove(actor: Actor, ids: string[]): Promise<{
+  results: BulkApproveResult[];
+  approved: number;
+  skipped: number;
+}> {
+  assertCan(actor, "reimbursement.approve", { festId: actor.festId, submitterId: "-" });
+
+  const results: BulkApproveResult[] = [];
+
+  for (const id of ids) {
+    try {
+      const [row] = await db.select({
+        humanId: reimbursementRequests.humanId,
+        status: reimbursementRequests.status,
+      }).from(reimbursementRequests)
+        .where(and(
+          eq(reimbursementRequests.id, id),
+          eq(reimbursementRequests.festId, actor.festId),
+          isNull(reimbursementRequests.deletedAt),
+        )).limit(1);
+
+      if (!row) {
+        results.push({ id, human_id: null, approved: false, reason: "Not found" });
+        continue;
+      }
+      if (row.status !== "HOD_ENDORSED") {
+        results.push({ id, human_id: row.humanId, approved: false, reason: `Not endorsed (${row.status})` });
+        continue;
+      }
+
+      const [{ high }] = (await db.execute<{ high: number }>(sql`
+        select count(*)::int as high from flags
+         where entity_type = 'REIMBURSEMENT' and entity_id = ${id}
+           and status = 'OPEN' and severity = 'HIGH'
+      `)) as unknown as { high: number }[];
+      if (Number(high) > 0) {
+        results.push({
+          id, human_id: row.humanId, approved: false,
+          reason: `${high} open high flag${Number(high) === 1 ? "" : "s"} — approve it on its own and say why`,
+        });
+        continue;
+      }
+
+      await transitionReimbursement(actor, id, "APPROVE", {});
+      results.push({ id, human_id: row.humanId, approved: true });
+    } catch (error) {
+      results.push({
+        id, human_id: null, approved: false,
+        reason: error instanceof Error ? error.message : "Failed",
+      });
+    }
+  }
+
+  const approved = results.filter((r) => r.approved).length;
+  return { results, approved, skipped: results.length - approved };
 }

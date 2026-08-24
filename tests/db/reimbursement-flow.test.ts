@@ -13,6 +13,7 @@ import {
   createReimbursement, getReimbursementDetail, transitionReimbursement,
 } from "@/lib/services/reimbursements";
 import { departmentTotals, lineItemTotals } from "@/lib/queries/budget";
+import { dropFests } from "@/lib/test-support";
 
 let festId: string, techId: string, financeDeptId: string, coreId: string, expenseTypeId: string, lineItemId: string;
 let member: Actor, techHod: Actor, finance: Actor, finance2: Actor, mgmt: Actor;
@@ -83,21 +84,7 @@ beforeEach(async () => {
             'Quotation — ABC Sound', 'ABC Sound', ${R(58000)}, ${techHod.id})`);
 });
 
-afterAll(async () => {
-  const scope = sql`(select id from fests where slug like 'flow-%')`;
-  for (const t of [
-    sql`delete from flags where fest_id in ${scope}`,
-    sql`delete from audit_events where fest_id in ${scope}`,
-    sql`delete from attachments where fest_id in ${scope}`,
-    sql`delete from reimbursement_requests where fest_id in ${scope}`,
-    sql`delete from line_items where fest_id in ${scope}`,
-    sql`delete from expense_types where fest_id in ${scope}`,
-    sql`delete from human_id_sequences where fest_id in ${scope}`,
-    sql`delete from users where fest_id in ${scope}`,
-    sql`delete from departments where fest_id in ${scope}`,
-    sql`delete from fests where slug like 'flow-%'`,
-  ]) await db.execute(t);
-});
+afterAll(() => dropFests(db, "flow-"));
 
 test("submit → endorse → approve → pay moves the money through the five numbers", async () => {
   const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], submit: true }));

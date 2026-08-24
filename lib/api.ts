@@ -2,7 +2,7 @@
  * Route-handler plumbing (PRD 20.1). Handlers parse, call `can`, call a service,
  * and respond — no business logic here or in them.
  */
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { eq } from "drizzle-orm";
 import { ZodError, type ZodType } from "zod";
 import { db } from "@/db";
@@ -10,10 +10,15 @@ import { idempotencyKeys } from "@/db/schema";
 import { Forbidden } from "@/lib/authz";
 import { InvalidTransition, ValidationError } from "@/lib/state-machines/types";
 import { Unauthenticated, requireSession, type SessionUser } from "@/lib/session";
+import { flushOutbox } from "@/lib/services/notifications";
 
 export type ErrorCode =
   | "VALIDATION_ERROR" | "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND"
-  | "INVALID_TRANSITION" | "CONFLICT" | "OVER_ALLOCATION" | "RATE_LIMITED";
+  | "INVALID_TRANSITION" | "CONFLICT" | "OVER_ALLOCATION" | "RATE_LIMITED"
+  // Beyond PRD 20.1's list: the request was fine, the deployment is not. A missing
+  // environment variable surfacing as "Something went wrong" costs an afternoon,
+  // and the operator is the one who needs to be told.
+  | "NOT_CONFIGURED";
 
 const STATUS: Record<ErrorCode, number> = {
   VALIDATION_ERROR: 422,
@@ -24,6 +29,7 @@ const STATUS: Record<ErrorCode, number> = {
   CONFLICT: 409,
   OVER_ALLOCATION: 409,
   RATE_LIMITED: 429,
+  NOT_CONFIGURED: 503,
 };
 
 export class ApiError extends Error {
@@ -42,6 +48,18 @@ export const overAllocation = (message: string, details?: Record<string, unknown
   new ApiError("OVER_ALLOCATION", message, details);
 export const conflict = (message: string, details?: Record<string, unknown>) =>
   new ApiError("CONFLICT", message, details);
+
+/**
+ * Thrown where the code cannot proceed because the deployment is missing something.
+ * Carries what to set, because whoever sees it is an operator, not an attacker —
+ * and naming an environment variable gives nothing away.
+ */
+export class NotConfigured extends ApiError {
+  constructor(what: string, fix: string) {
+    super("NOT_CONFIGURED", `${what} is not configured on this deployment.`, { fix });
+    this.name = "NotConfigured";
+  }
+}
 
 export function errorResponse(code: ErrorCode, message: string, details?: Record<string, unknown>) {
   return NextResponse.json({ error: { code, message, ...(details ? { details } : {}) } }, { status: STATUS[code] });
@@ -92,6 +110,21 @@ export function route<P extends Record<string, string> = Record<string, string>>
       }
 
       const result = await handler({ user, params, request });
+
+      // Notifications are written inside the same transaction as the write that
+      // caused them, then delivered here — after the response, so a slow mail
+      // provider costs the user nothing and a failed send costs them nothing either
+      // (the row stays unsent and the sweep retries it).
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        after(async () => {
+          try {
+            await flushOutbox();
+          } catch (error) {
+            console.error("[outbox] flush failed", error);
+          }
+        });
+      }
+
       // A handler that built its own Response (a CSV download, say) is returned as-is.
       if (result instanceof Response) return result;
 

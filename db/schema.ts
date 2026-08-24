@@ -302,6 +302,7 @@ export const incomeEntries = pgTable("income_entries", {
   pledgedOn: date("pledged_on"),
   status: incomeStatus("status").notNull().default("PLEDGED"),
   writtenOffReason: text("written_off_reason"),
+  followupRemindedAt: ts("followup_reminded_at"),
   notes: text("notes"),
   createdBy: uuid("created_by").notNull().references(() => users.id),
   createdAt: ts("created_at").notNull().defaultNow(),
@@ -359,7 +360,11 @@ export const tickets = pgTable("tickets", {
   escalatedAt: ts("escalated_at"),
   escalatedBy: uuid("escalated_by").references(() => users.id),
   triageRemindedAt: ts("triage_reminded_at"),
+  /** Second triage interval: the point Management and the requesting HOD were told. */
+  triageEscalatedAt: ts("triage_escalated_at"),
   doneRemindedAt: ts("done_reminded_at"),
+  dueRemindedAt: ts("due_reminded_at"),
+  autoClosedAt: ts("auto_closed_at"),
   triagedAt: ts("triaged_at"),
   startedAt: ts("started_at"),
   doneAt: ts("done_at"),
@@ -462,16 +467,87 @@ export const notifications = pgTable("notifications", {
   title: text("title").notNull(),
   body: text("body"),
   channel: notificationChannel("channel").notNull().default("IN_APP"),
+  /** Extra facts the email template renders as a label/value table. */
+  payload: jsonb("payload"),
   sentAt: ts("sent_at"),
+  /** Delivery gave up — kept rather than deleted so the log stays honest. */
+  failedAt: ts("failed_at"),
+  attempts: integer("attempts").notNull().default(0),
   readAt: ts("read_at"),
   createdAt: ts("created_at").notNull().defaultNow(),
-}, (t) => [index("notifications_inbox_idx").on(t.recipientId, t.readAt, t.createdAt.desc())]);
+}, (t) => [
+  index("notifications_inbox_idx").on(t.recipientId, t.readAt, t.createdAt.desc()),
+  index("notifications_outbox_idx").on(t.channel, t.createdAt).where(sql`sent_at is null and failed_at is null`),
+]);
 
 export const humanIdSequences = pgTable("human_id_sequences", {
   festId: uuid("fest_id").notNull().references(() => fests.id),
   prefix: text("prefix").notNull(),
   lastValue: integer("last_value").notNull().default(0),
 }, (t) => [primaryKey({ columns: [t.festId, t.prefix] })]);
+
+/**
+ * Sign-in links (PRD 13, adapted).
+ *
+ * The spec calls for Clerk and Google Workspace, and Clerk still takes precedence
+ * wherever it is configured. This is the path when it is not: a one-time link
+ * emailed to an address that has already been invited.
+ *
+ * Only the SHA-256 of the token is stored. A dump of this table is then worthless —
+ * the link in someone's inbox is the secret, and the database only holds a fingerprint
+ * of it. Same reasoning as a password hash, and the same reason `consumed_at` exists:
+ * a link that has been used, or has expired, is dead even if it is still in the inbox.
+ */
+export const signInTokens = pgTable("sign_in_tokens", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: ts("expires_at").notNull(),
+  consumedAt: ts("consumed_at"),
+  /** Kept so a burst of links to one account is visible in the audit trail. */
+  requestedIp: text("requested_ip"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("sign_in_tokens_user_idx").on(t.userId).where(sql`consumed_at is null`),
+]);
+
+/**
+ * Sessions (PRD 13 — "sessions expire after 7 days").
+ *
+ * Server-side rather than a signed cookie carrying claims, for one reason: Finance
+ * disabling someone has to take effect immediately. A stateless token cannot be
+ * withdrawn before it expires; a row can. `revoked_at` is what `updateUser` sets.
+ */
+export const sessions = pgTable("sessions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: ts("expires_at").notNull(),
+  revokedAt: ts("revoked_at"),
+  lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
+  userAgent: text("user_agent"),
+  ip: text("ip"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("sessions_user_idx").on(t.userId).where(sql`revoked_at is null`),
+]);
+
+/**
+ * Fixed-window rate limiting (PRD 20.1 `RATE_LIMITED`). A table rather than memory
+ * because the app runs as several serverless instances that share no process state.
+ */
+export const rateLimits = pgTable("rate_limits", {
+  bucket: text("bucket").notNull(),
+  windowStart: ts("window_start").notNull(),
+  count: integer("count").notNull().default(0),
+}, (t) => [primaryKey({ columns: [t.bucket, t.windowStart] })]);
+
+/** Last successful run per cron job, so a digest covers exactly what the last one missed. */
+export const cronRuns = pgTable("cron_runs", {
+  job: text("job").primaryKey(),
+  lastRunAt: ts("last_run_at").notNull().defaultNow(),
+  lastResult: jsonb("last_result"),
+});
 
 export const idempotencyKeys = pgTable("idempotency_keys", {
   key: text("key").primaryKey(),

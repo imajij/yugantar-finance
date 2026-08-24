@@ -7,6 +7,8 @@ import { db } from "@/db";
 import { departments, expenseTypes, fests, users } from "@/db/schema";
 import { ApiError, conflict, notFound } from "@/lib/api";
 import { assertCan, type Actor } from "@/lib/authz";
+import { requestSignInLink, revokeAllSessions } from "@/lib/auth";
+import { clerkConfigured, emailDomainAllowed, revokeClerkSessions, sendClerkInvitation } from "@/lib/clerk";
 import type { Role } from "@/lib/state-machines/types";
 import { recordAudit, snapshot } from "./audit";
 
@@ -43,7 +45,15 @@ export async function inviteUser(actor: Actor, input: UserInput) {
   assertCan(actor, "user.manage", { festId: actor.festId });
   await assertSeatFree(actor.festId, input.role);
 
-  return db.transaction(async (tx) => {
+  // 13: college domain, with invited external Management users as the exception.
+  if (!emailDomainAllowed(input.email) && input.role !== "MANAGEMENT") {
+    throw new ApiError(
+      "VALIDATION_ERROR",
+      `Only @${process.env.ALLOWED_EMAIL_DOMAIN} addresses can be invited, except for Management`,
+    );
+  }
+
+  const row = await db.transaction(async (tx) => {
     const [dept] = await tx.select({ id: departments.id }).from(departments)
       .where(and(eq(departments.id, input.departmentId), eq(departments.festId, actor.festId))).limit(1);
     if (!dept) throw notFound("Department");
@@ -69,6 +79,18 @@ export async function inviteUser(actor: Actor, input: UserInput) {
     });
     return row;
   });
+
+  // Outside the transaction: a mail failure must not undo an invitation the Finance
+  // HOD can re-send from the admin screen.
+  //
+  // Which invitation depends on how people sign in (`lib/session.ts`). With Clerk it
+  // is Clerk's own; without it, the same one-time link the sign-in page issues —
+  // arriving unprompted is the difference between an invitation and a row in a table.
+  const invited = clerkConfigured()
+    ? await sendClerkInvitation(row.email)
+    : await requestSignInLink({ email: row.email }).then(() => true, () => false);
+
+  return { ...row, invitation_sent: invited };
 }
 
 export async function updateUser(
@@ -78,7 +100,7 @@ export async function updateUser(
   assertCan(actor, "user.manage", { festId: actor.festId });
   if (input.role) await assertSeatFree(actor.festId, input.role, id);
 
-  return db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     const [before] = await tx.select().from(users)
       .where(and(eq(users.id, id), eq(users.festId, actor.festId))).limit(1);
     if (!before) throw notFound("User");
@@ -97,6 +119,16 @@ export async function updateUser(
     });
     return after;
   });
+
+  // Disabling has to reach the session store, or the person keeps working until
+  // their cookie expires. `resolveSession` already refuses a DISABLED user, so this
+  // is belt and braces — but it also kills any outstanding sign-in links, which
+  // nothing else would.
+  if (input.status === "DISABLED") {
+    await revokeAllSessions(id);
+    if (updated.clerkUserId) await revokeClerkSessions(updated.clerkUserId);
+  }
+  return updated;
 }
 
 export async function listUsers(actor: Actor) {

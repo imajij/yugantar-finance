@@ -1,21 +1,24 @@
 import Link from "next/link";
 import { notFound as nf, redirect } from "next/navigation";
 import { sql } from "drizzle-orm";
-import { Download } from "lucide-react";
+import { Download, Printer } from "lucide-react";
 import { db } from "@/db";
 import { getSession } from "@/lib/session";
 import { can } from "@/lib/authz";
 import { festTotals } from "@/lib/queries/budget";
 import { Card, PageTitle, StatCard } from "@/components/ui";
 
-const PACK: { kind: string; label: string; hint: string }[] = [
-  { kind: "line-items", label: "Budget vs actual", hint: "The five numbers per line item — the sheet that must reconcile" },
-  { kind: "reimbursements", label: "Reimbursements", hint: "Every claim with who endorsed, approved and paid it" },
-  { kind: "vendor-payments", label: "Vendor payments", hint: "Contracted, paid, outstanding and refunds" },
-  { kind: "income", label: "Income", hint: "Pledged against received, in-kind marked separately" },
-  { kind: "tickets", label: "Work tickets", hint: "What was asked of whom, and whether it landed on time" },
-  { kind: "audit", label: "Audit log", hint: "Every state change, append-only" },
+/** PRD 12.1–12.7. `formats` is what each one is actually worth having as. */
+const PACK: { kind: string; label: string; hint: string; formats: ("csv" | "xlsx" | "print")[] }[] = [
+  { kind: "fest-summary", label: "Fest summary", hint: "12.6 — the closing report handed to the college: budget, income, spend, cash position", formats: ["print", "xlsx"] },
+  { kind: "transactions", label: "Transactions ledger", hint: "12.1 — every reimbursement and vendor milestone, with who endorsed, approved and paid it", formats: ["csv", "xlsx"] },
+  { kind: "payment-batch", label: "Payment batch", hint: "12.3 — everything approved and unpaid, with payee and UPI or bank details", formats: ["csv", "xlsx"] },
+  { kind: "vendor-ledger", label: "Vendor ledger", hint: "12.4 — per vendor: contracted, paid, outstanding, refunds", formats: ["xlsx", "csv"] },
+  { kind: "income-ledger", label: "Income ledger", hint: "12.5 — pledged against received, in-kind marked separately", formats: ["xlsx", "csv"] },
+  { kind: "audit", label: "Audit log", hint: "12.7 — every state change, append-only", formats: ["csv", "xlsx"] },
 ];
+
+const FORMAT_LABEL = { csv: "CSV", xlsx: "Excel", print: "Print" } as const;
 
 /** PRD 12 / M6 — one page that produces the reconciliation pack. */
 export default async function CloseOutPage() {
@@ -23,8 +26,13 @@ export default async function CloseOutPage() {
   if (!user) redirect("/sign-in");
   if (!can(user, "export.run", { festId: user.festId })) nf();
 
-  const [totals, [loose]] = await Promise.all([
+  const [totals, departments, [loose]] = await Promise.all([
     festTotals(user.festId),
+    db.execute<{ id: string; name: string }>(sql`
+      select id, name from departments
+       where fest_id = ${user.festId} and is_active and kind = 'BUDGET'
+       order by name
+    `) as unknown as { id: string; name: string }[],
     db.execute<Record<string, string>>(sql`
       select
         (select count(*) from reimbursement_requests
@@ -102,21 +110,62 @@ export default async function CloseOutPage() {
                 <p className="text-sm text-text">{p.label}</p>
                 <p className="mt-0.5 text-xs text-text-muted">{p.hint}</p>
               </div>
-              <a
-                href={`/api/v1/exports/${p.kind}`}
-                className="flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium"
-                style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
-              >
-                <Download size={13} aria-hidden />
-                CSV
-              </a>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {p.formats.map((format, i) => (
+                  <a
+                    key={format}
+                    href={`/api/v1/exports/${p.kind}?format=${format === "print" ? "html" : format}`}
+                    {...(format === "print" ? { target: "_blank", rel: "noreferrer" } : {})}
+                    className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium"
+                    style={i === 0
+                      ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
+                      : { background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+                  >
+                    {format === "print" ? <Printer size={13} aria-hidden /> : <Download size={13} aria-hidden />}
+                    {FORMAT_LABEL[format]}
+                  </a>
+                ))}
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <h2 className="font-display mt-8 mb-3 text-lg">Department statements</h2>
+      <p className="mb-3 text-xs text-text-muted">
+        PRD 12.2 — one per department: its five numbers, the line items behind them, the supporting
+        documents, and every transaction. Print gives the page an HOD can sign.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {departments.map((d) => (
+          <Card key={d.id}>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-text">{d.name}</p>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <a
+                  href={`/api/v1/exports/department-statement?id=${d.id}&format=html`}
+                  target="_blank" rel="noreferrer"
+                  className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs"
+                  style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+                >
+                  <Printer size={12} aria-hidden /> Print
+                </a>
+                <a
+                  href={`/api/v1/exports/department-statement?id=${d.id}&format=xlsx`}
+                  className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs"
+                  style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+                >
+                  <Download size={12} aria-hidden /> Excel
+                </a>
+              </div>
             </div>
           </Card>
         ))}
       </div>
 
       <p className="mt-6 text-xs text-text-muted">
-        Amounts export as rupees with two decimals. Every download is itself recorded in the audit log.
+        Excel exports carry amounts as numbers with an Indian-grouped rupee format, so nothing has to be
+        retyped. CSV carries plain decimals. Every download is itself recorded in the audit log.
       </p>
     </>
   );

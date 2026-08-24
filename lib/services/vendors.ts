@@ -18,6 +18,9 @@ import { nextHumanId } from "@/lib/human-id";
 import { assertVendorTransition, type VendorAction, type VendorState } from "@/lib/state-machines/vendor";
 import { evaluateVendorFlags } from "@/lib/flags";
 import { recordAudit, snapshot } from "./audit";
+import {
+  notifyHighFlags, notifyMoneyTransition, VENDOR_RULES, type Party,
+} from "./notify-routing";
 
 const AUDITED = [
   "status", "totalValuePaise", "approvedValuePaise", "lineItemId", "vendorId",
@@ -135,7 +138,7 @@ export async function createVendorRequest(actor: Actor, input: CreateVendorReque
 
     assertMilestonesSum(input.milestones, input.totalValuePaise);
 
-    const [vendor] = await tx.select({ id: vendors.id }).from(vendors)
+    const [vendor] = await tx.select({ id: vendors.id, name: vendors.name }).from(vendors)
       .where(and(eq(vendors.id, input.vendorId), eq(vendors.festId, actor.festId), isNull(vendors.deletedAt))).limit(1);
     if (!vendor) throw notFound("Vendor");
 
@@ -168,9 +171,35 @@ export async function createVendorRequest(actor: Actor, input: CreateVendorReque
       action: input.submit ? "vendor_request.submit" : "vendor_request.create",
       after: snapshot(row, AUDITED),
     });
-    await evaluateVendorFlags(tx, row.id);
+    const raised = await evaluateVendorFlags(tx, row.id);
+
+    if (input.submit) {
+      const party = partyOf(row, actor.id);
+      await notifyMoneyTransition(tx, VENDOR_RULES, "SUBMIT", party, {
+        humanId: row.humanId, description: row.description,
+        amountPaise: row.totalValuePaise,
+        actorName: await actorNameOf(tx, actor.id),
+        vendorName: vendor.name,
+      });
+      await notifyHighFlags(tx, party, row.humanId, raised);
+    }
     return row;
   });
+}
+
+/** The parties PRD 10 routes a vendor notification to. */
+function partyOf(
+  row: { festId: string; id: string; requestedBy: string; departmentId: string }, actorId: string,
+): Party {
+  return {
+    festId: row.festId, entityType: "VENDOR_REQUEST", entityId: row.id,
+    submitterId: row.requestedBy, departmentId: row.departmentId, actorId,
+  };
+}
+
+async function actorNameOf(tx: Tx, actorId: string): Promise<string> {
+  const [row] = await tx.select({ name: users.name }).from(users).where(eq(users.id, actorId)).limit(1);
+  return row?.name ?? "Someone";
 }
 
 export interface VendorTransitionBody {
@@ -335,7 +364,31 @@ export async function transitionVendorRequest(
       before: snapshot(before, AUDITED), after: snapshot(after, AUDITED),
       reason: body.reason ?? body.note ?? null,
     });
-    await evaluateVendorFlags(tx, id);
+    const raised = await evaluateVendorFlags(tx, id);
+
+    // PRD 10 — the recipient table lives in notify-routing, not in branches here.
+    const party = partyOf(after, actor.id);
+    const [meta] = (await tx.execute(sql`
+      select v.name as vendor_name, d.name as department_name
+        from vendor_requests vr
+        join vendors v on v.id = vr.vendor_id
+        join departments d on d.id = vr.department_id
+       where vr.id = ${id}
+    `)) as unknown as { vendor_name: string; department_name: string }[];
+
+    await notifyMoneyTransition(tx, VENDOR_RULES, action, party, {
+      humanId: after.humanId,
+      description: after.description,
+      amountPaise: action === "RECORD_ADVANCE" || action === "RECORD_BALANCE"
+        ? (body.paid_paise ?? 0)
+        : (after.approvedValuePaise ?? after.totalValuePaise),
+      actorName: await actorNameOf(tx, actor.id),
+      reason: body.reason ?? body.note ?? null,
+      departmentName: meta?.department_name,
+      vendorName: meta?.vendor_name,
+    });
+    await notifyHighFlags(tx, party, after.humanId, raised);
+
     return after;
   });
 }
@@ -479,4 +532,96 @@ export async function getVendorRequestDetail(actor: Actor, id: string) {
     comments: thread,
     timeline,
   };
+}
+
+/**
+ * PRD 20.7 — the requester correcting a vendor request before Finance sees it.
+ *
+ * Editing is confined to DRAFT and SENT_BACK by `can` (5.2 / 20.7): once Finance has
+ * approved a value, changing it behind their back would make the approval a lie.
+ * Milestones are replaced wholesale rather than patched, because they must always
+ * sum to the total and a partial update cannot guarantee that.
+ */
+export interface UpdateVendorRequestInput {
+  description?: string;
+  totalValuePaise?: number;
+  expectedDeliveryOn?: string | null;
+  vendorId?: string;
+  lineItemId?: string;
+  milestones?: { kind: "ADVANCE" | "BALANCE" | "OTHER"; plannedPaise: number }[];
+}
+
+export async function updateVendorRequest(actor: Actor, id: string, input: UpdateVendorRequestInput) {
+  return db.transaction(async (tx) => {
+    const before = await load(tx, actor, id);
+    assertCan(actor, "vendorRequest.edit", {
+      festId: actor.festId,
+      departmentId: before.departmentId,
+      submitterId: before.requestedBy,
+      status: before.status,
+    });
+
+    let departmentId = before.departmentId;
+    let lineItemId = before.lineItemId;
+    if (input.lineItemId && input.lineItemId !== before.lineItemId) {
+      const item = await loadOpenLineItem(tx, actor, input.lineItemId);
+      assertCan(actor, "vendorRequest.create", { festId: actor.festId, departmentId: item.departmentId });
+      departmentId = item.departmentId;
+      lineItemId = item.id;
+    }
+
+    if (input.vendorId && input.vendorId !== before.vendorId) {
+      const [vendor] = await tx.select({ id: vendors.id }).from(vendors)
+        .where(and(eq(vendors.id, input.vendorId), eq(vendors.festId, actor.festId), isNull(vendors.deletedAt)))
+        .limit(1);
+      if (!vendor) throw notFound("Vendor");
+    }
+
+    const total = input.totalValuePaise ?? before.totalValuePaise;
+    if (input.milestones) assertMilestonesSum(input.milestones, total);
+    else if (input.totalValuePaise !== undefined) {
+      // Changing the total without restating the milestones would leave them
+      // summing to the old figure, which the state machine relies on.
+      const existing = await loadMilestones(tx, id);
+      assertMilestonesSum(
+        existing.map((m) => ({ kind: m.kind, plannedPaise: m.plannedPaise })),
+        total,
+      );
+    }
+
+    const [after] = await tx.update(vendorRequests).set({
+      description: input.description ?? before.description,
+      totalValuePaise: total,
+      expectedDeliveryOn: input.expectedDeliveryOn === undefined
+        ? before.expectedDeliveryOn : input.expectedDeliveryOn,
+      vendorId: input.vendorId ?? before.vendorId,
+      lineItemId,
+      departmentId,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(vendorRequests.id, id),
+      eq(vendorRequests.status, before.status),
+    )).returning();
+    if (!after) throw conflict("This request changed while you were looking at it");
+
+    if (input.milestones) {
+      await tx.delete(vendorMilestones).where(and(
+        eq(vendorMilestones.vendorRequestId, id),
+        isNull(vendorMilestones.paidAt),
+      ));
+      await tx.insert(vendorMilestones).values(
+        input.milestones.map((m, i) => ({
+          vendorRequestId: id, kind: m.kind, sortOrder: i, plannedPaise: m.plannedPaise,
+        })),
+      );
+    }
+
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "VENDOR_REQUEST", entityId: id, actorId: actor.id,
+      action: "vendor_request.update",
+      before: snapshot(before, AUDITED), after: snapshot(after, AUDITED),
+    });
+    await evaluateVendorFlags(tx, id);
+    return after;
+  });
 }

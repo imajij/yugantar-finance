@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    { "path": "/api/v1/cron/ticket-sla", "schedule": "*/5 * * * *" },
+    { "path": "/api/v1/cron/outbox", "schedule": "*/5 * * * *" },
+    { "path": "/api/v1/cron/vendor-overdue", "schedule": "0 * * * *" },
+    { "path": "/api/v1/cron/income-followups", "schedule": "30 3 * * *" },
+    { "path": "/api/v1/cron/gc-attachments", "schedule": "0 4 * * *" },
+    { "path": "/api/v1/cron/daily-digest", "schedule": "30 2 * * *" }
+  ]
+}

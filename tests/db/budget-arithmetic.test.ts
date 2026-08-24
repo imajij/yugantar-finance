@@ -6,6 +6,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
+import { dropFests } from "@/lib/test-support";
 
 const client = postgres(process.env.DATABASE_URL!, { max: 1 });
 const db = drizzle(client);
@@ -123,22 +124,7 @@ beforeAll(async () => {
   await income("SPONSORSHIP_CASH", "Sponsor C", R(4000), "WRITTEN_OFF", []);
 });
 
-afterAll(async () => {
-  await db.execute(sql`
-    delete from income_tranches where income_entry_id in (select id from income_entries where fest_id = ${festId});
-  `);
-  await db.execute(sql`delete from income_entries where fest_id = ${festId}`);
-  await db.execute(sql`delete from vendor_milestones where vendor_request_id in (select id from vendor_requests where fest_id = ${festId})`);
-  await db.execute(sql`delete from vendor_requests where fest_id = ${festId}`);
-  await db.execute(sql`delete from vendors where fest_id = ${festId}`);
-  await db.execute(sql`delete from reimbursement_requests where fest_id = ${festId}`);
-  await db.execute(sql`delete from line_items where fest_id = ${festId}`);
-  await db.execute(sql`delete from users where fest_id = ${festId}`);
-  await db.execute(sql`delete from expense_types where fest_id = ${festId}`);
-  await db.execute(sql`delete from departments where fest_id = ${festId}`);
-  await db.execute(sql`delete from fests where id = ${festId}`);
-  await client.end();
-});
+afterAll(() => dropFests(db, "fixture-"));
 
 test("line item Sound — pending / committed / spent / available", async () => {
   const rows = await db.execute<{ pending_paise: string; committed_paise: string; spent_paise: string; available_paise: string }>(
