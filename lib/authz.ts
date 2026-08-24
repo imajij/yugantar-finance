@@ -93,6 +93,7 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
   const finance = isFinance(actor);
   const management = isManagement(actor);
   const hod = isHod(actor);
+  const superAdmin = isSuperAdmin(actor);
   const own = ownsDepartment(actor, resource);
 
   switch (action) {
@@ -105,7 +106,10 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
     case "department.view":
     case "department.budget.view":
     case "lineItem.view":
-      return finance || management || own;
+      // An administrator reads every department's numbers, not just their own. That
+      // is the point of the flag: oversight of the whole fest, whatever role they
+      // happen to hold.
+      return finance || management || superAdmin || own;
 
     case "budgetReview.view":
       return finance;
@@ -114,21 +118,24 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
       return finance || management || (hod && own) || resource.submitterId === actor.id;
 
     case "vendor.view":
-      return finance || management || hod;
+      return finance || management || superAdmin || hod;
     case "vendor.bankDetails.view":
       // Full account numbers only for Finance and Management; masked for HODs (20.7).
       return finance || management;
     case "vendorRequest.view":
-      return finance || management || (hod && own);
+      return finance || management || superAdmin || (hod && own);
 
     case "income.view":
-      return finance || management;
+      // Reading, not recording. `income.manage` and `vendor.manage` stay with Finance,
+      // so an administrator sees the ledgers — and the close-out pack built from them
+      // — without gaining the authority to change what is in them.
+      return finance || management || superAdmin;
 
     case "ticket.view":
       return finance || management || partyToTicket(actor, resource);
 
     case "flag.view":
-      return finance || (hod && own);
+      return finance || superAdmin || (hod && own);
 
     case "audit.view":
     case "closeOut.view":
@@ -141,15 +148,23 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
       return isSuperAdmin(actor);
 
     case "export.run":
-      // Per-kind exports keep 20.12's rules — Management needs the payment batch to
-      // make transfers, and an HOD their own department's statement. Which kinds each
-      // may pull is decided per export in `lib/services/exports.ts`.
-      return finance || management || (hod && own);
+      // 20.12's rules, plus the administrator: Management needs the payment batch to
+      // make transfers and an HOD their own department's statement, and an
+      // administrator needs every department's — they are the one who signs the fest
+      // off. Without this the close-out pack would render for them and every
+      // download inside it would refuse. Which kinds each may pull is decided per
+      // export in `lib/services/exports.ts`.
+      return finance || management || superAdmin || (hod && own);
 
     /* --------------------------------------------------------------- budget */
+    case "budget.transfer":
+      // Allocating a department's budget. Finance does it as the money's custodian;
+      // an administrator because they own the fest's shape. Both leave the same audit
+      // trail — an allocation only ever moves by transfer, with a reason (7.1).
+      return finance || superAdmin;
+
     case "fest.manage":
     case "department.manage":
-    case "budget.transfer":
     case "lineItem.markReviewed":
     case "user.manage":
     case "expenseType.manage":

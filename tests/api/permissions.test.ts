@@ -115,14 +115,15 @@ const CASES: Case[] = [
     options: (f) => ({
       body: { from_department_id: f.departments.tech, to_department_id: f.departments.logistics, amount_paise: 1000, reason: "Rebalancing the two" },
     }),
-    allow: ["finance"],
+    // An administrator sets each department's budget; it still moves as a transfer.
+    allow: ["finance", "superAdmin"],
   },
   {
     name: "GET /departments/{id}/summary — another department's",
     load: () => import("@/app/api/v1/departments/[id]/summary/route") as Promise<Record<string, Handler>>,
     method: "GET",
     options: (f) => ({ params: { id: f.departments.logistics } }),
-    allow: ["otherMember", "otherHod", "finance", "management"],
+    allow: ["otherMember", "otherHod", "finance", "management", "superAdmin"],
   },
 
   /* ------------------------------------------------------------- 20.5 line items */
@@ -174,7 +175,7 @@ const CASES: Case[] = [
     name: "GET /vendors",
     load: () => import("@/app/api/v1/vendors/route") as Promise<Record<string, Handler>>,
     method: "GET",
-    allow: ["hod", "otherHod", "finance", "management"],
+    allow: ["hod", "otherHod", "finance", "management", "superAdmin"],
   },
   {
     name: "POST /vendors",
@@ -187,7 +188,7 @@ const CASES: Case[] = [
     name: "GET /vendor-requests",
     load: () => import("@/app/api/v1/vendor-requests/route") as Promise<Record<string, Handler>>,
     method: "GET",
-    allow: ["hod", "otherHod", "finance", "management"],
+    allow: ["hod", "otherHod", "finance", "management", "superAdmin"],
   },
   {
     name: "POST /vendor-requests — against another department's line item",
@@ -210,7 +211,7 @@ const CASES: Case[] = [
     name: "GET /income",
     load: () => import("@/app/api/v1/income/route") as Promise<Record<string, Handler>>,
     method: "GET",
-    allow: ["finance", "management"],
+    allow: ["finance", "management", "superAdmin"],
   },
   {
     name: "POST /income",
@@ -223,7 +224,7 @@ const CASES: Case[] = [
     name: "GET /income/summary",
     load: () => import("@/app/api/v1/income/summary/route") as Promise<Record<string, Handler>>,
     method: "GET",
-    allow: ["finance", "management"],
+    allow: ["finance", "management", "superAdmin"],
   },
 
   /* -------------------------------------------------------------- 20.9 tickets */
@@ -239,7 +240,7 @@ const CASES: Case[] = [
     name: "GET /flags",
     load: () => import("@/app/api/v1/flags/route") as Promise<Record<string, Handler>>,
     method: "GET",
-    allow: ["hod", "otherHod", "finance"],
+    allow: ["hod", "otherHod", "finance", "superAdmin"],
   },
   {
     name: "POST /flags/evaluate",
@@ -263,14 +264,14 @@ const CASES: Case[] = [
     name: "GET /dashboard/fest",
     load: () => import("@/app/api/v1/dashboard/fest/route") as Promise<Record<string, Handler>>,
     method: "GET",
-    allow: ["finance", "management"],
+    allow: ["finance", "management", "superAdmin"],
   },
   {
     name: "GET /dashboard/department/{id} — another department's",
     load: () => import("@/app/api/v1/dashboard/department/[id]/route") as Promise<Record<string, Handler>>,
     method: "GET",
     options: (f) => ({ params: { id: f.departments.logistics } }),
-    allow: ["otherMember", "otherHod", "finance", "management"],
+    allow: ["otherMember", "otherHod", "finance", "management", "superAdmin"],
   },
   {
     name: "GET /queues/endorsements",
@@ -297,14 +298,14 @@ const CASES: Case[] = [
     load: () => import("@/app/api/v1/exports/[kind]/route") as Promise<Record<string, Handler>>,
     method: "GET",
     options: () => ({ params: { kind: "income-ledger" } }),
-    allow: ["finance", "management"],
+    allow: ["finance", "management", "superAdmin"],
   },
   {
     name: "GET /exports/fest-summary",
     load: () => import("@/app/api/v1/exports/[kind]/route") as Promise<Record<string, Handler>>,
     method: "GET",
     options: () => ({ params: { kind: "fest-summary" }, query: { format: "xlsx" } }),
-    allow: ["finance", "management"],
+    allow: ["finance", "management", "superAdmin"],
   },
   {
     name: "GET /exports/audit",

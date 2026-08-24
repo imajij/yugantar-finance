@@ -37,7 +37,8 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   ["fest.view", { festId: FEST }, [member, hod, otherHod, finance, mgmt, superAdmin]],
   ["fest.settings.view", { festId: FEST }, [finance]],
   ["department.budget.view", techResource, [member, hod, finance, mgmt, superAdmin]],
-  ["department.budget.view", { festId: FEST, departmentId: LOGISTICS }, [otherHod, finance, mgmt]],
+  // Every department, not just their own — that is the point of the flag.
+  ["department.budget.view", { festId: FEST, departmentId: LOGISTICS }, [otherHod, finance, mgmt, superAdmin]],
   ["reimbursement.view", techResource, [hod, finance, mgmt]],
   ["reimbursement.create", { festId: FEST }, [member, hod, otherHod, finance, mgmt, superAdmin]],
   ["reimbursement.endorse", techResource, [hod, finance]],
@@ -51,10 +52,10 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   ["lineItem.document.manage", techResource, [hod, finance]],
   ["fest.manage", { festId: FEST }, [finance]],
   ["department.manage", { festId: FEST }, [finance]],
-  ["budget.transfer", { festId: FEST }, [finance]],
-  ["income.view", { festId: FEST }, [finance, mgmt]],
+  ["budget.transfer", { festId: FEST }, [finance, superAdmin]],
+  ["income.view", { festId: FEST }, [finance, mgmt, superAdmin]],
   ["income.manage", { festId: FEST }, [finance]],
-  ["vendor.view", { festId: FEST }, [hod, otherHod, finance, mgmt]],
+  ["vendor.view", { festId: FEST }, [hod, otherHod, finance, mgmt, superAdmin]],
   ["vendor.bankDetails.view", { festId: FEST }, [finance, mgmt]],
   ["vendorRequest.create", techResource, [hod, finance]],
   ["vendorRequest.approve", techResource, [finance]],
@@ -62,7 +63,7 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   ["vendorRequest.recordPayment", techResource, [mgmt]],
   ["user.manage", { festId: FEST }, [finance]],
   ["expenseType.manage", { festId: FEST }, [finance]],
-  ["flag.view", techResource, [hod, finance]],
+  ["flag.view", techResource, [hod, finance, superAdmin]],
   ["flag.resolve", techResource, [finance]],
   // Oversight answers to the flag, not to a role.
   ["audit.view", techResource, [superAdmin]],
@@ -70,7 +71,7 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   ["superAdmin.manage", { festId: FEST }, [superAdmin]],
   // Per-kind exports keep 20.12's rules: Management needs the payment batch, an HOD
   // their own department's statement.
-  ["export.run", techResource, [hod, finance, mgmt]],
+  ["export.run", techResource, [hod, finance, mgmt, superAdmin]],
   ["ticket.create", { festId: FEST }, [member, hod, otherHod, finance, mgmt, superAdmin]],
   ["budgetReview.view", { festId: FEST }, [finance]],
 ];
@@ -103,12 +104,22 @@ describe("department scoping", () => {
     expect(can(superAdmin, "closeOut.view", { festId: FEST })).toBe(true);
     expect(can(superAdmin, "superAdmin.manage", { festId: FEST })).toBe(true);
 
-    // What it must not. This administrator is a Member, and stays one: 5.2's
+    // Reading every department, and the reports built from it.
+    expect(can(superAdmin, "export.run", techResource)).toBe(true);
+    expect(can(superAdmin, "income.view", { festId: FEST })).toBe(true);
+    expect(can(superAdmin, "vendor.view", { festId: FEST })).toBe(true);
+    expect(can(superAdmin, "department.budget.view", { festId: FEST, departmentId: LOGISTICS })).toBe(true);
+
+    // Setting each department's budget. It still moves as an audited transfer.
+    expect(can(superAdmin, "budget.transfer", { festId: FEST })).toBe(true);
+
+    // What it must not grant. This administrator is a Member, and stays one: 5.2's
     // segregation turns on the role, and oversight is not a way around it.
     for (const action of [
       "reimbursement.approve", "reimbursement.endorse", "reimbursement.recordPayment",
-      "budget.transfer", "fest.manage", "user.manage", "income.manage", "flag.resolve",
-      "lineItem.markReviewed", "vendorRequest.approve",
+      "reimbursement.hold", "fest.manage", "user.manage", "income.manage", "flag.resolve",
+      "lineItem.markReviewed", "vendorRequest.approve", "department.manage",
+      "vendor.bankDetails.view",
     ] as const) {
       expect(can(superAdmin, action, techResource), action).toBe(false);
     }

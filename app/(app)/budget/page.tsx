@@ -4,18 +4,25 @@ import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { departments } from "@/db/schema";
 import { getSession } from "@/lib/session";
-import { can } from "@/lib/authz";
+import { can, canFestWide } from "@/lib/authz";
 import { departmentTotalsForFest, festTotals } from "@/lib/queries/budget";
 import { utilizationPct } from "@/lib/money";
 import { Amount, Card, PageTitle, StatCard, UtilizationBar } from "@/components/ui";
+import { Allocate } from "./allocate";
 
-/** Finance and Management see every department; everyone else goes straight to their own. */
+/**
+ * Finance, Management and administrators see every department; everyone else goes
+ * straight to their own. Whoever may transfer also allocates from here.
+ */
 export default async function BudgetPage() {
   const user = await getSession();
   if (!user) redirect("/sign-in");
 
-  const seesAll = can(user, "department.budget.view", { festId: user.festId, departmentId: "any-other" });
+  // No department in the resource, so only fest-wide reach comes back true.
+  const seesAll = canFestWide(user, "department.budget.view");
   if (!seesAll) redirect(`/budget/${user.departmentId}`);
+
+  const canAllocate = can(user, "budget.transfer", { festId: user.festId });
 
   const [totals, rows, deptTotals] = await Promise.all([
     festTotals(user.festId),
@@ -51,12 +58,21 @@ export default async function BudgetPage() {
         <StatCard label="Reserve" paise={totals?.reservePaise ?? 0} hint="Unallocated, held by Finance" />
       </div>
 
+      {canAllocate && (
+        <p className="mt-3 text-xs text-text-muted">
+          Setting a department&rsquo;s budget moves the difference to or from Reserve, with the
+          reason you give, and is recorded in the audit log. A department can never be taken below
+          what it has already committed or spent.
+        </p>
+      )}
+
       <Card className="mt-6 overflow-x-auto p-0">
         <table className="w-full min-w-[48rem] text-sm">
           <thead>
             <tr className="text-left text-xs text-text-muted" style={{ borderBottom: "1px solid var(--yg-surface-2)" }}>
               <th className="px-4 py-3 font-medium">Department</th>
               <th className="px-4 py-3 text-right font-medium">Allocated</th>
+              {canAllocate && <th className="px-4 py-3 text-right font-medium"></th>}
               <th className="px-4 py-3 text-right font-medium">Planned</th>
               <th className="px-4 py-3 text-right font-medium">Pending</th>
               <th className="px-4 py-3 text-right font-medium">Committed</th>
@@ -75,6 +91,22 @@ export default async function BudgetPage() {
                     <Link href={`/budget/${d.id}`} className="hover:text-lime">{d.name}</Link>
                   </td>
                   <td className="px-4 py-3 text-right"><Amount paise={t.allocatedPaise} /></td>
+                  {canAllocate && (
+                    <td className="px-4 py-3 text-right align-top">
+                      {/* Finance and Core hold no budget of their own — the roles hang
+                          off them, and money lives in the departments that spend it. */}
+                      {d.kind === "BUDGET" ? (
+                        <Allocate
+                          departmentId={d.id}
+                          departmentName={d.name}
+                          allocatedPaise={t.allocatedPaise}
+                          reservePaise={totals?.reservePaise ?? 0}
+                        />
+                      ) : (
+                        <span className="text-xs text-text-muted">&mdash;</span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-4 py-3 text-right text-text-muted"><Amount paise={t.plannedPaise} /></td>
                   <td className="px-4 py-3 text-right" style={{ color: "var(--state-waiting-fg)" }}><Amount paise={t.pendingPaise} /></td>
                   <td className="px-4 py-3 text-right" style={{ color: "var(--state-decided-fg)" }}><Amount paise={t.committedPaise} /></td>
