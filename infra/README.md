@@ -47,7 +47,7 @@ GitHub Actions. Set on the repository, under Settings → Secrets and variables:
 | | Name | Value |
 |---|---|---|
 | Secret | `CRON_SECRET` | the same value as the deployment's |
-| Variable | `APP_URL` | `https://your-app.vercel.app` |
+| Variable | `APP_URL` | `https://yugantar.ajij.dev` |
 
 Without both it no-ops rather than failing.
 
