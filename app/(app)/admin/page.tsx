@@ -102,7 +102,12 @@ export default async function AdminPage() {
           account. Deactivating someone keeps their history, ends their sessions, and only stops
           them signing in.
         </p>
-        <People users={people} departments={assignable} meId={user.id} />
+        <People
+          users={people}
+          departments={assignable}
+          meId={user.id}
+          canManageAdmins={can(user, "superAdmin.manage", { festId: user.festId })}
+        />
       </Card>
 
       <Card className="mt-4">

@@ -12,6 +12,14 @@ export interface Actor {
   festId: string;
   role: Role;
   departmentId: string;
+  /**
+   * Platform administrator (see `users.is_super_admin`). Orthogonal to `role`:
+   * it grants oversight — the audit log, the close-out pack, appointing other
+   * administrators — and never the authority to move money. A super admin who is a
+   * Member still cannot approve a reimbursement, because 5.2's segregation rules
+   * turn on the role and nothing here touches them.
+   */
+  isSuperAdmin?: boolean;
 }
 
 /** Everything `can` may need to know about the thing being acted on. */
@@ -39,6 +47,7 @@ export type Action =
   | "reimbursement.view" | "vendor.view" | "vendorRequest.view"
   | "vendor.bankDetails.view"
   | "income.view" | "ticket.view" | "flag.view" | "audit.view" | "export.run"
+  | "closeOut.view" | "superAdmin.manage"
   // writes — budget
   | "fest.manage" | "department.manage" | "budget.transfer"
   | "lineItem.create" | "lineItem.edit" | "lineItem.close" | "lineItem.markReviewed"
@@ -54,6 +63,7 @@ export type Action =
   | "comment.create" | "flag.resolve" | "user.manage" | "expenseType.manage";
 
 const isFinance = (a: Actor) => a.role === "FINANCE_HOD";
+const isSuperAdmin = (a: Actor) => a.isSuperAdmin === true;
 const isManagement = (a: Actor) => a.role === "MANAGEMENT";
 const isHod = (a: Actor) => a.role === "DEPT_HOD";
 
@@ -121,9 +131,19 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
       return finance || (hod && own);
 
     case "audit.view":
-      return finance || management || (hod && own);
+    case "closeOut.view":
+    case "superAdmin.manage":
+      // Oversight, not spending. The audit log is every action anyone took and the
+      // close-out pack is the whole fest's finances in one download, so both answer
+      // to the administrator flag rather than to a role — an HOD running their own
+      // department has no call on either. `superAdmin.manage` sits here too: if any
+      // Finance HOD could appoint administrators, the flag would draw no boundary.
+      return isSuperAdmin(actor);
 
     case "export.run":
+      // Per-kind exports keep 20.12's rules — Management needs the payment batch to
+      // make transfers, and an HOD their own department's statement. Which kinds each
+      // may pull is decided per export in `lib/services/exports.ts`.
       return finance || management || (hod && own);
 
     /* --------------------------------------------------------------- budget */

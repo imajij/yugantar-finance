@@ -28,7 +28,9 @@ beforeAll(async () => {
 afterAll(() => dropFests(db, PREFIX));
 
 type Who = keyof Fixture["users"];
-const EVERYONE: Who[] = ["member", "otherMember", "hod", "otherHod", "finance", "management"];
+const EVERYONE: Who[] = [
+  "member", "otherMember", "hod", "otherHod", "finance", "management", "superAdmin",
+];
 
 interface Case {
   name: string;
@@ -247,10 +249,13 @@ const CASES: Case[] = [
     allow: ["finance"],
   },
   {
+    // Oversight, not spending: the audit log is every action anyone took, so it
+    // answers to the administrator flag and not to a role. The fixture's
+    // administrator is a Member, which is what makes this a real check.
     name: "GET /audit",
     load: () => import("@/app/api/v1/audit/route") as Promise<Record<string, Handler>>,
     method: "GET",
-    allow: ["hod", "otherHod", "finance", "management"],
+    allow: ["superAdmin"],
   },
 
   /* ----------------------------------------------- 20.11 dashboards and queues */
@@ -306,7 +311,7 @@ const CASES: Case[] = [
     load: () => import("@/app/api/v1/exports/[kind]/route") as Promise<Record<string, Handler>>,
     method: "GET",
     options: () => ({ params: { kind: "audit" } }),
-    allow: ["hod", "otherHod", "finance", "management"],
+    allow: ["superAdmin"],
   },
 ];
 

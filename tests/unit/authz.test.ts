@@ -17,17 +17,29 @@ const otherHod: Actor = { id: "u-other-hod", festId: FEST, role: "DEPT_HOD", dep
 const finance: Actor = { id: "u-finance", festId: FEST, role: "FINANCE_HOD", departmentId: FINANCE_DEPT };
 const mgmt: Actor = { id: "u-mgmt", festId: FEST, role: "MANAGEMENT", departmentId: CORE };
 
+/**
+ * The platform administrator, deliberately a Member.
+ *
+ * The flag grants oversight — the audit log, the close-out pack, appointing other
+ * administrators — and never the authority to move money. Making the fixture a
+ * Member is what lets the matrix below prove that: they appear in the oversight rows
+ * and in none of the spending ones.
+ */
+const superAdmin: Actor = {
+  id: "u-super", festId: FEST, role: "MEMBER", departmentId: TECH, isSuperAdmin: true,
+};
+
 /** A resource owned by Tech, submitted by someone else. */
 const techResource: Resource = { festId: FEST, departmentId: TECH, submitterId: "u-someone", submitterRole: "MEMBER" };
 
 /** [action, resource, who may do it]. Anyone not listed must be refused. */
 const MATRIX: [Action, Resource, Actor[]][] = [
-  ["fest.view", { festId: FEST }, [member, hod, otherHod, finance, mgmt]],
+  ["fest.view", { festId: FEST }, [member, hod, otherHod, finance, mgmt, superAdmin]],
   ["fest.settings.view", { festId: FEST }, [finance]],
-  ["department.budget.view", techResource, [member, hod, finance, mgmt]],
+  ["department.budget.view", techResource, [member, hod, finance, mgmt, superAdmin]],
   ["department.budget.view", { festId: FEST, departmentId: LOGISTICS }, [otherHod, finance, mgmt]],
   ["reimbursement.view", techResource, [hod, finance, mgmt]],
-  ["reimbursement.create", { festId: FEST }, [member, hod, otherHod, finance, mgmt]],
+  ["reimbursement.create", { festId: FEST }, [member, hod, otherHod, finance, mgmt, superAdmin]],
   ["reimbursement.endorse", techResource, [hod, finance]],
   ["reimbursement.approve", techResource, [finance]],
   ["reimbursement.recordPayment", techResource, [mgmt]],
@@ -52,13 +64,18 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   ["expenseType.manage", { festId: FEST }, [finance]],
   ["flag.view", techResource, [hod, finance]],
   ["flag.resolve", techResource, [finance]],
-  ["audit.view", techResource, [hod, finance, mgmt]],
+  // Oversight answers to the flag, not to a role.
+  ["audit.view", techResource, [superAdmin]],
+  ["closeOut.view", { festId: FEST }, [superAdmin]],
+  ["superAdmin.manage", { festId: FEST }, [superAdmin]],
+  // Per-kind exports keep 20.12's rules: Management needs the payment batch, an HOD
+  // their own department's statement.
   ["export.run", techResource, [hod, finance, mgmt]],
-  ["ticket.create", { festId: FEST }, [member, hod, otherHod, finance, mgmt]],
+  ["ticket.create", { festId: FEST }, [member, hod, otherHod, finance, mgmt, superAdmin]],
   ["budgetReview.view", { festId: FEST }, [finance]],
 ];
 
-const ALL = [member, hod, otherHod, finance, mgmt];
+const ALL = [member, hod, otherHod, finance, mgmt, superAdmin];
 
 describe("permissions matrix (5.1)", () => {
   for (const [action, resource, allowed] of MATRIX) {
@@ -78,6 +95,37 @@ describe("department scoping", () => {
     expect(can(hod, "lineItem.view", logistics)).toBe(false);
     expect(can(hod, "lineItem.edit", logistics)).toBe(false);
     expect(can(hod, "audit.view", logistics)).toBe(false);
+  });
+
+  test("the administrator flag grants oversight and no spending authority", () => {
+    // What it does grant.
+    expect(can(superAdmin, "audit.view", techResource)).toBe(true);
+    expect(can(superAdmin, "closeOut.view", { festId: FEST })).toBe(true);
+    expect(can(superAdmin, "superAdmin.manage", { festId: FEST })).toBe(true);
+
+    // What it must not. This administrator is a Member, and stays one: 5.2's
+    // segregation turns on the role, and oversight is not a way around it.
+    for (const action of [
+      "reimbursement.approve", "reimbursement.endorse", "reimbursement.recordPayment",
+      "budget.transfer", "fest.manage", "user.manage", "income.manage", "flag.resolve",
+      "lineItem.markReviewed", "vendorRequest.approve",
+    ] as const) {
+      expect(can(superAdmin, action, techResource), action).toBe(false);
+    }
+  });
+
+  test("a role alone never grants oversight, however senior", () => {
+    for (const actor of [member, hod, otherHod, finance, mgmt]) {
+      expect(can(actor, "audit.view", techResource), `${actor.id} audit`).toBe(false);
+      expect(can(actor, "closeOut.view", { festId: FEST }), `${actor.id} close-out`).toBe(false);
+      expect(can(actor, "superAdmin.manage", { festId: FEST }), `${actor.id} manage`).toBe(false);
+    }
+  });
+
+  test("an administrator on another fest is still nobody here", () => {
+    const elsewhere: Actor = { ...superAdmin, festId: "fest-2" };
+    expect(can(elsewhere, "audit.view", techResource)).toBe(false);
+    expect(can(elsewhere, "closeOut.view", { festId: FEST })).toBe(false);
   });
 
   test("a Member cannot see another department at all", () => {
