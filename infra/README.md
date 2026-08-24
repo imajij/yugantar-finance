@@ -34,3 +34,25 @@ rather than linking to it. Today's download path renders the signed URL into an
   deletions come from the nightly `gc-attachments` job, and only for uploads that
   never got a parent. Add a lifecycle rule only if you decide to enforce the two-year
   ceiling automatically.
+
+# Scheduled jobs
+
+`vercel.json` carries one daily cron, because Vercel's Hobby plan allows no more
+than that: a single call to `/api/v1/cron/all`, which runs every job in sequence.
+
+The ticket SLA clock needs minutes rather than days (PRD 14), so
+`.github/workflows/cron.yml` calls `ticket-sla` and `outbox` every five minutes from
+GitHub Actions. Set on the repository, under Settings → Secrets and variables:
+
+| | Name | Value |
+|---|---|---|
+| Secret | `CRON_SECRET` | the same value as the deployment's |
+| Variable | `APP_URL` | `https://your-app.vercel.app` |
+
+Without both it no-ops rather than failing.
+
+GitHub's scheduler is best-effort — five minutes is the floor, ten is common, and
+runs are dropped under load. Before fest week, point a real scheduler at the same
+endpoints: Vercel Pro restores `vercel.json`'s original cadences verbatim, and a
+Cloudflare Worker cron or any hosted scheduler works too. The endpoints do not care
+who calls them, only that the bearer token is right.
