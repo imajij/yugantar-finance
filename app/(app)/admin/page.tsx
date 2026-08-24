@@ -96,9 +96,11 @@ export default async function AdminPage() {
       <Card className="mt-4">
         <h2 className="font-display text-sm">People</h2>
         <p className="mt-1 text-xs text-text-muted">
-          Inviting someone emails them a sign-in link. A fest has exactly one Finance HOD and one
-          Management account. Deactivating someone keeps their history, ends their sessions, and
-          only stops them signing in.
+          Inviting someone emails them a sign-in link. A department can have as many heads as it
+          needs — where it has more than one, a head&rsquo;s own claim is endorsed by one of the
+          others rather than skipping the step. A fest has one Finance HOD and one Management
+          account. Deactivating someone keeps their history, ends their sessions, and only stops
+          them signing in.
         </p>
         <People users={people} departments={assignable} meId={user.id} />
       </Card>

@@ -56,7 +56,11 @@ export async function createReimbursement(actor: Actor, input: CreateInput) {
     // The claim is charged to the line item's department, which is not necessarily
     // the submitter's — that distinction is the whole point of the routing rule.
     const status: ReimbursementState = input.submit
-      ? landingStateForSubmit(actor.role, item.departmentId === actor.departmentId)
+      ? landingStateForSubmit(
+          actor.role,
+          item.departmentId === actor.departmentId,
+          await peerEndorserExists(tx, actor.festId, item.departmentId, actor.id),
+        )
       : "DRAFT";
 
     const [row] = await tx.insert(reimbursementRequests).values({
@@ -189,7 +193,10 @@ export async function transitionReimbursement(
       }
     }
 
-    const to = resolveTarget(before, action, submitter.role, submitter.departmentId);
+    const to = resolveTarget(
+      before, action, submitter.role, submitter.departmentId,
+      await peerEndorserExists(tx, actor.festId, before.departmentId, before.submitterId),
+    );
     const now = new Date();
     const reason = body.reason ?? body.note ?? null;
 
@@ -268,9 +275,10 @@ function resolveTarget(
   action: ReimbursementAction,
   submitterRole: Actor["role"],
   submitterDepartmentId: string,
+  hasPeer: boolean,
 ): ReimbursementState {
   if (action === "SUBMIT" || action === "RESUBMIT") {
-    return landingStateForSubmit(submitterRole, row.departmentId === submitterDepartmentId);
+    return landingStateForSubmit(submitterRole, row.departmentId === submitterDepartmentId, hasPeer);
   }
   const map: Partial<Record<ReimbursementAction, ReimbursementState>> = {
     ENDORSE: "HOD_ENDORSED", SEND_BACK: "SENT_BACK", DECLINE: "DECLINED",
@@ -313,6 +321,32 @@ async function loadSubmitter(tx: Tx, id: string) {
     .from(users).where(eq(users.id, id)).limit(1);
   if (!row) throw notFound("Submitter");
   return row;
+}
+
+/**
+ * Is there another head of this department who could endorse, other than the
+ * submitter? That is what decides whether 7.2's skip applies (see
+ * `landingStateForSubmit`).
+ *
+ * Deliberately scoped to *that department's* heads rather than everyone `can()` would
+ * let endorse. A Finance HOD may endorse anywhere, but making them endorse and then
+ * approve the same request adds a signature without adding a second pair of eyes —
+ * and 7.2 exists precisely to avoid that theatre.
+ */
+async function peerEndorserExists(
+  tx: Tx, festId: string, departmentId: string, submitterId: string,
+): Promise<boolean> {
+  const [row] = (await tx.execute(sql`
+    select exists (
+      select 1 from users
+       where fest_id = ${festId}
+         and department_id = ${departmentId}
+         and role in ('DEPT_HOD', 'FINANCE_HOD')
+         and status = 'ACTIVE'
+         and id <> ${submitterId}
+    ) as present
+  `)) as unknown as { present: boolean }[];
+  return Boolean(row?.present);
 }
 
 async function loadOpenLineItem(tx: Tx, actor: Actor, lineItemId: string) {

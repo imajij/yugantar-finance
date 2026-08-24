@@ -10,7 +10,7 @@
  * Emails are light-themed regardless of the app's dark theme (PRD 21.4).
  */
 import { NotificationEmail, type EmailBlock } from "@/emails/notification";
-import { envAllSet, envOr } from "@/lib/env";
+import { env, envAllSet } from "@/lib/env";
 
 export const emailConfigured = () => envAllSet("RESEND_API_KEY", "EMAIL_FROM");
 
@@ -27,7 +27,46 @@ export interface EmailMessage {
   blocks?: EmailBlock[];
 }
 
-export const appUrl = () => envOr("APP_URL", "http://localhost:3000").replace(/\/$/, "");
+const trimSlash = (url: string) => url.replace(/\/$/, "");
+const isLoopback = (url: string) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(url);
+
+/**
+ * The origin every emailed link is built on.
+ *
+ * `APP_URL` first, because a deployment behind a custom domain should use it rather
+ * than whatever host it happens to answer on. But a *production* deployment whose
+ * `APP_URL` still says `localhost` is a leftover, not a decision — and the failure is
+ * silent in the worst way: the mail sends, the provider reports it delivered, and the
+ * recipient gets a link to their own machine. So the platform's own value wins there.
+ *
+ * Deliberately **not** derived from the request's `Host` header. That header is
+ * attacker-controlled, and building a sign-in link from it is how password-reset
+ * poisoning works: send one request with `Host: evil.test` and the one-time token
+ * lands on somebody else's server. `VERCEL_*` is set by the platform, not the caller,
+ * which is what makes it safe to fall back to.
+ */
+export function appUrl(): string {
+  const configured = env("APP_URL");
+  // Vercel provides both: the stable production domain, and this deployment's URL.
+  const platform = env("VERCEL_PROJECT_PRODUCTION_URL") ?? env("VERCEL_URL");
+  const inProduction = process.env.NODE_ENV === "production";
+
+  if (configured && !(inProduction && isLoopback(configured) && platform)) {
+    return trimSlash(configured);
+  }
+
+  if (platform) {
+    if (configured) {
+      console.warn(
+        `[email] APP_URL is ${configured}, which nobody outside this machine can reach. `
+        + `Using https://${platform} instead — set APP_URL to the real domain.`,
+      );
+    }
+    return trimSlash(`https://${platform}`);
+  }
+
+  return "http://localhost:3000";
+}
 
 export async function renderEmail(message: EmailMessage): Promise<{ html: string; text: string }> {
   const url = message.actionPath ? `${appUrl()}${message.actionPath}` : null;

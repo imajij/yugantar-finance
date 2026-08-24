@@ -17,7 +17,9 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { departments, users } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
-import { clerkConfigured, currentClerkIdentity } from "@/lib/clerk";
+import {
+  allowedEmailDomain, clerkConfigured, currentClerkIdentity, emailDomainAllowed,
+} from "@/lib/clerk";
 import { SESSION_COOKIE, resolveSession } from "@/lib/auth";
 
 export { clerkConfigured, SESSION_COOKIE };
@@ -83,7 +85,7 @@ async function linkClerkAccount(clerkUserId: string): Promise<SessionUser | null
   if (!identity || identity.clerkUserId !== clerkUserId) return null;
 
   const [invited] = await db
-    .select({ id: users.id, status: users.status, clerkUserId: users.clerkUserId })
+    .select({ id: users.id, status: users.status, role: users.role, clerkUserId: users.clerkUserId })
     .from(users)
     .where(eq(users.email, identity.email))
     .limit(1);
@@ -94,6 +96,13 @@ async function linkClerkAccount(clerkUserId: string): Promise<SessionUser | null
   }
   if (invited.status === "DISABLED") {
     console.warn(`[clerk] ${identity.email} signed in but the account is disabled — refusing`);
+    return null;
+  }
+  // The same domain rule the webhook applies (20.3). `inviteUser` already enforces it
+  // when the row is created, so this only catches a row that predates the setting —
+  // but the two paths into an account must not disagree about who may use it.
+  if (!emailDomainAllowed(identity.email) && invited.role !== "MANAGEMENT") {
+    console.warn(`[clerk] ${identity.email} is outside ${allowedEmailDomain()} — refusing`);
     return null;
   }
   if (invited.clerkUserId && invited.clerkUserId !== clerkUserId) {

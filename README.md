@@ -125,17 +125,22 @@ lib/
   env.ts                        reading config, where blank means unset
   clerk.ts  rate-limit.ts       identity linking and invitations; fixed-window limits
   xlsx.ts  test-support.ts      a minimal XLSX writer; the audit-guard escape hatch
-emails/                         the notification template (light, table-based HTML)
+emails/                         the notification template (dark, table-based HTML)
 jobs/                           cron logic, called by app/api/v1/cron/*
 db/                             schema, migrations (incl. the 19.4 views), seed
 tests/  unit/ db/ api/          state machines, money, flags · services + SQL · handlers
 ```
 
-Three deliberate deviations from PRD 18.1, each noted at the point of use:
+Four deliberate deviations from the PRD, each noted at the point of use:
 
 - **Database driver.** `postgres-js` rather than the Neon HTTP driver, because rule 5
   ("every write is one transaction") needs interactive transactions, which the HTTP
   driver does not support. Works unchanged against a Neon pooled connection string.
+- **Emails follow the dashboard, not the PRD.** 21.4 says emails are light. They are
+  dark, in the 9.1 palette, because a sign-in link that looks nothing like the thing
+  it signs you into is its own small trust problem. Built for email clients rather
+  than browsers — `bgcolor` attributes alongside CSS, everything inline, an explicit
+  `color-scheme` so Apple Mail does not invert it. Exports stay light, as specified.
 - **Sign-in without Clerk.** PRD 13 names Google Workspace via Clerk, and that is
   still the path wherever Clerk is configured. Emailed one-time links are the
   alternative when it is not, so a deployment is usable before those keys exist —
@@ -293,7 +298,7 @@ once the four variables are set, because otherwise the Content-Security-Policy w
 block the very upload CORS just allowed:
 
 ```bash
-curl -sI https://your-app-domain/sign-in | grep -i content-security-policy
+curl -sI https://yugantar.ajij.dev/sign-in | grep -i content-security-policy
 # … connect-src 'self' https://<account id>.r2.cloudflarestorage.com; …
 ```
 

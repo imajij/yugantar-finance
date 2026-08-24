@@ -15,7 +15,7 @@
 #
 # Setup — repository → Settings → Secrets and variables → Actions:
 #   secret   CRON_SECRET   the same value as the deployment's
-#   variable APP_URL       https://your-app.vercel.app
+#   variable APP_URL       https://yugantar.ajij.dev
 #
 # Without both, every run no-ops rather than failing, so a fork does not turn red.
 
