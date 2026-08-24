@@ -226,6 +226,19 @@ if (clerkSet.length === 1) {
   );
 }
 
+// `_test_` keys are a Clerk *development* instance: shared `accounts.dev` domain,
+// a user cap, and sign-in emails that announce they are for development use.
+const clerkIsDev = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]
+  .some((k) => get(k)?.value.includes("_test_"));
+if (clerkIsDev) {
+  productionNotes.push(
+    "The Clerk keys are a development instance (pk_test_/sk_test_). Its sign-in emails "
+    + "say they are for development use and it is capped at ~100 users. A production "
+    + "instance needs your own domain and DNS records — or clear both keys and use the "
+    + "built-in emailed sign-in links, which need neither.",
+  );
+}
+
 if (duplicated.length) {
   warnings.push(
     `Both ${present.join(" and ")} exist, and ${duplicated.length} key`
