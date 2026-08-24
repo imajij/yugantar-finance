@@ -10,8 +10,42 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 
-const clerkConfigured = () =>
-  Boolean(process.env.CLERK_SECRET_KEY && process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+/**
+ * Blank is unset — `.env.example` ships the optional variables with nothing after
+ * the `=`, so an empty string is the normal way for one to be "not configured".
+ * Inlined rather than imported from `lib/env.ts`: proxy code is meant to stand alone
+ * (Next can deploy it to the CDN edge), so it keeps its own copy of this one line.
+ */
+const env = (name: string): string | undefined => {
+  const raw = process.env[name]?.trim();
+  return raw === "" ? undefined : raw;
+};
+
+const clerkConfigured = () => Boolean(env("CLERK_SECRET_KEY") && env("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"));
+
+/**
+ * The bucket's own origin, when R2 is configured.
+ *
+ * Receipts are PUT straight from the browser to a presigned URL (PRD 20.2), which is
+ * a cross-origin `fetch` — so `connect-src` has to name the bucket or the CSP blocks
+ * every upload. Only uploads: downloads are rendered server-side into `<a>` and
+ * `<img>`, which `img-src` already covers.
+ *
+ * Mirrors `r2Config()` in `lib/storage.ts` rather than importing it: proxy code is
+ * meant to stand alone (it can be deployed to the CDN edge), and this needs one
+ * string, not a module.
+ */
+function r2Origin(): string {
+  const accountId = env("R2_ACCOUNT_ID");
+  if (!accountId || !env("R2_ACCESS_KEY_ID") || !env("R2_SECRET_ACCESS_KEY") || !env("R2_BUCKET")) {
+    return "";
+  }
+  try {
+    return ` ${new URL(env("R2_ENDPOINT") ?? `https://${accountId}.r2.cloudflarestorage.com`).origin}`;
+  } catch {
+    return "";
+  }
+}
 
 /**
  * `unsafe-inline` on styles is needed by Next's own style injection; scripts get a
@@ -22,6 +56,7 @@ function securityHeaders(nonce: string): Record<string, string> {
   const clerk = clerkConfigured()
     ? " https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com"
     : "";
+  const storage = r2Origin();
 
   const csp = [
     `default-src 'self'`,
@@ -29,7 +64,7 @@ function securityHeaders(nonce: string): Record<string, string> {
     `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
     `font-src 'self' https://fonts.gstatic.com data:`,
     `img-src 'self' blob: data: https:`,
-    `connect-src 'self'${clerk}`,
+    `connect-src 'self'${clerk}${storage}`,
     `frame-src 'self'${clerk}`,
     `worker-src 'self' blob:`,
     `object-src 'none'`,

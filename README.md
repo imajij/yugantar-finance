@@ -30,7 +30,7 @@ list is deliberately not built — see [What is not built](#what-is-not-built).
 | No `number` arithmetic on rupees; `money.ts` is the only formatter | `tests/unit/money.test.ts`; `lib/money.ts` |
 | Every write produces an audit event with `before`/`after`; `audit_events` takes no UPDATE or DELETE | `db/migrations/0003_append_only_audit.sql` (trigger + revoked grants), `tests/db/budget-guards.test.ts` |
 | Attachments are never served from a public URL | `lib/services/attachments.ts`; `tests/api/flows.test.ts` |
-| `pnpm test`, `pnpm lint`, `pnpm typecheck` pass; `pnpm db:seed` produces a working deployment | 398 tests across 15 files |
+| `pnpm test`, `pnpm lint`, `pnpm typecheck` pass; `pnpm db:seed` produces a working deployment | 410 tests across 16 files |
 
 ## Setup
 
@@ -86,6 +86,7 @@ From there everything is done in the app, in this order:
 | `pnpm db:migrate` | Apply migrations |
 | `pnpm db:seed` | Bootstrap the fest and its first administrator (idempotent; `--reset` starts over) |
 | `pnpm db:studio` | Drizzle Studio |
+| `pnpm r2:check` | Round-trip the real R2 bucket: presign, upload, read back, delete |
 
 ## Architecture
 
@@ -119,6 +120,7 @@ lib/
   money.ts  human-id.ts         paise and ₹; per-fest sequences
   storage.ts  email.tsx         R2 (SigV4, no SDK) or local disk; Resend
   auth.ts  session.ts           sign-in links and sessions; who the caller is
+  env.ts                        reading config, where blank means unset
   clerk.ts  rate-limit.ts       identity linking and invitations; fixed-window limits
   xlsx.ts  test-support.ts      a minimal XLSX writer; the audit-guard escape hatch
 emails/                         the notification template (light, table-based HTML)
@@ -151,7 +153,7 @@ them configured. All are wired and ready for credentials.
 | Service | Configured | Not configured |
 |---|---|---|
 | **Clerk** (`CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`) | Google sign-in restricted to `ALLOWED_EMAIL_DOMAIN`; `POST /webhooks/clerk` links a Clerk account to the INVITED row with that email — unknown emails are refused | A one-time link emailed to an already-invited address (`lib/auth.ts`), backed by a server-side session. See [Signing in](#signing-in) |
-| **Cloudflare R2** (`R2_*`) | Private bucket; presigned PUT for upload, presigned GET for reads, both 15 minutes. SigV4 signed in `lib/storage.ts` — no AWS SDK | Files go to `./.uploads` with HMAC-signed URLs of the same shape and expiry. `UPLOAD_URL_SECRET` is required for this path in production |
+| **Cloudflare R2** (`R2_*`) | Private bucket; presigned PUT for upload, presigned GET for reads, both 15 minutes. SigV4 signed in `lib/storage.ts` — no AWS SDK. See [Setting up R2](#setting-up-r2) | Files go to `./.uploads` with HMAC-signed URLs of the same shape and expiry. `UPLOAD_URL_SECRET` is required for this path in production |
 | **Resend** (`RESEND_API_KEY`, `EMAIL_FROM`) | Notifications are written in the same transaction as the write that caused them, then sent after the response commits (`after()`); failures retry on the `/cron/outbox` sweep | Rows stay unsent and the body is logged. The in-app inbox works either way |
 | **Anthropic** (`ANTHROPIC_API_KEY`) | — | Receipt OCR and the model-based flags are v1.1 (PRD 15). `attachments.ocr_json` exists, so adding them needs no migration |
 
@@ -179,6 +181,83 @@ sign-in is a one-time link (`lib/auth.ts`). What makes that safe:
   so a copied cookie dies with it.
 
 `tests/api/auth.test.ts` covers each of those as a thing that must *not* work.
+
+### Setting up R2
+
+Receipts, invoices and MoUs go to a **private** bucket, and the browser uploads to it
+directly (PRD 20.2) — so the two things that actually bite are CORS and the CSP.
+
+Most of it is done from the CLI, and the bucket's configuration lives in
+[`infra/`](./infra) rather than in someone's memory of what they clicked.
+
+**1. Create the bucket.**
+
+```bash
+npx wrangler r2 bucket create yugaantar-receipts --location apac
+npx wrangler r2 bucket dev-url get yugaantar-receipts   # must say disabled
+```
+
+Public access stays off. Every file is served through a 15-minute signed URL issued
+only to someone who can see the parent record (`lib/services/attachments.ts`); a
+public bucket URL would bypass that entirely.
+
+**2. Allow the app's origin in the bucket's CORS policy.** This is the step people
+miss. The browser PUTs straight to `*.r2.cloudflarestorage.com`, which is a
+cross-origin request with a non-safelisted `Content-Type`, so it is preflighted.
+
+```bash
+# edit infra/r2-cors.json to list every origin the app is served from
+npx wrangler r2 bucket cors set yugaantar-receipts --file infra/r2-cors.json
+npx wrangler r2 bucket cors list yugaantar-receipts
+```
+
+Note the file uses Cloudflare's own shape (`{ "rules": [{ "allowed": { … } }] }`),
+not the S3 XML-style JSON — wrangler rejects the latter. A missing origin shows up as
+an opaque "Upload failed" in the receipt form and a CORS error in the console, while
+the presign call itself succeeds, which is what makes it confusing.
+
+**3. Create S3-compatible credentials.** The only step the CLI cannot do: wrangler
+has no command for R2 API tokens, and its OAuth token is not permitted to mint them.
+In the dashboard: **R2 → API → Manage API tokens → Create API token**, scoped to
+**Object Read & Write** on this bucket. The Access Key ID and Secret Access Key are
+shown once.
+
+```
+R2_ACCOUNT_ID=<account id, shown on the R2 overview page>
+R2_ACCESS_KEY_ID=<access key id>
+R2_SECRET_ACCESS_KEY=<secret access key>
+R2_BUCKET=yugaantar-receipts
+# R2_ENDPOINT only for S3-compatible stores that are not R2 (MinIO, Supabase).
+# Blank, it is derived: https://<account id>.r2.cloudflarestorage.com
+```
+
+All four must be set. Any one blank and the app quietly stays on the local-disk
+backend — `r2Configured()` decides, and blank counts as unset (`lib/env.ts`).
+
+**4. Check it.**
+
+```bash
+pnpm r2:check
+```
+
+That presigns a PUT, uploads through it, reads the object back server-side, follows a
+presigned GET, confirms an unsigned request is refused, and deletes the probe object.
+Worth running because the SigV4 signing is hand-rolled rather than an SDK: unit tests
+can check the shape of a URL, only this checks that Cloudflare accepts it.
+
+**Nothing to do about the CSP.** `proxy.ts` adds the bucket's origin to `connect-src`
+once the four variables are set, because otherwise the Content-Security-Policy would
+block the very upload CORS just allowed:
+
+```bash
+curl -sI https://your-app-domain/sign-in | grep -i content-security-policy
+# … connect-src 'self' https://<account id>.r2.cloudflarestorage.com; …
+```
+
+Objects are keyed `<fest id>/<attachment id><ext>`, so a bucket listing reveals
+nothing about who spent what. Retention is PRD 11's two years; nothing in the app
+deletes a file belonging to a record — removal is soft, and only the nightly
+`gc-attachments` job deletes objects, and only ones that never got a parent.
 
 ### Notifications
 

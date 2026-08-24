@@ -13,10 +13,11 @@
  */
 import { timingSafeEqual } from "node:crypto";
 import { errorResponse } from "@/lib/api";
+import { env } from "@/lib/env";
 import type { JobResult } from "@/jobs";
 
 function authorized(request: Request): boolean {
-  const secret = process.env.CRON_SECRET;
+  const secret = env("CRON_SECRET");
   if (!secret) return false;
 
   const header = request.headers.get("authorization") ?? "";

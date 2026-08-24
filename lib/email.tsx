@@ -10,8 +10,9 @@
  * Emails are light-themed regardless of the app's dark theme (PRD 21.4).
  */
 import { NotificationEmail, type EmailBlock } from "@/emails/notification";
+import { envAllSet, envOr } from "@/lib/env";
 
-export const emailConfigured = () => Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+export const emailConfigured = () => envAllSet("RESEND_API_KEY", "EMAIL_FROM");
 
 export interface EmailMessage {
   to: string;
@@ -26,7 +27,7 @@ export interface EmailMessage {
   blocks?: EmailBlock[];
 }
 
-export const appUrl = () => (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
+export const appUrl = () => envOr("APP_URL", "http://localhost:3000").replace(/\/$/, "");
 
 export async function renderEmail(message: EmailMessage): Promise<{ html: string; text: string }> {
   const url = message.actionPath ? `${appUrl()}${message.actionPath}` : null;

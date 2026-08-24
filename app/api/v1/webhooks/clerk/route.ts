@@ -9,6 +9,7 @@
 import type { NextRequest } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
+import { env } from "@/lib/env";
 import { users } from "@/db/schema";
 import { recordAudit, snapshot } from "@/lib/services/audit";
 import {
@@ -19,7 +20,7 @@ const AUDITED = ["email", "name", "role", "status", "clerkUserId"] as const;
 
 /** Svix reads `CLERK_WEBHOOK_SIGNING_SECRET`; PRD 18.3 calls it `CLERK_WEBHOOK_SECRET`. */
 function signingSecret(): string | undefined {
-  return process.env.CLERK_WEBHOOK_SIGNING_SECRET ?? process.env.CLERK_WEBHOOK_SECRET;
+  return env("CLERK_WEBHOOK_SIGNING_SECRET") ?? env("CLERK_WEBHOOK_SECRET");
 }
 
 export async function POST(request: NextRequest) {

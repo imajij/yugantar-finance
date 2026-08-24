@@ -12,7 +12,8 @@
     "db:seed": "tsx --env-file=.env.local db/seed.mts",
     "db:studio": "drizzle-kit studio",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "r2:check": "tsx --env-file=.env.local infra/r2-check.mts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.7.9",

@@ -12,9 +12,11 @@
  * Every call degrades quietly when Clerk is not configured, so the emailed sign-in
  * link path keeps working and the admin screen still creates users.
  */
-export const clerkConfigured = () => Boolean(process.env.CLERK_SECRET_KEY);
+import { env, envAllSet, envOr } from "@/lib/env";
 
-export const allowedEmailDomain = () => process.env.ALLOWED_EMAIL_DOMAIN?.toLowerCase().trim() || null;
+export const clerkConfigured = () => envAllSet("CLERK_SECRET_KEY");
+
+export const allowedEmailDomain = () => env("ALLOWED_EMAIL_DOMAIN")?.toLowerCase() ?? null;
 
 /**
  * PRD 13 — sign-in is restricted to the college Google Workspace domain, with
@@ -31,7 +33,7 @@ export function emailDomainAllowed(email: string): boolean {
 const API = "https://api.clerk.com/v1";
 
 async function clerkFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const key = process.env.CLERK_SECRET_KEY;
+  const key = env("CLERK_SECRET_KEY");
   if (!key) throw new Error("CLERK_SECRET_KEY is not set");
   return fetch(`${API}${path}`, {
     ...init,
@@ -54,7 +56,7 @@ export async function sendClerkInvitation(email: string, redirectPath = "/dashbo
     return false;
   }
   try {
-    const appUrl = (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    const appUrl = envOr("APP_URL", "http://localhost:3000").replace(/\/$/, "");
     const res = await clerkFetch("/invitations", {
       method: "POST",
       body: JSON.stringify({

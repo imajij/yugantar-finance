@@ -17,6 +17,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { env, envOr } from "@/lib/env";
 
 /** PRD 14 — file types and sizes. */
 export const ALLOWED_MIME = [
@@ -34,15 +35,17 @@ interface R2Config {
 }
 
 export function r2Config(): R2Config | null {
-  const accountId = process.env.R2_ACCOUNT_ID;
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-  const bucket = process.env.R2_BUCKET;
+  const accountId = env("R2_ACCOUNT_ID");
+  const accessKeyId = env("R2_ACCESS_KEY_ID");
+  const secretAccessKey = env("R2_SECRET_ACCESS_KEY");
+  const bucket = env("R2_BUCKET");
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket) return null;
   return {
     accountId, accessKeyId, secretAccessKey, bucket,
     // R2's S3 endpoint. Overridable so the same code runs against MinIO or Supabase.
-    endpoint: (process.env.R2_ENDPOINT ?? `https://${accountId}.r2.cloudflarestorage.com`).replace(/\/$/, ""),
+    // `env` and not `process.env`: `.env.example` ships `R2_ENDPOINT=` blank, and an
+    // empty string would sail past `??` and leave every presigned URL hostless.
+    endpoint: envOr("R2_ENDPOINT", `https://${accountId}.r2.cloudflarestorage.com`).replace(/\/$/, ""),
   };
 }
 
@@ -171,7 +174,7 @@ async function r2Fetch(
  * `CRON_SECRET`: two unrelated trust boundaries must not share a key.
  */
 function signingSecret(): string {
-  const secret = process.env.UPLOAD_URL_SECRET;
+  const secret = env("UPLOAD_URL_SECRET");
   if (secret) return secret;
   if (process.env.NODE_ENV === "production") {
     throw new Error("UPLOAD_URL_SECRET must be set when running without R2");
