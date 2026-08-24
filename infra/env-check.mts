@@ -208,6 +208,24 @@ if (!get("RESEND_API_KEY")) {
   productionNotes.push("Without RESEND_API_KEY nobody you invite can sign in — their link is only logged.");
 }
 
+const dbUrl = get("DATABASE_URL")?.value ?? "";
+if (/@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(dbUrl)) {
+  productionNotes.push(
+    "DATABASE_URL points at localhost. A serverless function has no local Postgres, "
+    + "so every request that touches the database will fail — use the Neon URL.",
+  );
+}
+
+// Half-configured Clerk used to 500 every page, including sign-in. It degrades now,
+// but it is still never what anyone meant.
+const clerkSet = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"].filter((k) => get(k));
+if (clerkSet.length === 1) {
+  warnings.push(
+    `Only ${clerkSet[0]} is set. Clerk needs both keys, so it is disabled and sign-in `
+    + "falls back to emailed links. Set both, or clear the one that is set.",
+  );
+}
+
 if (duplicated.length) {
   warnings.push(
     `Both ${present.join(" and ")} exist, and ${duplicated.length} key`

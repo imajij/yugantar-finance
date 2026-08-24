@@ -12,9 +12,41 @@
  * Every call degrades quietly when Clerk is not configured, so the emailed sign-in
  * link path keeps working and the admin screen still creates users.
  */
-import { env, envAllSet, envOr } from "@/lib/env";
+import { env, envOr } from "@/lib/env";
 
-export const clerkConfigured = () => envAllSet("CLERK_SECRET_KEY");
+/**
+ * Clerk needs **both** keys, and asking for only one is a trap worth naming.
+ *
+ * The secret authenticates our server calls; the publishable key is what mounts
+ * `ClerkProvider` and what `clerkMiddleware` needs in order to run at all. With only
+ * the secret, `clerkConfigured()` would say yes, `getSession()` would call `auth()`,
+ * and `auth()` would throw because the middleware never ran — a 500 on every page,
+ * including the sign-in screen, with no way back in.
+ *
+ * So: both, or neither. Half-configured degrades to emailed sign-in links and says
+ * so in the log, because that is recoverable and a blank 500 is not.
+ *
+ * `proxy.ts` keeps its own copy of this rule — proxy code cannot import shared
+ * modules — and the two must agree. `tests/unit/clerk-config.test.ts` checks that.
+ */
+export const CLERK_KEYS = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"] as const;
+
+let warnedAboutHalfConfig = false;
+
+export function clerkConfigured(): boolean {
+  const set = CLERK_KEYS.filter((k) => env(k) !== undefined);
+  if (set.length === CLERK_KEYS.length) return true;
+
+  if (set.length > 0 && !warnedAboutHalfConfig) {
+    warnedAboutHalfConfig = true;
+    const missing = CLERK_KEYS.filter((k) => env(k) === undefined);
+    console.warn(
+      `[clerk] ${set.join(" and ")} is set but ${missing.join(" and ")} is not, so Clerk is `
+      + "disabled and sign-in falls back to emailed links. Set both keys, or neither.",
+    );
+  }
+  return false;
+}
 
 export const allowedEmailDomain = () => env("ALLOWED_EMAIL_DOMAIN")?.toLowerCase() ?? null;
 

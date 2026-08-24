@@ -21,7 +21,15 @@ const env = (name: string): string | undefined => {
   return raw === "" ? undefined : raw;
 };
 
-const clerkConfigured = () => Boolean(env("CLERK_SECRET_KEY") && env("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"));
+/**
+ * Both keys, or Clerk is off — the same rule as `clerkConfigured()` in `lib/clerk.ts`,
+ * which explains why. The two are separate copies because proxy code cannot import
+ * shared modules, and `tests/unit/clerk-config.test.ts` checks they have not drifted:
+ * if this said yes where the app said no, `clerkMiddleware` would not run and every
+ * `auth()` call would throw.
+ */
+const CLERK_KEYS = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"];
+const clerkConfigured = () => CLERK_KEYS.every((k) => env(k) !== undefined);
 
 /**
  * The bucket's own origin, when R2 is configured.
