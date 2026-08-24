@@ -12,7 +12,8 @@
  * Every call degrades quietly when Clerk is not configured, so the emailed sign-in
  * link path keeps working and the admin screen still creates users.
  */
-import { env, envOr } from "@/lib/env";
+import { env } from "@/lib/env";
+import { appUrl } from "@/lib/email";
 
 /**
  * Clerk needs **both** keys, and asking for only one is a trap worth naming.
@@ -94,12 +95,11 @@ export async function sendClerkInvitation(email: string, redirectPath = "/dashbo
     return false;
   }
   try {
-    const appUrl = envOr("APP_URL", "http://localhost:3000").replace(/\/$/, "");
     const res = await clerkFetch("/invitations", {
       method: "POST",
       body: JSON.stringify({
         email_address: email,
-        redirect_url: `${appUrl}${redirectPath}`,
+        redirect_url: `${appUrl()}${redirectPath}`,
         ignore_existing: true,
       }),
     });
