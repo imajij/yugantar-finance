@@ -31,6 +31,12 @@ import { env, envOr } from "@/lib/env";
  */
 export const CLERK_KEYS = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"] as const;
 
+/**
+ * Read at request time and handed to `ClerkProvider` as a prop, so the app does not
+ * depend on `NEXT_PUBLIC_` build-time inlining having happened. See `app/layout.tsx`.
+ */
+export const clerkPublishableKey = () => env("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
+
 let warnedAboutHalfConfig = false;
 
 export function clerkConfigured(): boolean {
@@ -140,4 +146,61 @@ export function primaryEmail(data: ClerkUserEvent): string | null {
 export function fullName(data: ClerkUserEvent): string | null {
   const name = [data.first_name, data.last_name].filter(Boolean).join(" ").trim();
   return name || null;
+}
+
+/**
+ * Binds a Clerk account to the invited `users` row with the same verified email.
+ *
+ * The webhook (20.3) normally does this the moment an account is created. It is not
+ * always configured — `CLERK_WEBHOOK_SECRET` is easy to leave blank, and a webhook
+ * that was down for a minute leaves a permanent gap — and until the link exists
+ * `loadByClerkId` finds nobody. The result is the worst kind of failure: Clerk says
+ * you are signed in, the app says you are not, and you bounce between the two for
+ * ever with no error anywhere.
+ *
+ * So the link is also established lazily, on the first request that needs it. The
+ * rules are the webhook's rules, unchanged:
+ *
+ *   - the email must be **verified by Clerk**. An unverified address would let
+ *     anyone claim an invited seat by typing that address at sign-up;
+ *   - a `users` row must already exist for it — invitation is still the gate;
+ *   - a DISABLED account stays disabled;
+ *   - a Clerk id already bound elsewhere is refused rather than re-pointed.
+ *
+ * Costs one Clerk API call, and only on the request that does the binding.
+ */
+export interface ClerkIdentity {
+  clerkUserId: string;
+  email: string;
+  name: string | null;
+}
+
+export async function currentClerkIdentity(): Promise<ClerkIdentity | null> {
+  if (!clerkConfigured()) return null;
+
+  try {
+    const { currentUser } = await import("@clerk/nextjs/server");
+    const user = await currentUser();
+    if (!user) return null;
+
+    const primary = user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId)
+      ?? user.emailAddresses[0];
+    if (!primary) return null;
+
+    // Clerk marks a confirmed address `verified`. Anything else is a claim, not proof.
+    if (primary.verification?.status !== "verified") {
+      console.warn(`[clerk] ${primary.emailAddress} is not verified — not linking it to an account`);
+      return null;
+    }
+
+    const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
+    return {
+      clerkUserId: user.id,
+      email: primary.emailAddress.toLowerCase(),
+      name: name || null,
+    };
+  } catch (error) {
+    console.error("[clerk] could not read the current user", error);
+    return null;
+  }
 }

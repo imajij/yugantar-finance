@@ -128,10 +128,24 @@ export async function proxy(request: NextRequest) {
     "/api/v1/attachments/download",
   ]);
 
-  const handler = clerkMiddleware(async (auth, req) => {
-    if (!isPublic(req)) await auth.protect();
-    return NextResponse.next(forward);
-  });
+  const handler = clerkMiddleware(
+    async (auth, req) => {
+      if (!isPublic(req)) await auth.protect();
+      return NextResponse.next(forward);
+    },
+    {
+      // Passed explicitly rather than left to `NEXT_PUBLIC_` inlining, which happens
+      // at build time. A deployment that gained the variable after its last build
+      // would otherwise throw "Missing publishableKey" here — in the proxy, so on
+      // every route including the cron endpoints and the sign-in page, with nothing
+      // in the response to say why. Reading it at request time makes a redeploy
+      // unnecessary and the failure impossible.
+      // Only the publishable key. `CLERK_SECRET_KEY` has no `NEXT_PUBLIC_` prefix,
+      // so it is read at runtime already — and passing it here would additionally
+      // demand a `CLERK_ENCRYPTION_KEY` to propagate it with.
+      publishableKey: env("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"),
+    },
+  );
 
   const result = await handler(request, {} as never);
   return result ? applyHeaders(result, nonce) : applyHeaders(NextResponse.next(forward), nonce);
