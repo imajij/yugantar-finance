@@ -32,6 +32,55 @@ function useSave() {
   return { save, busy, error };
 }
 
+/**
+ * Sending somebody's invitation again.
+ *
+ * Worth its own control because of what an unaccepted one costs: only Management
+ * can record a payment (5.2), so a Management account that never signed in leaves
+ * every approved reimbursement sitting in Committed for the whole fest. The
+ * budget screen now says so; this is the button it points at.
+ */
+function Resend({ userId, status }: { userId: string; status: string }) {
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  if (sent) {
+    return <span className="text-xs" style={{ color: "var(--state-done-fg)" }}>Sent</span>;
+  }
+  if (failed) {
+    return (
+      <span className="text-xs" style={{ color: "var(--flag-high-fg)" }}>
+        Not sent — check the mail provider
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        const res = await fetch(`/api/v1/users/${userId}/invite`, { method: "POST" });
+        setBusy(false);
+        if (!res.ok) { setFailed(true); return; }
+        // The API is honest about a mail provider that refused, so the button is too.
+        const body = await res.json().catch(() => null);
+        if (body?.invitation_sent === false) { setFailed(true); return; }
+        setSent(true);
+      }}
+      className="rounded-full px-3 py-1 text-xs disabled:opacity-40"
+      style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+      title={status === "INVITED"
+        ? "Send the invitation again — it may have gone to spam"
+        : "Send a fresh sign-in link to their address"}
+    >
+      {status === "INVITED" ? "Resend invite" : "Send sign-in link"}
+    </button>
+  );
+}
+
 interface Person {
   id: string; name: string; email: string; role: string;
   status: string; department: string; departmentId: string; isSuperAdmin: boolean;
@@ -62,6 +111,7 @@ export function People({
               <th className="pb-2 font-medium">Department</th>
               {canManageAdmins && <th className="pb-2 font-medium">Admin</th>}
               <th className="pb-2 font-medium">Status</th>
+              <th className="pb-2 font-medium"><span className="sr-only">Invitation</span></th>
               {canRaiseConcerns && (
                 <th className="pb-2 font-medium"><span className="sr-only">Concern</span></th>
               )}
@@ -119,6 +169,9 @@ export function People({
                       {u.status === "DISABLED" ? "Reactivate" : u.status.toLowerCase()}
                     </button>
                   )}
+                </td>
+                <td className="py-2">
+                  {u.status !== "DISABLED" && <Resend userId={u.id} status={u.status} />}
                 </td>
                 {canRaiseConcerns && (
                   <td className="py-2">

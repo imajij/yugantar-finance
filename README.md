@@ -243,6 +243,11 @@ and there is no shared broker here, so a WebSocket would be a long-poll wearing 
 costume; this is the honest version of the same latency. It polls only while the tab
 is visible and asks only for messages newer than the last one it has.
 
+An invitation can be sent again from Admin without deleting the account — which
+matters, because every audit row already points at that id. It is the same message
+the original invitation sent, and an active account can be sent a fresh sign-in link
+the same way.
+
 ### When a workflow stalls
 
 Segregation of duties (5.2) means an approved reimbursement can only be paid by

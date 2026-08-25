@@ -41,7 +41,9 @@ export function StalledNotice({ stages, canFix }: { stages: StalledStage[]; canF
             </p>
             {canFix && (
               <Link href="/admin" className="mt-1.5 inline-block text-xs underline underline-offset-2">
-                Invite or re-send from Admin →
+                {s.invitedNotActive > 0
+                  ? "Resend their invitation from Admin →"
+                  : "Give somebody that role in Admin →"}
               </Link>
             )}
           </div>

@@ -240,6 +240,13 @@ await hit("PATCH", `/api/v1/expense-types/${expenseTypeId}`, {
 });
 await hit("GET", "/api/v1/users", { as: finance });
 
+section("Invitations");
+// The unblock for a workflow stalled on an empty seat: the same message the
+// original invitation sent, without losing the account every audit row points at.
+await hit("POST", `/api/v1/users/${mgmtId}/invite`, {
+  as: finance, label: "/api/v1/users/{id}/invite (resend)",
+});
+
 section("Departments and budget");
 const dept = await hit("POST", "/api/v1/departments", {
   as: finance, body: { name: "Tech", slug: `tech-${randomBytes(3).toString("hex")}`, allocated_paise: 0 },
