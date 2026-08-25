@@ -99,6 +99,7 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
                 departmentId={dept.id}
                 expenseTypes={types}
                 availableToPlanPaise={buffer}
+                docThresholdPaise={threshold}
               />
             )}
           </div>
@@ -142,7 +143,14 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
         <Empty
           icon={<ListChecks size={24} aria-hidden />}
           title="Nothing is planned yet"
-          action={creatable ? <NewLineItem departmentId={dept.id} expenseTypes={types} availableToPlanPaise={buffer} /> : undefined}
+          action={creatable
+            ? <NewLineItem
+                departmentId={dept.id}
+                expenseTypes={types}
+                availableToPlanPaise={buffer}
+                docThresholdPaise={threshold}
+              />
+            : undefined}
         >
           A line item is the pot a receipt is charged against — &ldquo;Sound system&rdquo;,
           &ldquo;Stage truss&rdquo;. Until there is at least one,{" "}

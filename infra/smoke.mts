@@ -391,6 +391,58 @@ await hit("POST", "/api/v1/attachments", {
   body: { kind: "LINK", purpose: "QUOTE", url: "https://example.com/listing", label: "A listing" },
 });
 
+/*
+ * Creating a line item with its quotes already attached — the path the create form
+ * takes. The files are uploaded while the line item is still a half-filled form, so
+ * they are bound in the transaction that creates it; a failed create must leave
+ * them unbound rather than half-attached.
+ */
+const quoteOne = await hit("POST", "/api/v1/attachments/presign", {
+  as: finance, body: { purpose: "QUOTE", file_name: "quote-a.pdf", mime_type: "application/pdf", size_bytes: 1024 },
+  label: "/api/v1/attachments/presign (a quote)",
+});
+const quoteTwo = await hit("POST", "/api/v1/attachments/presign", {
+  as: finance, body: { purpose: "QUOTE", file_name: "quote-b.pdf", mime_type: "application/pdf", size_bytes: 1024 },
+  label: "/api/v1/attachments/presign (a second quote)",
+});
+const quoteIds = [String(quoteOne.json?.attachment_id ?? ""), String(quoteTwo.json?.attachment_id ?? "")];
+
+for (const [i, id] of quoteIds.entries()) {
+  const target = String(i === 0 ? quoteOne.json?.upload_url : quoteTwo.json?.upload_url);
+  if (target) {
+    await fetch(target.startsWith("http") ? target : `${BASE}${target}`, {
+      method: "PUT", body: new Uint8Array(randomBytes(1024)),
+    });
+  }
+  await hit("POST", `/api/v1/attachments/${id}/complete`, {
+    as: finance, label: "/api/v1/attachments/{id}/complete (quote)",
+  });
+}
+
+const documented = await hit("POST", `/api/v1/departments/${techId}/line-items`, {
+  as: finance,
+  body: { name: `Lighting rig ${randomBytes(2).toString("hex")}`, planned_paise: 500000, attachment_ids: quoteIds },
+  label: "/api/v1/departments/{id}/line-items (with files)",
+});
+const documentedId = required("documented line item id", String(documented.json?.id ?? ""));
+
+const bound = await hit("GET", `/api/v1/line-items/${documentedId}/documents`, {
+  as: finance, label: "/api/v1/line-items/{id}/documents",
+});
+rows.push({
+  group, method: "GET", path: "both files arrived attached", as: "finance",
+  status: bound.status, expected: "2 documents",
+  ok: ((bound.json?.documents as unknown[] | undefined)?.length ?? 0) === 2,
+  note: `${(bound.json?.documents as unknown[] | undefined)?.length ?? 0} bound`,
+});
+
+// Somebody else's unbound upload is not theirs to attach (20.2 step 4).
+await hit("POST", `/api/v1/departments/${techId}/line-items`, {
+  as: techHodEarly, expect: [400, 422],
+  body: { name: "Stolen quotes", planned_paise: 1000, attachment_ids: quoteIds },
+  label: "/api/v1/departments/{id}/line-items (someone else's upload)",
+});
+
 section("Reimbursements");
 const receiptFor = async () => {
   const p = await hit("POST", "/api/v1/attachments/presign", {

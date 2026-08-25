@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Pencil, Plus, RotateCcw, X } from "lucide-react";
 import { formatPaise } from "@/lib/money";
 import { Button, IconButton } from "@/components/ui";
+import { FileUpload, type Uploaded } from "@/components/file-upload";
 import { ConfirmWithReason } from "@/components/confirm";
 
 /**
@@ -51,6 +52,7 @@ interface Fields {
 
 function Form({
   initial, expenseTypes, submitLabel, busy, error, onSubmit, onCancel,
+  files, onFiles, docThresholdPaise,
 }: {
   initial: Fields;
   expenseTypes: ExpenseTypeOption[];
@@ -59,9 +61,17 @@ function Form({
   error: string | null;
   onSubmit: (f: Fields) => void;
   onCancel: () => void;
+  /** Present only while creating — editing manages documents on the line item itself. */
+  files?: Uploaded[];
+  onFiles?: (next: Uploaded[]) => void;
+  /** At or above this, a line item needs a document before requests can attach. */
+  docThresholdPaise?: number;
 }) {
   const [f, setF] = useState(initial);
   const paise = toPaise(f.planned);
+  const needsDoc =
+    docThresholdPaise !== undefined && docThresholdPaise > 0
+    && paise !== null && paise >= docThresholdPaise;
 
   return (
     <div className="space-y-2 rounded-xl p-3" style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}>
@@ -102,9 +112,32 @@ function Form({
         {expenseTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
       </select>
 
+      {onFiles && (
+        <FileUpload
+          files={files ?? []}
+          onChange={onFiles}
+          purpose="QUOTE"
+          label="Quotations or listings"
+          hint="A vendor quote, a proforma invoice, a screenshot of a web listing. JPG, PNG, HEIC or PDF, up to 10 MB each."
+        />
+      )}
+
       {paise !== null && paise > 0 && (
         <p className="text-[11px] text-text-muted">{formatPaise(paise)} planned</p>
       )}
+
+      {/*
+        Said at the moment the amount crosses the threshold, not after saving. Above
+        it, a line item with no document cannot receive requests at all — which is a
+        thing to learn now rather than when somebody tries to claim against it.
+      */}
+      {needsDoc && (files?.length ?? 0) === 0 && (
+        <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--flag-medium-fg)" }}>
+          At {formatPaise(docThresholdPaise!)} or more, a line item needs at least one supporting
+          document before anyone can claim against it. You can add one now or later.
+        </p>
+      )}
+
       {error && <p className="text-[11px]" style={{ color: "var(--flag-high-fg)" }}>{error}</p>}
 
       <div className="flex gap-2">
@@ -124,17 +157,20 @@ function Form({
 const EMPTY: Fields = { name: "", description: "", planned: "", expenseTypeId: "" };
 
 export function NewLineItem({
-  departmentId, expenseTypes, availableToPlanPaise,
+  departmentId, expenseTypes, availableToPlanPaise, docThresholdPaise = 0,
 }: {
   departmentId: string;
   expenseTypes: ExpenseTypeOption[];
   /** Allocation minus what is already planned — what is left to break down. */
   availableToPlanPaise: number;
+  /** PRD 7.1's `line_item_doc_threshold_paise`; 0 disables the rule. */
+  docThresholdPaise?: number;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [files, setFiles] = useState<Uploaded[]>([]);
 
   async function create(f: Fields) {
     setBusy(true);
@@ -147,6 +183,9 @@ export function NewLineItem({
         description: f.description.trim() || null,
         planned_paise: toPaise(f.planned),
         default_expense_type_id: f.expenseTypeId || null,
+        // Bound to the line item in the same transaction that creates it, so a
+        // failed create leaves the files unbound rather than half-attached.
+        attachment_ids: files.length ? files.map((x) => x.id) : undefined,
       }),
     });
     setBusy(false);
@@ -155,6 +194,7 @@ export function NewLineItem({
       return;
     }
     setOpen(false);
+    setFiles([]);
     router.refresh();
   }
 
@@ -180,7 +220,10 @@ export function NewLineItem({
         busy={busy}
         error={error}
         onSubmit={create}
-        onCancel={() => { setOpen(false); setError(null); }}
+        onCancel={() => { setOpen(false); setError(null); setFiles([]); }}
+        files={files}
+        onFiles={setFiles}
+        docThresholdPaise={docThresholdPaise}
       />
     </div>
   );
