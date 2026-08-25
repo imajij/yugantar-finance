@@ -25,6 +25,7 @@ import {
   assertTicketTransition, CATEGORY_OF, statesIn,
   type TicketAction, type TicketCategory, type TicketState,
 } from "@/lib/state-machines/ticket";
+import { asDate } from "@/lib/rows";
 import { notify } from "./notifications";
 import { recordAudit, snapshot } from "./audit";
 
@@ -575,10 +576,7 @@ export async function listTickets(actor: Actor, opts: TicketFilters = { view: "i
     status: String(r.status),
     category: CATEGORY_OF[String(r.status) as TicketState],
     priority: String(r.priority),
-    // Coerced rather than cast: this row comes back from `db.execute`, where a
-    // timestamptz can arrive as a string, and the declared type has to be true —
-    // the board serialises it with `.toISOString()`.
-    due_at: new Date(r.due_at as string),
+    due_at: asDate(r.due_at),
     overdue: Boolean(r.overdue),
     escalated: r.escalated_at !== null,
     age_hours: Math.round(Number(r.age_hours)),

@@ -5,7 +5,6 @@ import { getSession } from "@/lib/session";
 import { getVendorRequestDetail } from "@/lib/services/vendors";
 import { can, satisfiesActorConstraints } from "@/lib/authz";
 import { VENDOR_TRANSITIONS } from "@/lib/state-machines/vendor";
-import { signedDownloadUrl } from "@/lib/storage";
 import { Amount, Card, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
 import { RaiseConcern } from "@/components/raise-flag";
 import { TransitionActions } from "@/components/transitions";
@@ -47,12 +46,11 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
   const paidTotal = r.milestones.reduce((s, m) => s + (m.paidPaise ?? 0), 0);
   const contracted = r.approvedValuePaise ?? r.totalValuePaise;
 
-  const files = await Promise.all(
-    r.attachments.filter((a) => a.storageKey).map(async (a) => ({
-      id: a.id, name: a.fileName ?? "file", purpose: a.purpose,
-      url: await signedDownloadUrl(a.storageKey!),
-    })),
-  );
+  // Linked through the API rather than to a signed URL minted here — the signature
+  // is short-lived and would go stale on a page somebody left open.
+  const files = r.attachments
+    .filter((a) => a.storageKey)
+    .map((a) => ({ id: a.id, name: a.fileName ?? "file", purpose: a.purpose }));
 
   return (
     <div className="max-w-3xl">
@@ -155,12 +153,21 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
           <ul className="mt-2 space-y-1 text-sm">
             {files.map((f) => (
               <li key={f.id}>
-                <a href={f.url} target="_blank" rel="noreferrer" style={{ color: "var(--yg-pink)" }}>{f.name}</a>
+                <a
+                  href={`/api/v1/attachments/${f.id}/url?redirect=1`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--yg-pink)" }}
+                >
+                  {f.name}
+                </a>
                 <span className="ml-2 text-xs text-text-muted">{f.purpose?.toLowerCase()}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs text-text-muted">Links expire in 15 minutes.</p>
+          <p className="mt-2 text-xs text-text-muted">
+            Documents are kept for the life of the fest. Each open is checked and logged.
+          </p>
         </Card>
       )}
 

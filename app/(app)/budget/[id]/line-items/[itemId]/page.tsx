@@ -11,7 +11,6 @@ import { getSession } from "@/lib/session";
 import { can, satisfiesActorConstraints } from "@/lib/authz";
 import { LINE_ITEM_TRANSITIONS } from "@/lib/state-machines/line-item";
 import { lineItemTotals } from "@/lib/queries/budget";
-import { signedDownloadUrl } from "@/lib/storage";
 import { Amount, Card, Empty, FlagChip, PageTitle, StatCard, StateChip } from "@/components/ui";
 import { RaiseConcern } from "@/components/raise-flag";
 import { TransitionActions } from "@/components/transitions";
@@ -87,10 +86,11 @@ export default async function LineItemPage({
     .filter((d) => d.quotedAmountPaise != null);
   const lowest = quotes.length ? Math.min(...quotes.map((q) => q.quotedAmountPaise!)) : null;
 
-  const files = await Promise.all(docs.filter((d) => d.storageKey).map(async (d) => ({
+  // Linked through the API rather than to a signed URL minted here — the signature
+  // is short-lived and would go stale on a page somebody left open.
+  const files = docs.filter((d) => d.storageKey).map((d) => ({
     id: d.id, name: d.fileName ?? "document", quoted: d.quotedAmountPaise,
-    url: await signedDownloadUrl(d.storageKey!),
-  })));
+  }));
 
   return (
     <div className="max-w-3xl">
@@ -149,7 +149,14 @@ export default async function LineItemPage({
           <ul className="mt-2 space-y-1 text-sm">
             {files.map((f) => (
               <li key={f.id} className="flex items-center justify-between gap-3">
-                <a href={f.url} target="_blank" rel="noreferrer" style={{ color: "var(--yg-pink)" }}>{f.name}</a>
+                <a
+                  href={`/api/v1/attachments/${f.id}/url?redirect=1`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--yg-pink)" }}
+                >
+                  {f.name}
+                </a>
                 {f.quoted != null && (
                   <Amount
                     paise={f.quoted}

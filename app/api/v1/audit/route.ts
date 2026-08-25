@@ -6,6 +6,9 @@ const query = z.object({
   entity_type: z.enum([
     "REIMBURSEMENT", "VENDOR_REQUEST", "VENDOR", "TICKET",
     "LINE_ITEM", "INCOME_ENTRY", "DEPARTMENT", "USER", "FEST",
+    // CHANNEL carries `channel.oversight_read` — who has been reading whose
+    // conversations. Filterable on purpose: the oversight has to be reviewable.
+    "CHANNEL", "ALLOCATION_REQUEST", "PROJECT", "CYCLE", "TICKET_LABEL",
   ]).optional(),
   entity_id: z.uuid().optional(),
   actor_id: z.uuid().optional(),

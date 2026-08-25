@@ -91,9 +91,49 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   // Editing a vendor is wider than retiring one: a vendor carries a payment trail.
   ["vendor.manage", { festId: FEST }, [hod, otherHod, finance]],
   ["vendor.delete", { festId: FEST }, [finance, superAdmin]],
+  // A channel's audience is its membership, so with nobody a member only the
+  // administrator gets in — including the Finance HOD, who sees every rupee.
+  ["channel.view", techResource, [superAdmin]],
+  ["channel.post", techResource, []],
+  ["channel.oversee", { festId: FEST }, [superAdmin]],
+  ["channel.manage", techResource, [hod, superAdmin]],
+  ["channel.manage", { festId: FEST, departmentId: FINANCE_DEPT }, [finance, superAdmin]],
 ];
 
 const ALL = [member, hod, otherHod, finance, mgmt, superAdmin];
+
+describe("a channel's audience is its membership", () => {
+  const inIt = { ...techResource, isChannelMember: true };
+
+  test("a member reads and posts; nobody else does either", () => {
+    expect(can(member, "channel.view", inIt)).toBe(true);
+    expect(can(member, "channel.post", inIt)).toBe(true);
+    // Same resource, no membership row: refused, whatever the role.
+    expect(can(member, "channel.view", techResource)).toBe(false);
+    expect(can(finance, "channel.view", techResource)).toBe(false);
+    expect(can(mgmt, "channel.view", techResource)).toBe(false);
+    expect(can(otherHod, "channel.view", techResource)).toBe(false);
+  });
+
+  test("an administrator reads without membership, and still cannot post", () => {
+    // The whole shape of the feature in two lines: oversight is a read, and saying
+    // something means joining, which puts your name in the member list.
+    expect(can(superAdmin, "channel.view", techResource)).toBe(true);
+    expect(can(superAdmin, "channel.post", techResource)).toBe(false);
+    expect(can(superAdmin, "channel.post", { ...techResource, isChannelMember: true })).toBe(true);
+  });
+
+  test("an absent membership flag means absent, not unknown", () => {
+    // A caller who forgets to look membership up is refused rather than admitted:
+    // `undefined` must never read as permission.
+    expect(can(member, "channel.view", { festId: FEST, departmentId: TECH })).toBe(false);
+    expect(can(member, "channel.view", { festId: FEST, departmentId: TECH, isChannelMember: false })).toBe(false);
+  });
+
+  test("membership from another fest is not membership", () => {
+    expect(can(member, "channel.view", { festId: "fest-2", departmentId: TECH, isChannelMember: true })).toBe(false);
+  });
+});
 
 describe("permissions matrix (5.1)", () => {
   for (const [action, resource, allowed] of MATRIX) {

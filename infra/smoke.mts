@@ -611,6 +611,106 @@ await hit("DELETE", `/api/v1/cycles/${cycleId}`, { as: finance, label: "/api/v1/
 await hit("DELETE", `/api/v1/projects/${projectId}`, { as: finance, label: "/api/v1/projects/{id}" });
 await hit("DELETE", `/api/v1/ticket-labels/${labelId}`, { as: finance, label: "/api/v1/ticket-labels/{id}" });
 
+section("Channels");
+// The wall, over HTTP: another department's head must not reach this one's channel,
+// and a Finance HOD who is not an administrator must not either.
+const channelList = await hit("GET", "/api/v1/channels", { as: techHodEarly });
+// `required` and not `if (id)`: a silent skip here would hide the assertions that
+// matter most, and everything would still print green.
+const techChannel = required("tech channel id", String(
+  (channelList.json?.data as { id: string; kind: string; is_member: boolean }[] | undefined)
+    ?.find((c) => c.kind === "DEPARTMENT" && c.is_member)?.id ?? "",
+));
+
+{
+  await hit("GET", `/api/v1/channels/${techChannel}`, { as: techHodEarly, label: "/api/v1/channels/{id}" });
+  await hit("POST", `/api/v1/channels/${techChannel}/messages`, {
+    as: techHodEarly, body: { body: "Stage plan is in the drive" },
+    label: "/api/v1/channels/{id}/messages",
+  });
+  await hit("GET", `/api/v1/channels/${techChannel}/messages`, {
+    as: techHodEarly, label: "/api/v1/channels/{id}/messages",
+  });
+  await hit("POST", `/api/v1/channels/${techChannel}/read`, {
+    as: techHodEarly, label: "/api/v1/channels/{id}/read",
+  });
+
+  // A Member of the same department is in it; a Member of another department is
+  // not, and is told the channel does not exist rather than that it is forbidden.
+  await hit("GET", `/api/v1/channels/${techChannel}`, {
+    as: techMember, label: "/api/v1/channels/{id} (same department)",
+  });
+  await hit("GET", `/api/v1/channels/${techChannel}`, {
+    as: management, expect: 404, label: "/api/v1/channels/{id} (another department, 404 not 403)",
+  });
+  await hit("POST", `/api/v1/channels/${techChannel}/messages`, {
+    as: management, expect: 404, body: { body: "let me in" },
+    label: "/api/v1/channels/{id}/messages (another department)",
+  });
+
+  // The administrator reads it — and this visit lands in the audit log.
+  await hit("GET", `/api/v1/channels/${techChannel}`, {
+    as: finance, label: "/api/v1/channels/{id} (administrator oversight read)",
+  });
+  await hit("POST", `/api/v1/channels/${techChannel}/messages`, {
+    as: finance, expect: 403, body: { body: "I have been reading this" },
+    label: "/api/v1/channels/{id}/messages (oversight cannot post)",
+  });
+
+  // Adding somebody from another department is the one click that would make
+  // "no other department can see this" false.
+  await hit("POST", `/api/v1/channels/${techChannel}/members/${mgmtId}`, {
+    as: techHodEarly, expect: [400, 422], label: "/api/v1/channels/{id}/members/{outsider}",
+  });
+}
+
+const extra = await hit("POST", "/api/v1/channels", {
+  as: techHodEarly, body: { department_id: techId, name: `crew-${randomBytes(2).toString("hex")}` },
+});
+if (extra.json?.id) {
+  await hit("PATCH", `/api/v1/channels/${extra.json.id}`, {
+    as: techHodEarly, body: { topic: "Load-in and load-out" }, label: "/api/v1/channels/{id}",
+  });
+  await hit("DELETE", `/api/v1/channels/${extra.json.id}`, {
+    as: techHodEarly, label: "/api/v1/channels/{id} (archive)",
+  });
+}
+
+// The oversight read above must be in the audit log — that is the whole bargain.
+const oversight = await hit("GET", "/api/v1/audit?entity_type=CHANNEL", {
+  as: finance, label: "/api/v1/audit (oversight reads)",
+});
+rows.push({
+  group, method: "GET", path: "an administrator's read is on the record", as: "finance",
+  status: oversight.status, expected: "logged",
+  ok: JSON.stringify(oversight.json ?? {}).includes("channel.oversight_read"),
+  note: "channel.oversight_read",
+});
+
+await hit("GET", "/api/v1/channels/direct", { as: finance });
+const dm = await hit("POST", "/api/v1/channels/direct", {
+  as: finance, body: { user_id: techHodEarlyId },
+});
+if (dm.json?.id) {
+  const said = await hit("POST", `/api/v1/channels/${dm.json.id}/messages`, {
+    as: finance, body: { body: "Can your team spare a van on Friday?" },
+    label: "/api/v1/channels/{dm}/messages",
+  });
+  // Correspondence between two people, and nobody else's to read.
+  await hit("GET", `/api/v1/channels/${dm.json.id}`, {
+    as: management, expect: 404, label: "/api/v1/channels/{dm} (a third party)",
+  });
+  if (said.json?.id) {
+    await hit("PATCH", `/api/v1/messages/${said.json.id}`, {
+      as: finance, body: { body: "Can your team spare a van on Friday afternoon?" },
+      label: "/api/v1/messages/{id}",
+    });
+    await hit("DELETE", `/api/v1/messages/${said.json.id}`, {
+      as: finance, label: "/api/v1/messages/{id}",
+    });
+  }
+}
+
 section("Comments, flags, audit, notifications");
 await hit("POST", "/api/v1/comments", {
   as: finance, body: { entity_type: "REIMBURSEMENT", entity_id: claimId, body: "Checked against the quote." },
@@ -684,6 +784,8 @@ for (const page of ["/dashboard", "/requests", "/tickets", "/tickets/new", "/tic
                     "/notifications", "/close-out", "/audit", "/admin"]) {
   await hit("GET", page, { as: finance, expect: 200 });
 }
+// /chat has nothing of its own to show — it sends you to a channel.
+await hit("GET", "/chat", { as: finance, expect: [200, 307], label: "/chat (redirects to a channel)" });
 await hit("GET", "/dashboard", { as: anonymous, expect: [307, 302], label: "/dashboard (anonymous)" });
 
 // A 200 only proves the route did not throw. These pages are the ones whose whole
@@ -695,6 +797,9 @@ for (const [path, must, label] of [
   ["/tickets?scope=all", ["Triage", "Backlog", "Todo", "In Progress"], "board columns"],
   ["/tickets/planning", ["Labels", "Projects", "Cycles"], "planning panels"],
   ["/budget", ["Reserve", "Allocated"], "budget totals"],
+  // The sentence everyone in a channel is meant to see, not only the administrator.
+  // Aimed at a real channel: /chat itself only redirects to one.
+  [`/chat/${techChannel}`, ["Administrators can read this channel"], "the disclosure"],
 ] as const) {
   const page = await hit("GET", path, { as: finance, label: `${path} (${label})` });
   const missing = must.filter((needle) => !page.text.includes(needle));

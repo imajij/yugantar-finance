@@ -207,6 +207,26 @@ const REACHES: Reach[] = [
     options: (o) => ({ params: { id: o.lineItemId } }),
   },
   {
+    name: "read another fest's channel",
+    path: "channels/[id]", method: "GET",
+    options: (o) => ({ params: { id: o.lineItemId } }),
+  },
+  {
+    name: "post into another fest's channel",
+    path: "channels/[id]/messages", method: "POST",
+    options: (o) => ({ params: { id: o.lineItemId }, body: { body: "Reading your channel" } }),
+  },
+  {
+    name: "make a channel in another fest's department",
+    path: "channels", method: "POST",
+    options: (o) => ({ body: { department_id: o.departments.tech, name: "sneaky" } }),
+  },
+  {
+    name: "open a direct message with somebody in another fest",
+    path: "channels/direct", method: "POST",
+    options: (o) => ({ body: { user_id: o.users.member.id } }),
+  },
+  {
     name: "export another fest's department statement",
     path: "exports/[kind]", method: "GET",
     options: (o) => ({ params: { kind: "department-statement" }, query: { id: o.departments.tech, format: "csv" } }),
@@ -257,6 +277,7 @@ describe("and nothing leaks through a listing", () => {
       ["ticket-labels", (j: Record<string, unknown>) => j.data],
       ["projects", (j: Record<string, unknown>) => j.data],
       ["cycles", (j: Record<string, unknown>) => j.data],
+      ["channels", (j: Record<string, unknown>) => j.data],
     ] as const) {
       const handlers = await load(path);
       const result = await callAs(mine.users.finance, handlers.GET, {});
