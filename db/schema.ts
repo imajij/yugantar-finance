@@ -60,15 +60,16 @@ export const flagStatus = pgEnum("flag_status", ["OPEN", "ACKNOWLEDGED", "DISMIS
 export const entityType = pgEnum("entity_type", [
   "FEST", "DEPARTMENT", "LINE_ITEM", "REIMBURSEMENT", "VENDOR", "VENDOR_REQUEST", "VENDOR_MILESTONE",
   "INCOME_ENTRY", "BUDGET_TRANSFER", "TICKET", "USER", "ATTACHMENT", "COMMENT", "FLAG",
-  "ALLOCATION_REQUEST", "TICKET_LABEL", "PROJECT", "CYCLE",
+  "ALLOCATION_REQUEST", "TICKET_LABEL", "PROJECT", "CYCLE", "CHANNEL", "MESSAGE",
 ]);
+export const channelKind = pgEnum("channel_kind", ["DEPARTMENT", "DIRECT"]);
 export const allocationRequestStatus = pgEnum("allocation_request_status", [
   "PENDING", "APPROVED", "DECLINED", "WITHDRAWN",
 ]);
 export const projectStatus = pgEnum("project_status", ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"]);
 export const attachmentPurpose = pgEnum("attachment_purpose", [
   "RECEIPT", "QUOTE", "LISTING", "PO", "INVOICE", "DELIVERY_PROOF", "PAYMENT_PROOF", "MOU",
-  "TICKET_ATTACHMENT", "TICKET_PROOF", "OTHER",
+  "TICKET_ATTACHMENT", "TICKET_PROOF", "OTHER", "CHAT_ATTACHMENT",
 ]);
 export const attachmentKind = pgEnum("attachment_kind", ["FILE", "LINK"]);
 export const notificationChannel = pgEnum("notification_channel", ["IN_APP", "EMAIL", "PUSH", "WHATSAPP"]);
@@ -537,6 +538,89 @@ export const commentMentions = pgTable("comment_mentions", {
   commentId: uuid("comment_id").notNull().references(() => comments.id),
   userId: uuid("user_id").notNull().references(() => users.id),
 }, (t) => [primaryKey({ columns: [t.commentId, t.userId] })]);
+
+/**
+ * Department channels and direct messages.
+ *
+ * The audience of a channel is its membership rows and nothing else. Another
+ * department's HOD cannot reach this one's channel because they are not in it —
+ * not because a role check said no, which is the kind of thing that gets forgotten
+ * at one call site out of twelve.
+ *
+ * The single exception is the administrator, who reads every channel. That is
+ * disclosed in the channel header rather than hidden, and each such read is written
+ * to `audit_events` as `channel.oversight_read` — the oversight is itself overseen.
+ */
+export const channels = pgTable("channels", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  festId: uuid("fest_id").notNull().references(() => fests.id),
+  kind: channelKind("kind").notNull(),
+  /** Set for DEPARTMENT channels; null for direct messages. */
+  departmentId: uuid("department_id").references(() => departments.id),
+  name: text("name"),
+  topic: text("topic"),
+  /** The channel a department gets on creation. It cannot be renamed away or archived. */
+  isDefault: boolean("is_default").notNull().default(false),
+  /**
+   * The two participants of a direct message, sorted and joined, so opening the
+   * same conversation twice finds the existing one rather than making a second.
+   */
+  directKey: text("direct_key"),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+  archivedAt: ts("archived_at"),
+  archivedBy: uuid("archived_by").references(() => users.id),
+}, (t) => [
+  check("channels_shape", sql`
+    (kind = 'DEPARTMENT' and department_id is not null and name is not null and direct_key is null)
+    or
+    (kind = 'DIRECT' and department_id is null and name is null and direct_key is not null)`),
+  uniqueIndex("channels_direct_key").on(t.festId, t.directKey).where(sql`direct_key is not null`),
+  uniqueIndex("channels_department_name").on(t.departmentId, sql`lower(name)`)
+    .where(sql`department_id is not null and archived_at is null`),
+  uniqueIndex("channels_one_default").on(t.departmentId).where(sql`is_default and archived_at is null`),
+  index("channels_fest_idx").on(t.festId, t.kind),
+]);
+
+export const channelMembers = pgTable("channel_members", {
+  channelId: uuid("channel_id").notNull().references(() => channels.id),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  /** Where this person has read up to; the unread count is everything after it. */
+  lastReadAt: ts("last_read_at"),
+  muted: boolean("muted").notNull().default(false),
+  joinedAt: ts("joined_at").notNull().defaultNow(),
+}, (t) => [
+  primaryKey({ columns: [t.channelId, t.userId] }),
+  index("channel_members_user_idx").on(t.userId),
+]);
+
+export const messages = pgTable("messages", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  festId: uuid("fest_id").notNull().references(() => fests.id),
+  channelId: uuid("channel_id").notNull().references(() => channels.id),
+  authorId: uuid("author_id").notNull().references(() => users.id),
+  body: text("body").notNull(),
+  /** A thread reply points at the message it answers. One level deep. */
+  parentId: uuid("parent_id"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  editedAt: ts("edited_at"),
+  /** Soft, per 18.2 rule 7: a deleted message keeps its row and shows as removed. */
+  deletedAt: ts("deleted_at"),
+}, (t) => [
+  check("messages_body_len", sql`char_length(${t.body}) <= 4000`),
+  check("messages_not_own_parent", sql`${t.parentId} is distinct from ${t.id}`),
+  index("messages_channel_idx").on(t.channelId, t.createdAt),
+  index("messages_thread_idx").on(t.parentId, t.createdAt).where(sql`parent_id is not null`),
+]);
+
+export const messageMentions = pgTable("message_mentions", {
+  messageId: uuid("message_id").notNull().references(() => messages.id),
+  userId: uuid("user_id").notNull().references(() => users.id),
+}, (t) => [
+  primaryKey({ columns: [t.messageId, t.userId] }),
+  index("message_mentions_user_idx").on(t.userId),
+]);
 
 export const auditEvents = pgTable("audit_events", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),

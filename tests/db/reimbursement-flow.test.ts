@@ -13,6 +13,7 @@ import {
   createReimbursement, getReimbursementDetail, transitionReimbursement,
 } from "@/lib/services/reimbursements";
 import { departmentTotals, lineItemTotals } from "@/lib/queries/budget";
+import { stalledStages } from "@/lib/queries/stalled";
 import { dropFests } from "@/lib/test-support";
 
 let festId: string, techId: string, financeDeptId: string, coreId: string, expenseTypeId: string, lineItemId: string;
@@ -283,4 +284,50 @@ test("every transition leaves an audit event naming the actor and the reason", a
   expect(sendBack?.actor).toBe("hod@t.test");
   expect(sendBack?.before).toMatchObject({ status: "SUBMITTED" });
   expect(sendBack?.after).toMatchObject({ status: "SENT_BACK" });
+});
+
+/* ------------------------------------------------- a workflow with an empty seat */
+
+/**
+ * The failure that made a correct budget screen look broken.
+ *
+ * ₹2.00 sat in Committed with Spent at zero and nothing said why: the fest's only
+ * Management account had never accepted its invitation, and 5.2 puts recording a
+ * payment with Management and nobody else. The request was approved, correct, and
+ * unpayable — and would have stayed that way all fest.
+ *
+ * The arithmetic is not the bug and loosening 5.2 is not the fix. Saying so is.
+ */
+test("an approved request with no active Management to pay it is reported as stalled", async () => {
+  const req = await createReimbursement(member, baseRequest({
+    amountPaise: R(1200), attachmentIds: [await receipt(member)], submit: true,
+  }));
+  await transitionReimbursement(techHod, req.id, "ENDORSE");
+  await transitionReimbursement(finance, req.id, "APPROVE");
+
+  // Nothing is wrong with the numbers: it is committed, not spent, exactly as 6.2 says.
+  const totals = await departmentTotals(techId);
+  expect(totals?.committedPaise).toBe(R(1200));
+  expect(totals?.spentPaise).toBe(0);
+
+  // With Management active, this is an ordinary queue and not a stall.
+  expect(await stalledStages(finance)).toHaveLength(0);
+
+  // Take the seat away and it becomes one.
+  await db.execute(sql`update users set status = 'INVITED' where id = ${mgmt.id}`);
+  const stalled = await stalledStages(finance);
+  expect(stalled).toHaveLength(1);
+  expect(stalled[0].needs).toBe("MANAGEMENT");
+  expect(stalled[0].count).toBe(1);
+  expect(stalled[0].amountPaise).toBe(R(1200));
+  // Invited-but-never-signed-in is a different sentence from never-appointed.
+  expect(stalled[0].invitedNotActive).toBe(1);
+
+  await db.execute(sql`update users set status = 'ACTIVE' where id = ${mgmt.id}`);
+});
+
+test("nothing waiting means nothing stalled, however empty the seats are", async () => {
+  await db.execute(sql`update users set status = 'INVITED' where id = ${mgmt.id}`);
+  expect(await stalledStages(finance)).toHaveLength(0);
+  await db.execute(sql`update users set status = 'ACTIVE' where id = ${mgmt.id}`);
 });

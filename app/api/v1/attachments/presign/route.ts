@@ -10,12 +10,12 @@ import { presignUpload, storageKey, validateUpload } from "@/lib/storage";
 const schema = z.object({
   purpose: z.enum([
     "RECEIPT", "QUOTE", "LISTING", "PO", "INVOICE", "DELIVERY_PROOF",
-    "PAYMENT_PROOF", "MOU", "TICKET_ATTACHMENT", "TICKET_PROOF", "OTHER",
+    "PAYMENT_PROOF", "MOU", "TICKET_ATTACHMENT", "TICKET_PROOF", "CHAT_ATTACHMENT", "OTHER",
   ]),
   file_name: z.string().min(1).max(255),
   mime_type: z.string().min(3).max(100),
   size_bytes: z.number().int().positive(),
-  entity_type: z.enum(["REIMBURSEMENT", "VENDOR_REQUEST", "TICKET", "LINE_ITEM", "INCOME_ENTRY"]).optional(),
+  entity_type: z.enum(["REIMBURSEMENT", "VENDOR_REQUEST", "TICKET", "LINE_ITEM", "INCOME_ENTRY", "MESSAGE"]).optional(),
   entity_id: z.uuid().optional(),
 });
 

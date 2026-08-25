@@ -37,6 +37,15 @@ export interface Resource {
   status?: string;
   /** For reimbursement approval routing (5.2): the submitter's role. */
   submitterRole?: Role;
+  /**
+   * Whether the caller is in the channel being acted on.
+   *
+   * A channel's audience is its membership rows, not a role — which is exactly why
+   * it has to be resolved from the database and handed in, the same way a
+   * submitter's id is. Leaving it undefined means "not a member", so a caller who
+   * forgets to look it up is refused rather than admitted.
+   */
+  isChannelMember?: boolean;
 }
 
 export type Action =
@@ -48,6 +57,7 @@ export type Action =
   | "vendor.bankDetails.view"
   | "income.view" | "ticket.view" | "flag.view" | "audit.view" | "export.run"
   | "closeOut.view" | "superAdmin.manage" | "allocationRequest.view"
+  | "channel.view" | "channel.post" | "channel.manage" | "channel.oversee"
   // writes — budget
   | "fest.manage" | "department.manage" | "budget.transfer"
   | "allocationRequest.create" | "allocationRequest.decide"
@@ -142,6 +152,30 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
 
     case "flag.view":
       return finance || superAdmin || (hod && own);
+
+    /* -------------------------------------------------------------- channels */
+    case "channel.view":
+      // Membership *or* the administrator flag. Nothing else opens a channel: a
+      // Finance HOD, who sees every rupee in the fest, sees no conversation they
+      // are not part of, and neither does another department's head.
+      return resource.isChannelMember === true || superAdmin;
+
+    case "channel.post":
+      // Reading a channel for oversight is not joining it. An administrator who
+      // wants to say something joins first, which puts their name in the member
+      // list where everyone can see it.
+      return resource.isChannelMember === true;
+
+    case "channel.manage":
+      // Creating, renaming, archiving, and who is in it. A department's own head
+      // shapes its channels; an administrator can too, being the only one with
+      // fest-wide sight of them.
+      return superAdmin || ((hod || finance) && own);
+
+    case "channel.oversee":
+      // The read that is not membership. Split from `channel.view` so the services
+      // can tell the two apart and log the second — see `channel.oversight_read`.
+      return superAdmin;
 
     case "audit.view":
     case "closeOut.view":

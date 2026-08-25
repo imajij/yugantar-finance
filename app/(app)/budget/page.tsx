@@ -11,6 +11,8 @@ import { Amount, Card, PageTitle, StatCard, UtilizationBar } from "@/components/
 import { Allocate } from "./allocate";
 import { DecideAllocation } from "./allocation-request";
 import { listAllocationRequests } from "@/lib/services/allocations";
+import { stalledStages } from "@/lib/queries/stalled";
+import { StalledNotice } from "@/components/stalled";
 
 /**
  * Finance, Management and administrators see every department; everyone else goes
@@ -27,7 +29,7 @@ export default async function BudgetPage() {
   const canAllocate = can(user, "budget.transfer", { festId: user.festId });
   const canDecide = can(user, "allocationRequest.decide", { festId: user.festId });
 
-  const [totals, rows, deptTotals, asks] = await Promise.all([
+  const [totals, rows, deptTotals, asks, stalled] = await Promise.all([
     festTotals(user.festId),
     db.select({ id: departments.id, name: departments.name, kind: departments.kind })
       .from(departments)
@@ -35,6 +37,7 @@ export default async function BudgetPage() {
       .orderBy(asc(departments.name)),
     departmentTotalsForFest(user.festId),
     canDecide ? listAllocationRequests(user, { status: "PENDING" }) : Promise.resolve([]),
+    stalledStages(user),
   ]);
   const byDept = new Map(deptTotals.map((t) => [t.departmentId, t]));
 
@@ -69,6 +72,11 @@ export default async function BudgetPage() {
           what it has already committed or spent.
         </p>
       )}
+
+      <StalledNotice
+        stages={stalled}
+        canFix={can(user, "user.manage", { festId: user.festId })}
+      />
 
       {asks.length > 0 && (
         <section className="mt-6">

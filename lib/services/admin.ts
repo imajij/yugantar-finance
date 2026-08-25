@@ -11,6 +11,7 @@ import { requestSignInLink, revokeAllSessions } from "@/lib/auth";
 import { clerkConfigured, emailDomainAllowed, revokeClerkSessions, sendClerkInvitation } from "@/lib/clerk";
 import type { Role } from "@/lib/state-machines/types";
 import { recordAudit, snapshot } from "./audit";
+import { ensureDepartmentChannel, removeFromAllChannels, syncMembershipForUser } from "./chat";
 
 const USER_AUDITED = ["name", "email", "role", "departmentId", "status", "upiId", "isSuperAdmin"] as const;
 
@@ -87,6 +88,11 @@ export async function inviteUser(actor: Actor, input: UserInput) {
       status: "INVITED",
     }).returning();
 
+    // Their department's channel is waiting for them the moment they sign in, not
+    // the next time something happens to sweep memberships.
+    await ensureDepartmentChannel(tx, actor.festId, dept.id, actor.id);
+    await syncMembershipForUser(tx, actor.festId, row.id, dept.id);
+
     await recordAudit(tx, {
       festId: actor.festId, entityType: "USER", entityId: row.id, actorId: actor.id,
       action: "user.invite", after: snapshot(row, USER_AUDITED),
@@ -162,6 +168,15 @@ export async function updateUser(
 
     const [after] = await tx.update(users).set({ ...input, updatedAt: new Date() })
       .where(eq(users.id, id)).returning();
+
+    // Channel membership follows the department, or moving somebody out of Tech
+    // leaves them reading Tech — quietly, with nothing anywhere that would notice.
+    if (after.status === "DISABLED") {
+      await removeFromAllChannels(tx, actor.festId, id);
+    } else if (after.departmentId !== before.departmentId || before.status === "DISABLED") {
+      await ensureDepartmentChannel(tx, actor.festId, after.departmentId, actor.id);
+      await syncMembershipForUser(tx, actor.festId, id, after.departmentId);
+    }
 
     await recordAudit(tx, {
       festId: actor.festId, entityType: "USER", entityId: id, actorId: actor.id,

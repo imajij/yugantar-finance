@@ -18,6 +18,7 @@ import { can } from "@/lib/authz";
 import { VIEW_ACTION, resolveEntity, type EntityType } from "@/lib/entities";
 import type { SessionUser } from "@/lib/session";
 import { deleteObject, getObject, MAX_FILE_BYTES, objectExists, sha256, signedDownloadUrl } from "@/lib/storage";
+import { canAttachToMessage, canSeeMessage } from "./chat";
 import { recordAudit } from "./audit";
 
 export type AttachmentRow = typeof attachments.$inferSelect;
@@ -29,6 +30,7 @@ export const MAX_PER_ENTITY: Partial<Record<EntityType, number>> = {
   VENDOR_REQUEST: 10,
   TICKET: 5,
   INCOME_ENTRY: 5,
+  MESSAGE: 5,
 };
 
 async function load(actor: SessionUser, id: string, tx?: Tx): Promise<AttachmentRow> {
@@ -49,6 +51,16 @@ export async function assertCanSee(actor: SessionUser, row: AttachmentRow): Prom
     }
     return;
   }
+
+  // A message's audience is a membership row and the caller's own id, which is not
+  // something a `Resource` can carry — so the chat service answers for its own.
+  if (row.entityType === "MESSAGE") {
+    if (!(await canSeeMessage(actor, row.entityId))) {
+      throw new ApiError("FORBIDDEN", "You cannot see the channel this file was posted in");
+    }
+    return;
+  }
+
   const type = row.entityType as EntityType;
   const resource = await resolveEntity(actor.festId, type, row.entityId);
   if (!can(actor, VIEW_ACTION[type], resource)) {
@@ -191,6 +203,12 @@ export async function createLink(actor: SessionUser, input: LinkInput) {
 
 /** Attaching to a record requires being able to edit it, not merely see it. */
 export async function assertCanAttachTo(actor: SessionUser, type: EntityType, id: string): Promise<void> {
+  if (type === "MESSAGE") {
+    if (!(await canAttachToMessage(actor, id))) {
+      throw new ApiError("FORBIDDEN", "You can only attach files to your own message");
+    }
+    return;
+  }
   const resource = await resolveEntity(actor.festId, type, id);
   const allowed =
     type === "LINE_ITEM" ? can(actor, "lineItem.document.manage", resource)

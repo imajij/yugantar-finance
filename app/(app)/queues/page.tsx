@@ -7,6 +7,8 @@ import { getSession } from "@/lib/session";
 import { can } from "@/lib/authz";
 import { lineItemTotalsForDepartment } from "@/lib/queries/budget";
 import { Amount, Card, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
+import { stalledStages } from "@/lib/queries/stalled";
+import { StalledNotice } from "@/components/stalled";
 
 /**
  * PRD 20.11 — one screen, three queues, whichever the caller owns:
@@ -31,11 +33,15 @@ export default async function QueuesPage() {
     queues.push({ title: "On hold", hint: "Paused, waiting on Finance to resolve", statuses: ["ON_HOLD"], departmentScoped: false });
   }
 
+  const stalled = await stalledStages(user);
+  const canFix = can(user, "user.manage", { festId: user.festId });
+
   if (queues.length === 0) {
     return (
       <>
         <PageTitle>Queues</PageTitle>
         <Empty>Nothing waits on you. Queues appear here when your role owns a decision.</Empty>
+        <StalledNotice stages={stalled} canFix={canFix} />
       </>
     );
   }
@@ -43,7 +49,8 @@ export default async function QueuesPage() {
   return (
     <>
       <PageTitle>Queues</PageTitle>
-      <div className="space-y-8">
+      <StalledNotice stages={stalled} canFix={canFix} />
+      <div className="mt-6 space-y-8">
         {queues.map((q) => (
           <Queue key={q.title} user={user} {...q} />
         ))}

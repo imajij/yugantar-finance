@@ -121,6 +121,8 @@ lib/
   state-machines/  services/    transition tables; all writes, one transaction each
   services/planning.ts          labels, projects and cycles — the board's vocabulary
   services/allocations.ts       an HOD's ask for a different department allocation
+  services/chat.ts              channels and messages; membership is the audience
+  rows.ts                       reading a raw db.execute result without lying about it
   flags/  queries/              F1–F14; the five numbers, queues and dashboards
   money.ts  human-id.ts         paise and ₹; per-fest sequences
   storage.ts  email.tsx         R2 (SigV4, no SDK) or local disk; Resend
@@ -204,6 +206,54 @@ transaction and stores its id, so the ask and the money are one trail. The
 arithmetic is checked at the moment of approval, not of asking — a request raised on
 Monday can be refused on Friday because the reserve went in between, which is
 correct.
+
+### Channels
+
+Each department gets a channel when it is created, with everyone in the department
+in it, and its head can make more. There are direct messages too. Both are read
+through one rule: **a channel's audience is its membership rows.** Another
+department's head cannot open this one's channel because they are not in it — not
+because a role check said no, which is the kind of thing that gets forgotten at one
+call site out of twelve. Membership follows the department, so moving somebody out
+of Tech takes their Tech channels with them.
+
+A Finance HOD sees every rupee in the fest and no conversation they are not part of.
+That is on purpose and it is tested.
+
+The single exception is the administrator, who reads every channel. Two things make
+that oversight rather than surveillance, and both are load-bearing:
+
+- **it is disclosed** — the channel header says so to everyone in the channel, not
+  just to the administrator;
+- **it is recorded** — opening a channel you are not in writes
+  `channel.oversight_read` to the append-only audit log, filterable at
+  `/api/v1/audit?entity_type=CHANNEL`.
+
+Reading is all it is. Posting needs membership, so an administrator who wants to say
+something joins first and appears in the member list like anybody else.
+
+Messages carry text, `@mentions` of people in the channel, threaded replies, files
+through the same R2 path as receipts, and links to reimbursements, tickets, vendor
+requests and vendors — each rendered with its ID and status, and only for readers
+who could open the record anyway. A link is never a way to read something you
+could not otherwise see.
+
+New messages arrive by polling, not a socket. Vercel's functions are not long-lived
+and there is no shared broker here, so a WebSocket would be a long-poll wearing a
+costume; this is the honest version of the same latency. It polls only while the tab
+is visible and asks only for messages newer than the last one it has.
+
+### When a workflow stalls
+
+Segregation of duties (5.2) means an approved reimbursement can only be paid by
+Management. A fest whose Management account never accepted its invitation therefore
+accrues Committed forever, with Spent stuck at zero — correct arithmetic, stopped
+workflow, and nothing anywhere saying why. The person who notices is Finance,
+looking at a figure that will not move; the queue that would explain it belongs to
+somebody who does not exist.
+
+The budget and queue screens now say so plainly, with the amount and a link to fill
+the seat. The fix is to fill it, not to move the authority.
 
 ### Raising a concern
 
@@ -442,7 +492,7 @@ than being told, so a new endpoint is covered without anyone remembering to add 
   the application role. The seed and tests use one documented, session-scoped
   exception (`lib/test-support.ts`); nothing under `app/` or `lib/services/` may.
 
-Run against a fresh database, `pnpm db:migrate && pnpm db:seed` produces 33 tables,
+Run against a fresh database, `pnpm db:migrate && pnpm db:seed` produces 37 tables,
 the four `v_*` views, `citext`/`pgcrypto`/`pg_trgm`, and both audit triggers.
 
 ## What is not built

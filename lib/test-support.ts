@@ -77,6 +77,12 @@ async function dropFestsMatching(exec: Executor, like: string): Promise<void> {
       sql`delete from reimbursement_requests where fest_id in ${scope}`,
       sql`delete from comment_mentions where comment_id in (select id from comments where fest_id in ${scope})`,
       sql`delete from comments where fest_id in ${scope}`,
+      // Threads reference their parent message, so the replies go first.
+      sql`delete from message_mentions where message_id in (select id from messages where fest_id in ${scope})`,
+      sql`delete from messages where fest_id in ${scope} and parent_id is not null`,
+      sql`delete from messages where fest_id in ${scope}`,
+      sql`delete from channel_members where channel_id in (select id from channels where fest_id in ${scope})`,
+      sql`delete from channels where fest_id in ${scope}`,
       sql`delete from ticket_watchers where ticket_id in (select id from tickets where fest_id in ${scope})`,
       sql`delete from ticket_label_links where ticket_id in (select id from tickets where fest_id in ${scope})`,
       // Sub-tickets reference their parent, so the children have to go first.

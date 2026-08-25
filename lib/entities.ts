@@ -14,7 +14,15 @@ import type { Action, Resource } from "@/lib/authz";
 
 export type EntityType =
   | "REIMBURSEMENT" | "VENDOR_REQUEST" | "VENDOR" | "TICKET"
-  | "LINE_ITEM" | "INCOME_ENTRY" | "DEPARTMENT" | "USER" | "FEST";
+  | "LINE_ITEM" | "INCOME_ENTRY" | "DEPARTMENT" | "USER" | "FEST"
+  /**
+   * A chat message is here so attachments can name their parent, but it is the one
+   * type this module cannot resolve: its audience is a channel membership row and
+   * the caller's own id, neither of which fits a `Resource`. Callers must ask
+   * `lib/services/chat.ts` instead — `resolveEntity` throws for it on purpose,
+   * rather than answering with a resource that would quietly grant access.
+   */
+  | "MESSAGE";
 
 export const VIEW_ACTION: Record<EntityType, Action> = {
   REIMBURSEMENT: "reimbursement.view",
@@ -26,6 +34,8 @@ export const VIEW_ACTION: Record<EntityType, Action> = {
   DEPARTMENT: "department.view",
   USER: "user.manage",
   FEST: "fest.view",
+  // Never reached: `resolveEntity` refuses MESSAGE before a caller gets this far.
+  MESSAGE: "channel.view",
 };
 
 /**
@@ -52,6 +62,7 @@ const SHAPES: Record<EntityType, {
   DEPARTMENT: { table: "departments", department: "id" },
   USER: { table: "users", department: "department_id" },
   FEST: { table: "fests" },
+  MESSAGE: { table: "messages" },
 };
 
 /** The submitter's role, which reimbursement approval routing turns on (5.2). */
@@ -65,6 +76,12 @@ export interface ResolvedEntity extends Resource {
 export async function resolveEntity(
   festId: string, type: EntityType, id: string, tx?: Tx,
 ): Promise<ResolvedEntity> {
+  if (type === "MESSAGE") {
+    // Deliberately unreachable rather than best-effort. A message's audience is a
+    // channel membership row; answering with a department-shaped resource here
+    // would hand `can()` a question it cannot get right, and it would fail open.
+    throw new Error("A message's visibility is a channel membership — ask lib/services/chat.ts");
+  }
   const shape = SHAPES[type];
   const runner = tx ?? db;
   const col = (name: string | undefined) => (name ? sql.raw(`e.${name}`) : sql`null`);

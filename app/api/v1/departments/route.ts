@@ -5,6 +5,7 @@ import { departments, users } from "@/db/schema";
 import { assertCan, can } from "@/lib/authz";
 import { overAllocation, parseBody, route } from "@/lib/api";
 import { recordAudit } from "@/lib/services/audit";
+import { ensureDepartmentChannel } from "@/lib/services/chat";
 import { departmentTotalsForFest, festTotals } from "@/lib/queries/budget";
 
 /** PRD 20.4 — budget figures only for departments the caller may see. */
@@ -76,6 +77,10 @@ export const POST = route(async ({ user, request }) => {
         kind: "BUDGET", allocatedPaise: body.allocated_paise,
       })
       .returning();
+
+    // Every department gets its channel at the moment it exists, so nobody has to
+    // think about creating one and nobody lands somewhere with nothing in it.
+    await ensureDepartmentChannel(tx, user.festId, row.id, user.id);
 
     await recordAudit(tx, {
       festId: user.festId, entityType: "DEPARTMENT", entityId: row.id, actorId: user.id,

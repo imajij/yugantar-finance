@@ -4,7 +4,6 @@ import { getSession } from "@/lib/session";
 import { getReimbursementDetail } from "@/lib/services/reimbursements";
 import { can, satisfiesActorConstraints } from "@/lib/authz";
 import { REIMBURSEMENT_TRANSITIONS } from "@/lib/state-machines/reimbursement";
-import { signedDownloadUrl } from "@/lib/storage";
 import { Amount, Card, FlagChip, PageTitle, StateChip } from "@/components/ui";
 import { TransitionActions } from "@/components/transitions";
 import { Timeline } from "@/components/timeline";
@@ -40,11 +39,12 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
     .map((t) => ({ action: t.action, requires: [...(t.requires ?? [])] }));
 
   const openFlags = req.flags.filter((f) => f.status === "OPEN");
-  const receipts = await Promise.all(
-    req.attachments.filter((a) => a.storageKey).map(async (a) => ({
-      id: a.id, name: a.fileName ?? "receipt", url: await signedDownloadUrl(a.storageKey!),
-    })),
-  );
+  // Linked through the API rather than to a signed URL minted here: the signature
+  // is short-lived, and a page left open for twenty minutes would hand the reader a
+  // dead link to a file that is perfectly fine. See `attachments/[id]/url`.
+  const receipts = req.attachments
+    .filter((a) => a.storageKey)
+    .map((a) => ({ id: a.id, name: a.fileName ?? "receipt" }));
 
   return (
     <div className="max-w-3xl">
@@ -104,11 +104,20 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
           <ul className="mt-2 space-y-1 text-sm">
             {receipts.map((r) => (
               <li key={r.id}>
-                <a href={r.url} target="_blank" rel="noreferrer" style={{ color: "var(--yg-pink)" }}>{r.name}</a>
+                <a
+                  href={`/api/v1/attachments/${r.id}/url?redirect=1`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--yg-pink)" }}
+                >
+                  {r.name}
+                </a>
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs text-text-muted">Links expire in 15 minutes.</p>
+          <p className="mt-2 text-xs text-text-muted">
+            Receipts are kept for the life of the fest. Each open is checked and logged.
+          </p>
         </Card>
       )}
 

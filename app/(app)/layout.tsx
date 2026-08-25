@@ -2,11 +2,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   Bell, ClipboardList, FileText, FileDown, Flag, Gauge, HandCoins, ListChecks,
-  ScrollText, Settings, Ticket, Truck,
+  MessagesSquare, ScrollText, Settings, Ticket, Truck,
 } from "lucide-react";
 import { getSession, clerkConfigured } from "@/lib/session";
 import { can, type Action } from "@/lib/authz";
 import { unreadCount } from "@/lib/services/notifications";
+import { unreadTotal } from "@/lib/services/chat";
 import { SignOutButton } from "@/components/sign-out";
 
 /** Every page here reads the session cookie, so none of them may be prerendered. */
@@ -17,6 +18,7 @@ const NAV: { href: string; label: string; icon: typeof Gauge; action: Action }[]
   { href: "/dashboard", label: "Dashboard", icon: Gauge, action: "fest.view" },
   { href: "/requests", label: "Reimbursements", icon: FileText, action: "reimbursement.create" },
   { href: "/tickets", label: "Work tickets", icon: Ticket, action: "ticket.create" },
+  { href: "/chat", label: "Channels", icon: MessagesSquare, action: "fest.view" },
   { href: "/budget", label: "Budget", icon: ListChecks, action: "department.budget.view" },
   { href: "/vendors", label: "Vendors", icon: Truck, action: "vendor.view" },
   { href: "/income", label: "Income", icon: HandCoins, action: "income.view" },
@@ -33,7 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const scope = { festId: user.festId, departmentId: user.departmentId };
   const nav = NAV.filter((n) => can(user, n.action, scope));
-  const unread = await unreadCount(user);
+  const [unread, unreadMessages] = await Promise.all([unreadCount(user), unreadTotal(user)]);
 
   const navLinks = (
     <>
@@ -45,6 +47,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         >
           <Icon size={16} aria-hidden />
           {label}
+          {href === "/chat" && unreadMessages > 0 && (
+            <span
+              className="ml-auto rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums"
+              style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+              aria-label={`${unreadMessages} unread messages`}
+            >
+              {unreadMessages > 99 ? "99+" : unreadMessages}
+            </span>
+          )}
         </Link>
       ))}
       <Link
