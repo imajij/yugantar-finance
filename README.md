@@ -119,6 +119,8 @@ lib/
   authz.ts  entities.ts         permissions; (type, id) → the resource `can` needs
   api.ts                        route wrapper: session, params, idempotency, errors
   state-machines/  services/    transition tables; all writes, one transaction each
+  services/planning.ts          labels, projects and cycles — the board's vocabulary
+  services/allocations.ts       an HOD's ask for a different department allocation
   flags/  queries/              F1–F14; the five numbers, queues and dashboards
   money.ts  human-id.ts         paise and ₹; per-fest sequences
   storage.ts  email.tsx         R2 (SigV4, no SDK) or local disk; Resend
@@ -132,7 +134,7 @@ db/                             schema, migrations (incl. the 19.4 views), seed
 tests/  unit/ db/ api/          state machines, money, flags · services + SQL · handlers
 ```
 
-Four deliberate deviations from the PRD, each noted at the point of use:
+Five deliberate deviations from the PRD, each noted at the point of use:
 
 - **Database driver.** `postgres-js` rather than the Neon HTTP driver, because rule 5
   ("every write is one transaction") needs interactive transactions, which the HTTP
@@ -147,11 +149,74 @@ Four deliberate deviations from the PRD, each noted at the point of use:
   alternative when it is not, so a deployment is usable before those keys exist —
   same passwordless shape, same domain restriction, same invitation-only rule. See
   [Signing in](#signing-in).
+- **A planning layer on work tickets.** PRD 7.7 describes tickets as cross-department
+  asks and nothing more — "no subtasks, no dependencies, no sprints". A fest week
+  generates hundreds of them, and five fixed tabs cannot organise that, so the board
+  borrows Linear's shape: labels, projects, cycles, sub-tickets, and a board/list
+  toggle with grouping and filters that live in the URL. None of it can decide
+  anything — no label grants a permission, no project changes who may accept work.
+  The one change to the machine itself is a `BACKLOG` state, because "yes, ours, and
+  not this week" was a triage answer the machine could not express. See
+  [Work tickets](#work-tickets).
 - **XLSX and PDF.** `lib/xlsx.ts` writes the ZIP and SpreadsheetML directly rather
   than pulling a spreadsheet library into a serverless bundle; it is unit-tested by
   reading the bytes back (`tests/unit/xlsx.test.ts`). PRD 12's PDF outputs are served
   as a light-themed, A4-styled HTML page that the browser prints — the same artefact
   without a rendering engine in the bundle.
+
+### Work tickets
+
+The board is a view, not a state: the scope, grouping, filters and layout all live
+in the URL, so any board is a link you can send — "every urgent Logistics ticket in
+this cycle" — and the back button behaves. `C` opens a new ticket, `/` searches,
+`J`/`K` move, and `S`/`A`/`P`/`L` change status, assignee, priority and labels on
+the selected row. `?` lists the rest.
+
+Two things about it are deliberately unlike Linear.
+
+**Dragging a card does not set its status.** A status only ever moves through the
+state machine (rule 2), where each transition knows who may fire it and what it
+needs — rejecting takes a reason, starting work is the assignee's to do. So a drop
+resolves to the first *legal* transition into that column and is refused, out loud,
+when there is none. The board can express everything the rules allow and nothing
+they don't.
+
+**Scopes name what they filter on.** The old tab bar had "Sent" beside "Raised by
+me", which are not siblings: one is every ticket your *department* raised, the other
+the ones *you* typed — a subset. They are now `outgoing` and `created`, on either
+side of `inbox`, `assigned` and `subscribed`. The old names still resolve, so
+existing links keep working.
+
+Labels, projects and cycles are managed at `/tickets/planning` rather than inside
+the pickers. Creating a label mid-triage is fast and is also how you end up with
+"sound", "Sound" and "sound-system" by the second day of a fest.
+
+### Asking for a budget
+
+A department head owns their budget's *shape* — the line items, now editable from
+the department page — but not its *size*. That distinction is PRD 5.2 and it stays:
+a department that could set its own allocation could empty the reserve, and nothing
+downstream would show it as anything but normal.
+
+What was missing was the ask. An HOD now states the total they need and why; Finance
+or an administrator answers with a note. Approving performs the transfer in the same
+transaction and stores its id, so the ask and the money are one trail. The
+arithmetic is checked at the moment of approval, not of asking — a request raised on
+Monday can be refused on Friday because the reserve went in between, which is
+correct.
+
+### Raising a concern
+
+Flags F1–F14 examine records with numbers in them. What a rule cannot see is what a
+person notices about a *department* or another *person*: a team sitting on unreviewed
+line items, an HOD whose claims all arrive on the last day. Anyone running a
+department can now raise one by hand, from the record itself, and it lands in the
+same queue and resolves the same way. Whoever raised one may withdraw it; clearing
+somebody else's stays Finance's call.
+
+Unlike a rule's flag these are not deduplicated — two people noticing two different
+things about one record is the point — so the partial unique index that stops a
+re-running rule piling up duplicates is scoped to rule-raised flags.
 
 ## Integrations
 
@@ -377,7 +442,7 @@ than being told, so a new endpoint is covered without anyone remembering to add 
   the application role. The seed and tests use one documented, session-scoped
   exception (`lib/test-support.ts`); nothing under `app/` or `lib/services/` may.
 
-Run against a fresh database, `pnpm db:migrate && pnpm db:seed` produces 32 tables,
+Run against a fresh database, `pnpm db:migrate && pnpm db:seed` produces 33 tables,
 the four `v_*` views, `citext`/`pgcrypto`/`pg_trgm`, and both audit triggers.
 
 ## What is not built

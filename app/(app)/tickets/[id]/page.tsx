@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound as nf, redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
@@ -6,6 +7,7 @@ import { getSession } from "@/lib/session";
 import { getTicketDetail } from "@/lib/services/tickets";
 import { can, satisfiesActorConstraints } from "@/lib/authz";
 import { TICKET_TRANSITIONS } from "@/lib/state-machines/ticket";
+import { chipStyle, stateLabel } from "@/lib/state-chip";
 import { Amount, Card, PageTitle, StateChip } from "@/components/ui";
 import { TransitionActions } from "@/components/transitions";
 import { Timeline } from "@/components/timeline";
@@ -81,7 +83,30 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
             <Row label="Estimated cost"><Amount paise={t.estimatedCostPaise} /></Row>
           )}
           {t.line_item && <Row label="Line item">{t.line_item}</Row>}
+          {t.project && <Row label="Project">{t.project}</Row>}
+          {t.cycle && <Row label="Cycle">{t.cycle}</Row>}
+          {t.parent_human_id && (
+            <Row label="Sub-ticket of">
+              <Link href={`/tickets/${t.parentId}`} className="hover:text-lime">
+                <span className="tnum">{t.parent_human_id}</span> {t.parent_title}
+              </Link>
+            </Row>
+          )}
         </dl>
+
+        {t.labels.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-1.5">
+            {t.labels.map((l) => (
+              <span
+                key={l.id}
+                className="rounded-full px-2 py-0.5 text-xs"
+                style={{ background: `${l.color}22`, color: l.color, border: `1px solid ${l.color}55` }}
+              >
+                {l.name}
+              </span>
+            ))}
+          </div>
+        )}
 
         {t.infoRequest && (
           <p className="mt-4 rounded-lg px-3 py-2 text-sm" style={{ background: "var(--flag-med-bg)", color: "var(--flag-med-fg)" }}>
@@ -113,6 +138,33 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
             actions={actions}
             options={{ assignee_id: assignees.map((a) => ({ value: a.id, label: a.name })) }}
           />
+        </Card>
+      )}
+
+      {t.children.length > 0 && (
+        <Card className="mt-4">
+          <h2 className="font-display text-sm">
+            Sub-tickets
+            <span className="tnum ml-2 text-text-muted">
+              {t.children.filter((c) => c.status === "DONE" || c.status === "CLOSED").length}/{t.children.length}
+            </span>
+          </h2>
+          <ul className="mt-3 space-y-1.5">
+            {t.children.map((c) => (
+              <li key={c.id} className="flex items-center gap-2 text-sm">
+                <span
+                  className="rounded-full px-2 py-0.5 text-xs font-medium"
+                  style={chipStyle(c.status)}
+                >
+                  {stateLabel(c.status)}
+                </span>
+                <Link href={`/tickets/${c.id}`} className="min-w-0 truncate hover:text-lime">
+                  <span className="tnum mr-1.5 text-xs text-text-muted">{c.humanId}</span>
+                  {c.title}
+                </Link>
+              </li>
+            ))}
+          </ul>
         </Card>
       )}
 

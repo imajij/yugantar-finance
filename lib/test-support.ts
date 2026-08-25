@@ -78,7 +78,11 @@ async function dropFestsMatching(exec: Executor, like: string): Promise<void> {
       sql`delete from comment_mentions where comment_id in (select id from comments where fest_id in ${scope})`,
       sql`delete from comments where fest_id in ${scope}`,
       sql`delete from ticket_watchers where ticket_id in (select id from tickets where fest_id in ${scope})`,
+      sql`delete from ticket_label_links where ticket_id in (select id from tickets where fest_id in ${scope})`,
+      // Sub-tickets reference their parent, so the children have to go first.
+      sql`delete from tickets where fest_id in ${scope} and parent_id is not null`,
       sql`delete from tickets where fest_id in ${scope}`,
+      sql`delete from ticket_labels where fest_id in ${scope}`,
       sql`delete from entity_links where fest_id in ${scope}`,
       sql`delete from notifications where fest_id in ${scope}`,
       sql`delete from flags where fest_id in ${scope}`,
@@ -90,7 +94,11 @@ async function dropFestsMatching(exec: Executor, like: string): Promise<void> {
       sql`delete from sessions where user_id in (select id from users where fest_id in ${scope})`,
       sql`delete from sign_in_tokens where user_id in (select id from users where fest_id in ${scope})`,
       sql`delete from idempotency_keys where user_id in (select id from users where fest_id in ${scope})`,
+      // An approved allocation request points at the transfer it made.
+      sql`delete from allocation_requests where fest_id in ${scope}`,
       sql`delete from budget_transfers where fest_id in ${scope}`,
+      sql`delete from projects where fest_id in ${scope}`,
+      sql`delete from cycles where fest_id in ${scope}`,
       sql`delete from ticket_templates where fest_id in ${scope}`,
       sql`delete from users where fest_id in ${scope}`,
       sql`delete from human_id_sequences where fest_id in ${scope}`,

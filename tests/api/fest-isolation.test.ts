@@ -150,6 +150,63 @@ const REACHES: Reach[] = [
   },
 
   {
+    name: "ask for another fest's department budget",
+    path: "allocation-requests", method: "POST",
+    options: (o) => ({
+      body: { department_id: o.departments.tech, requested_paise: 500000, reason: "Taking their budget" },
+    }),
+  },
+  {
+    name: "decide another fest's allocation request",
+    path: "allocation-requests/[id]/decision", method: "POST",
+    options: (o) => ({ params: { id: o.lineItemId }, body: { decision: "APPROVE", note: "Not mine" } }),
+  },
+  {
+    name: "withdraw another fest's allocation request",
+    path: "allocation-requests/[id]", method: "DELETE",
+    options: (o) => ({ params: { id: o.lineItemId } }),
+  },
+  {
+    name: "retire another fest's vendor",
+    path: "vendors/[id]", method: "DELETE",
+    options: (o) => ({ params: { id: o.vendorId } }),
+  },
+  {
+    name: "flag another fest's department",
+    path: "flags", method: "POST",
+    options: (o) => ({
+      body: {
+        entity_type: "DEPARTMENT", entity_id: o.departments.tech,
+        severity: "HIGH", explanation: "Reaching across the fest boundary here",
+      },
+    }),
+  },
+  {
+    name: "flag somebody in another fest",
+    path: "flags", method: "POST",
+    options: (o) => ({
+      body: {
+        entity_type: "USER", entity_id: o.users.member.id,
+        severity: "HIGH", explanation: "Reaching across the fest boundary here",
+      },
+    }),
+  },
+  {
+    name: "rename another fest's label",
+    path: "ticket-labels/[id]", method: "PATCH",
+    options: (o) => ({ params: { id: o.lineItemId }, body: { name: "Taken over" } }),
+  },
+  {
+    name: "delete another fest's project",
+    path: "projects/[id]", method: "DELETE",
+    options: (o) => ({ params: { id: o.lineItemId } }),
+  },
+  {
+    name: "delete another fest's cycle",
+    path: "cycles/[id]", method: "DELETE",
+    options: (o) => ({ params: { id: o.lineItemId } }),
+  },
+  {
     name: "export another fest's department statement",
     path: "exports/[kind]", method: "GET",
     options: (o) => ({ params: { kind: "department-statement" }, query: { id: o.departments.tech, format: "csv" } }),
@@ -196,6 +253,10 @@ describe("and nothing leaks through a listing", () => {
       ["departments", (j: Record<string, unknown>) => j.data],
       ["flags", (j: Record<string, unknown>) => j.data],
       ["audit", (j: Record<string, unknown>) => j.data],
+      ["allocation-requests", (j: Record<string, unknown>) => j.data],
+      ["ticket-labels", (j: Record<string, unknown>) => j.data],
+      ["projects", (j: Record<string, unknown>) => j.data],
+      ["cycles", (j: Record<string, unknown>) => j.data],
     ] as const) {
       const handlers = await load(path);
       const result = await callAs(mine.users.finance, handlers.GET, {});

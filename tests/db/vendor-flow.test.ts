@@ -10,8 +10,8 @@ import type { Actor } from "@/lib/authz";
 import { rupeesToPaise as R } from "@/lib/money";
 import { createLineItem } from "@/lib/services/line-items";
 import {
-  createVendor, createVendorRequest, getVendorRequestDetail,
-  transitionVendorRequest, vendorExposure,
+  createVendor, createVendorRequest, deleteVendor, getVendorRequestDetail,
+  transitionVendorRequest, updateVendor, vendorExposure,
 } from "@/lib/services/vendors";
 import { lineItemTotals } from "@/lib/queries/budget";
 import { dropFests } from "@/lib/test-support";
@@ -263,4 +263,46 @@ test("exposure adds up, and bank details are masked below Finance", async () => 
   expect(asHod.vendor.bankAccountNumber).toBe("••••9012");
   const asFinance = await getVendorRequestDetail(finance, req.id);
   expect(asFinance.vendor.bankAccountNumber).toBe("123456789012");
+});
+
+/* --------------------------------------------------- editing and retiring (20.7) */
+
+test("an HOD can correct a vendor's details; retiring one is narrower", async () => {
+  // Editing is `vendor.manage` — Finance and any HOD, because they are the people
+  // who type the number wrong in the first place.
+  await expect(updateVendor(techHod, vendorId, { phone: "9000000000" })).resolves.toBeTruthy();
+
+  // Retiring is `vendor.delete`: a vendor carries the payment trail for every
+  // request raised against it, so taking one out of circulation is Finance's call.
+  await expect(deleteVendor(techHod, vendorId, "no longer used"))
+    .rejects.toThrow(/not permitted/i);
+});
+
+test("a vendor with a live obligation cannot be retired, and the refusal names it", async () => {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+
+  await expect(deleteVendor(finance, vendorId, "tidying up"))
+    .rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { requests: [{ human_id: req.humanId, status: "APPROVED" }] },
+    });
+});
+
+test("retiring is soft, so everything already raised against the vendor still reads", async () => {
+  // History is no obstacle to retiring a vendor — only a live obligation is.
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "DECLINE", { reason: "Went elsewhere" });
+
+  await deleteVendor(finance, vendorId, "Not using them again");
+
+  // The vendor is gone from the list…
+  const [{ n }] = (await db.execute(sql`
+    select count(*)::int as n from vendors where id = ${vendorId} and deleted_at is null
+  `)) as unknown as { n: number }[];
+  expect(Number(n)).toBe(0);
+
+  // …and the request that named them is untouched, which is the point of soft delete.
+  const detail = await getVendorRequestDetail(finance, req.id);
+  expect(detail.vendor.name).toBeTruthy();
 });

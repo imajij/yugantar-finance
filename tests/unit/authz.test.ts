@@ -45,11 +45,14 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   ["reimbursement.approve", techResource, [finance]],
   ["reimbursement.recordPayment", techResource, [mgmt]],
   ["reimbursement.hold", techResource, [mgmt]],
-  ["lineItem.create", techResource, [hod, finance]],
-  ["lineItem.edit", techResource, [hod, finance]],
-  ["lineItem.close", techResource, [hod, finance]],
+  // An administrator breaks down any department's allocation, the same way they read
+  // any department's numbers. The cap still binds them — that is arithmetic, not a role.
+  ["lineItem.create", techResource, [hod, finance, superAdmin]],
+  ["lineItem.edit", techResource, [hod, finance, superAdmin]],
+  ["lineItem.close", techResource, [hod, finance, superAdmin]],
   ["lineItem.markReviewed", techResource, [finance]],
-  ["lineItem.document.manage", techResource, [hod, finance]],
+  ["lineItem.document.manage", techResource, [hod, finance, superAdmin]],
+  ["lineItem.create", { festId: FEST, departmentId: LOGISTICS }, [otherHod, finance, superAdmin]],
   ["fest.manage", { festId: FEST }, [finance]],
   ["department.manage", { festId: FEST }, [finance]],
   ["budget.transfer", { festId: FEST }, [finance, superAdmin]],
@@ -65,6 +68,9 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   ["expenseType.manage", { festId: FEST }, [finance]],
   ["flag.view", techResource, [hod, finance, superAdmin]],
   ["flag.resolve", techResource, [finance]],
+  // Raising a concern is wider than clearing one: whoever notices is rarely whoever
+  // resolves it. A Member is not on this list — 8.3 is an oversight tool.
+  ["flag.raise", techResource, [hod, otherHod, finance, mgmt, superAdmin]],
   // Oversight answers to the flag, not to a role.
   ["audit.view", techResource, [superAdmin]],
   ["closeOut.view", { festId: FEST }, [superAdmin]],
@@ -74,6 +80,17 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   ["export.run", techResource, [hod, finance, mgmt, superAdmin]],
   ["ticket.create", { festId: FEST }, [member, hod, otherHod, finance, mgmt, superAdmin]],
   ["budgetReview.view", { festId: FEST }, [finance]],
+  // An HOD asks for their own department's budget and nobody else's; the ask is not
+  // the money, so deciding it stays with whoever may transfer (5.2).
+  ["allocationRequest.create", techResource, [hod]],
+  ["allocationRequest.create", { festId: FEST, departmentId: LOGISTICS }, [otherHod]],
+  ["allocationRequest.decide", { festId: FEST }, [finance, superAdmin]],
+  ["allocationRequest.view", techResource, [member, hod, finance, mgmt, superAdmin]],
+  // Labels, projects and cycles shape a board; they decide nothing about money.
+  ["ticket.plan", { festId: FEST }, [hod, otherHod, finance, mgmt, superAdmin]],
+  // Editing a vendor is wider than retiring one: a vendor carries a payment trail.
+  ["vendor.manage", { festId: FEST }, [hod, otherHod, finance]],
+  ["vendor.delete", { festId: FEST }, [finance, superAdmin]],
 ];
 
 const ALL = [member, hod, otherHod, finance, mgmt, superAdmin];

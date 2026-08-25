@@ -9,6 +9,8 @@ import { departmentTotalsForFest, festTotals } from "@/lib/queries/budget";
 import { utilizationPct } from "@/lib/money";
 import { Amount, Card, PageTitle, StatCard, UtilizationBar } from "@/components/ui";
 import { Allocate } from "./allocate";
+import { DecideAllocation } from "./allocation-request";
+import { listAllocationRequests } from "@/lib/services/allocations";
 
 /**
  * Finance, Management and administrators see every department; everyone else goes
@@ -23,14 +25,16 @@ export default async function BudgetPage() {
   if (!seesAll) redirect(`/budget/${user.departmentId}`);
 
   const canAllocate = can(user, "budget.transfer", { festId: user.festId });
+  const canDecide = can(user, "allocationRequest.decide", { festId: user.festId });
 
-  const [totals, rows, deptTotals] = await Promise.all([
+  const [totals, rows, deptTotals, asks] = await Promise.all([
     festTotals(user.festId),
     db.select({ id: departments.id, name: departments.name, kind: departments.kind })
       .from(departments)
       .where(and(eq(departments.festId, user.festId), eq(departments.isActive, true)))
       .orderBy(asc(departments.name)),
     departmentTotalsForFest(user.festId),
+    canDecide ? listAllocationRequests(user, { status: "PENDING" }) : Promise.resolve([]),
   ]);
   const byDept = new Map(deptTotals.map((t) => [t.departmentId, t]));
 
@@ -64,6 +68,33 @@ export default async function BudgetPage() {
           reason you give, and is recorded in the audit log. A department can never be taken below
           what it has already committed or spent.
         </p>
+      )}
+
+      {asks.length > 0 && (
+        <section className="mt-6">
+          <h2 className="font-display mb-3 text-lg">
+            Waiting on you
+            <span className="tnum ml-2 text-sm text-text-muted">{asks.length}</span>
+          </h2>
+          <p className="mb-3 text-xs text-text-muted">
+            Approving moves the difference from Reserve and records the transfer, in one step.
+            The arithmetic is checked at the moment you approve, not when they asked — so a
+            request raised last week can still be refused if the reserve has since gone.
+          </p>
+          <div className="space-y-2">
+            {asks.map((a) => (
+              <DecideAllocation
+                key={String(a.id)}
+                id={String(a.id)}
+                departmentName={String(a.department_name)}
+                requestedPaise={Number(a.requested_paise)}
+                currentPaise={Number(a.allocated_now)}
+                reason={String(a.reason)}
+                requestedBy={String(a.requested_by_name)}
+              />
+            ))}
+          </div>
+        </section>
       )}
 
       <Card className="mt-6 overflow-x-auto p-0">

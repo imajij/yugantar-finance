@@ -48,6 +48,11 @@ export const incomeType = pgEnum("income_type", [
 export const incomeStatus = pgEnum("income_status", ["PLEDGED", "PARTIALLY_RECEIVED", "RECEIVED", "WRITTEN_OFF"]);
 export const ticketStatus = pgEnum("ticket_status", [
   "OPEN", "NEEDS_INFO", "ACCEPTED", "IN_PROGRESS", "BLOCKED", "DONE", "CLOSED", "REJECTED", "CANCELLED",
+  // Appended, not inserted: `ALTER TYPE ... ADD VALUE` puts a new label at the end
+  // of the enum, and this list has to match what the database actually holds or the
+  // next generated migration will try to rebuild the type. Reading order lives in
+  // `TICKET_STATES`, which is where the board gets it from.
+  "BACKLOG",
 ]);
 export const ticketPriority = pgEnum("ticket_priority", ["LOW", "MEDIUM", "HIGH", "URGENT"]);
 export const flagSeverity = pgEnum("flag_severity", ["LOW", "MEDIUM", "HIGH"]);
@@ -55,7 +60,12 @@ export const flagStatus = pgEnum("flag_status", ["OPEN", "ACKNOWLEDGED", "DISMIS
 export const entityType = pgEnum("entity_type", [
   "FEST", "DEPARTMENT", "LINE_ITEM", "REIMBURSEMENT", "VENDOR", "VENDOR_REQUEST", "VENDOR_MILESTONE",
   "INCOME_ENTRY", "BUDGET_TRANSFER", "TICKET", "USER", "ATTACHMENT", "COMMENT", "FLAG",
+  "ALLOCATION_REQUEST", "TICKET_LABEL", "PROJECT", "CYCLE",
 ]);
+export const allocationRequestStatus = pgEnum("allocation_request_status", [
+  "PENDING", "APPROVED", "DECLINED", "WITHDRAWN",
+]);
+export const projectStatus = pgEnum("project_status", ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"]);
 export const attachmentPurpose = pgEnum("attachment_purpose", [
   "RECEIPT", "QUOTE", "LISTING", "PO", "INVOICE", "DELIVERY_PROOF", "PAYMENT_PROOF", "MOU",
   "TICKET_ATTACHMENT", "TICKET_PROOF", "OTHER",
@@ -364,6 +374,10 @@ export const tickets = pgTable("tickets", {
   lineItemId: uuid("line_item_id").references(() => lineItems.id),
   status: ticketStatus("status").notNull().default("OPEN"),
   previousStatus: ticketStatus("previous_status"),
+  /** Linear's planning axes: a parent ticket, a project, a cycle. All optional. */
+  parentId: uuid("parent_id"),
+  projectId: uuid("project_id"),
+  cycleId: uuid("cycle_id"),
   infoRequest: text("info_request"),
   blockedReason: text("blocked_reason"),
   rejectReason: text("reject_reason"),
@@ -389,6 +403,10 @@ export const tickets = pgTable("tickets", {
   index("tickets_inbox_idx").on(t.targetDepartmentId, t.status, t.priority, t.dueAt),
   index("tickets_outgoing_idx").on(t.requestingDepartmentId, t.status),
   index("tickets_assignee_idx").on(t.assigneeId, t.status),
+  check("tickets_not_own_parent", sql`${t.parentId} is distinct from ${t.id}`),
+  index("tickets_parent_idx").on(t.parentId).where(sql`deleted_at is null`),
+  index("tickets_project_idx").on(t.projectId).where(sql`deleted_at is null`),
+  index("tickets_cycle_idx").on(t.cycleId).where(sql`deleted_at is null`),
 ]);
 
 export const ticketWatchers = pgTable("ticket_watchers", {
@@ -405,6 +423,92 @@ export const ticketTemplates = pgTable("ticket_templates", {
   fields: jsonb("fields").notNull().default([]),
   isActive: boolean("is_active").notNull().default(true),
 });
+
+/**
+ * Linear's planning layer (PRD 9.5 extended): a project groups tickets toward a
+ * deliverable, a cycle is a fixed window everyone plans against, a label is a
+ * free-form tag. None of them change what a ticket *is* — they change how a board
+ * can be sliced, which is the whole point.
+ */
+export const projects = pgTable("projects", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  festId: uuid("fest_id").notNull().references(() => fests.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: projectStatus("status").notNull().default("PLANNED"),
+  leadId: uuid("lead_id").references(() => users.id),
+  startsOn: date("starts_on"),
+  endsOn: date("ends_on"),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+  deletedAt: ts("deleted_at"),
+}, (t) => [unique("projects_fest_name").on(t.festId, t.name)]);
+
+export const cycles = pgTable("cycles", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  festId: uuid("fest_id").notNull().references(() => fests.id),
+  name: text("name").notNull(),
+  startsOn: date("starts_on").notNull(),
+  endsOn: date("ends_on").notNull(),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdAt: ts("created_at").notNull().defaultNow(),
+}, (t) => [
+  unique("cycles_fest_name").on(t.festId, t.name),
+  check("cycles_dates", sql`${t.endsOn} >= ${t.startsOn}`),
+]);
+
+export const ticketLabels = pgTable("ticket_labels", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  festId: uuid("fest_id").notNull().references(() => fests.id),
+  name: text("name").notNull(),
+  color: text("color").notNull().default("#8b8ba7"),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdAt: ts("created_at").notNull().defaultNow(),
+}, (t) => [
+  unique("ticket_labels_fest_name").on(t.festId, t.name),
+  check("ticket_labels_color", sql`${t.color} ~ '^#[0-9a-fA-F]{6}$'`),
+]);
+
+export const ticketLabelLinks = pgTable("ticket_label_links", {
+  ticketId: uuid("ticket_id").notNull().references(() => tickets.id),
+  labelId: uuid("label_id").notNull().references(() => ticketLabels.id, { onDelete: "cascade" }),
+}, (t) => [
+  primaryKey({ columns: [t.ticketId, t.labelId] }),
+  index("ticket_label_links_label_idx").on(t.labelId),
+]);
+
+/**
+ * An HOD asking for a bigger allocation (7.1, 7.5).
+ *
+ * The allocation itself only ever moves by transfer, with a reason — so this table
+ * holds the *ask*, and approving one performs the transfer and points `transferId`
+ * at it. That keeps the money trail exactly where it was while letting a department
+ * drive its own budget instead of chasing Finance in a group chat.
+ */
+export const allocationRequests = pgTable("allocation_requests", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  festId: uuid("fest_id").notNull().references(() => fests.id),
+  departmentId: uuid("department_id").notNull().references(() => departments.id),
+  /** The allocation asked for, and what it was when they asked. */
+  requestedPaise: paise("requested_paise").notNull(),
+  currentPaise: paise("current_paise").notNull(),
+  reason: text("reason").notNull(),
+  status: allocationRequestStatus("status").notNull().default("PENDING"),
+  requestedBy: uuid("requested_by").notNull().references(() => users.id),
+  decidedBy: uuid("decided_by").references(() => users.id),
+  decidedAt: ts("decided_at"),
+  decisionNote: text("decision_note"),
+  transferId: uuid("transfer_id").references(() => budgetTransfers.id),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+}, (t) => [
+  check("allocation_requests_nonneg", sql`${t.requestedPaise} >= 0`),
+  // One open ask per department: five revisions of the same request is noise, and
+  // the HOD can withdraw and re-raise.
+  uniqueIndex("allocation_requests_one_pending").on(t.departmentId).where(sql`status = 'PENDING'`),
+  index("allocation_requests_fest_idx").on(t.festId, t.status, t.createdAt),
+]);
 
 export const entityLinks = pgTable("entity_links", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -459,12 +563,18 @@ export const flags = pgTable("flags", {
   severity: flagSeverity("severity").notNull(),
   explanation: text("explanation").notNull(),
   status: flagStatus("status").notNull().default("OPEN"),
+  /** Who raised it by hand. NULL means a rule did (8.2), which is most of them. */
+  raisedBy: uuid("raised_by").references(() => users.id),
   resolvedBy: uuid("resolved_by").references(() => users.id),
   resolvedAt: ts("resolved_at"),
   resolutionNote: text("resolution_note"),
   createdAt: ts("created_at").notNull().defaultNow(),
 }, (t) => [
-  uniqueIndex("flags_one_open_per_rule").on(t.entityType, t.entityId, t.rule).where(sql`status = 'OPEN'`),
+  // The guard stops a re-running rule piling up duplicates. Hand-raised flags are
+  // the opposite case: two people noticing two different things about one record is
+  // exactly what should be allowed, so they sit outside it.
+  uniqueIndex("flags_one_open_per_rule").on(t.entityType, t.entityId, t.rule)
+    .where(sql`status = 'OPEN' and raised_by is null`),
 ]);
 
 export const notifications = pgTable("notifications", {

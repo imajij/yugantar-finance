@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { RaiseConcern } from "@/components/raise-flag";
 import { formatPaise } from "@/lib/money";
 
 const INPUT = "rounded-lg px-3 py-2 text-sm bg-[var(--yg-bg-app)] border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
@@ -37,13 +38,15 @@ interface Person {
 }
 
 export function People({
-  users, departments, meId, canManageAdmins,
+  users, departments, meId, canManageAdmins, canRaiseConcerns = false,
 }: {
   users: Person[];
   departments: { id: string; name: string }[];
   meId: string;
   /** Only an administrator may appoint one, so only they see the control. */
   canManageAdmins: boolean;
+  /** `can(user, "flag.raise")` — flagging a person, per 8.3. */
+  canRaiseConcerns?: boolean;
 }) {
   const { save, busy, error } = useSave();
   const [adding, setAdding] = useState(false);
@@ -59,6 +62,9 @@ export function People({
               <th className="pb-2 font-medium">Department</th>
               {canManageAdmins && <th className="pb-2 font-medium">Admin</th>}
               <th className="pb-2 font-medium">Status</th>
+              {canRaiseConcerns && (
+                <th className="pb-2 font-medium"><span className="sr-only">Concern</span></th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -114,6 +120,15 @@ export function People({
                     </button>
                   )}
                 </td>
+                {canRaiseConcerns && (
+                  <td className="py-2">
+                    {/* Flagging a person, not disciplining one: it goes to the same
+                        queue as everything else and needs a note to clear. */}
+                    {u.id === meId ? null : (
+                      <RaiseConcern entityType="USER" entityId={u.id} label="Concern" />
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

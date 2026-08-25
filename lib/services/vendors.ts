@@ -75,6 +75,58 @@ export async function updateVendor(actor: Actor, id: string, input: Partial<Vend
   });
 }
 
+/**
+ * Retiring a vendor (soft, per 18.2 rule 7).
+ *
+ * A vendor is the payee on every request raised against it, so deleting one is not
+ * a tidying-up action — it is removing the counterparty from a payment trail. The
+ * row is therefore only ever marked deleted, never removed, and the attempt is
+ * refused outright while any obligation is still live: an approved request with an
+ * unpaid balance has to be settled or cancelled first, by the people whose job that
+ * is. History (closed, declined, cancelled) is no obstacle — that is what soft
+ * delete is for.
+ */
+export async function deleteVendor(actor: Actor, id: string, reason?: string) {
+  assertCan(actor, "vendor.delete", { festId: actor.festId });
+
+  return db.transaction(async (tx) => {
+    const [vendor] = await tx.select().from(vendors)
+      .where(and(eq(vendors.id, id), eq(vendors.festId, actor.festId), isNull(vendors.deletedAt)))
+      .for("update");
+    if (!vendor) throw notFound("Vendor");
+
+    const live = (await tx.select({
+      id: vendorRequests.id, humanId: vendorRequests.humanId, status: vendorRequests.status,
+    }).from(vendorRequests)
+      .where(and(
+        eq(vendorRequests.vendorId, id),
+        isNull(vendorRequests.deletedAt),
+        sql`${vendorRequests.status} not in ('DRAFT','DECLINED','CANCELLED','CLOSED')`,
+      ))
+      .limit(5));
+
+    if (live.length > 0) {
+      throw conflict(
+        `${vendor.name} still has ${live.length === 1 ? "a request" : "requests"} in flight`,
+        { requests: live.map((r) => ({ human_id: r.humanId, status: r.status })) },
+      );
+    }
+
+    const [after] = await tx.update(vendors)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(eq(vendors.id, id)).returning();
+
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "VENDOR", entityId: id, actorId: actor.id,
+      action: "vendor.delete",
+      before: { name: vendor.name, deleted_at: null },
+      after: { name: after.name, deleted_at: after.deletedAt },
+      reason: reason?.trim() || null,
+    });
+    return { ok: true, id };
+  });
+}
+
 /** 20.7 — bank fields are masked for anyone who may not see them in full. */
 export function redactVendor<T extends { bankAccountNumber: string | null }>(actor: Actor, vendor: T): T {
   if (can(actor, "vendor.bankDetails.view", { festId: actor.festId })) return vendor;

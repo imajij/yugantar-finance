@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { vendorRequests, vendors } from "@/db/schema";
 import { assertCan } from "@/lib/authz";
 import { notFound, parseBody, route } from "@/lib/api";
-import { redactVendor, updateVendor, vendorExposure } from "@/lib/services/vendors";
+import { deleteVendor, redactVendor, updateVendor, vendorExposure } from "@/lib/services/vendors";
 
 export const GET = route<{ id: string }>(async ({ user, params }) => {
   assertCan(user, "vendor.view", { festId: user.festId });
@@ -48,4 +48,13 @@ export const PATCH = route<{ id: string }>(async ({ user, params, request }) => 
     bankAccountName: b.bank_account_name, bankAccountNumber: b.bank_account_number,
     bankIfsc: b.bank_ifsc, upiId: b.upi_id, gstin: b.gstin, notes: b.notes,
   });
+});
+
+/**
+ * Retiring a vendor. Soft, audited, and refused while any request against it is
+ * still live — see `deleteVendor`.
+ */
+export const DELETE = route<{ id: string }>(async ({ user, params, request }) => {
+  const reason = new URL(request.url).searchParams.get("reason") ?? undefined;
+  return deleteVendor(user, params.id, reason);
 });
