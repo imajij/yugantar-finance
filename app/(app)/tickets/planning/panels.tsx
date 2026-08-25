@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
+import { IconButton } from "@/components/ui";
+import { ConfirmWithReason } from "@/components/confirm";
 
 /**
  * Managing the board's vocabulary: labels, projects, cycles.
@@ -57,6 +59,7 @@ export function Labels({
   const { busy, error, send } = useWriter();
   const [name, setName] = useState("");
   const [color, setColor] = useState(PALETTE[0]);
+  const [doomed, setDoomed] = useState<Doomed | null>(null);
 
   return (
     <section>
@@ -115,13 +118,12 @@ export function Labels({
             <button
               type="button"
               disabled={busy}
-              onClick={() => {
-                if (window.confirm(
-                  l.ticket_count > 0
-                    ? `Delete “${l.name}”? It comes off ${l.ticket_count} ticket${l.ticket_count === 1 ? "" : "s"}; nothing else changes.`
-                    : `Delete “${l.name}”?`,
-                )) send(`/api/v1/ticket-labels/${l.id}`, "DELETE");
-              }}
+              onClick={() => setDoomed({
+                kind: "label", id: l.id, name: l.name,
+                consequence: l.ticket_count > 0
+                  ? `It comes off ${l.ticket_count} ticket${l.ticket_count === 1 ? "" : "s"}. Nothing else about them changes.`
+                  : "Nothing is using it.",
+              })}
               aria-label={`Delete ${l.name}`}
               className="rounded-full p-0.5 hover:bg-surface-2"
             >
@@ -130,7 +132,44 @@ export function Labels({
           </span>
         ))}
       </div>
+
+      <RetireDialog
+        doomed={doomed}
+        busy={busy}
+        error={error}
+        onConfirm={() => doomed && send(`/api/v1/ticket-labels/${doomed.id}`, "DELETE").then(() => setDoomed(null))}
+        onCancel={() => setDoomed(null)}
+      />
     </section>
+  );
+}
+
+/**
+ * Deleting a piece of the board's vocabulary. It takes no written reason — a label
+ * carries no financial record — but it does state what goes with it, because
+ * "delete?" does not tell you it is about to come off eleven tickets.
+ */
+interface Doomed { kind: "label" | "project" | "cycle"; id: string; name: string; consequence: string }
+
+function RetireDialog({
+  doomed, busy, error, onConfirm, onCancel,
+}: {
+  doomed: Doomed | null; busy: boolean; error: string | null;
+  onConfirm: () => void; onCancel: () => void;
+}) {
+  return (
+    <ConfirmWithReason
+      open={doomed !== null}
+      title={doomed ? `Delete “${doomed.name}”?` : ""}
+      consequence={doomed?.consequence ?? ""}
+      confirmLabel="Delete it"
+      cancelLabel="Keep it"
+      tone="destructive"
+      busy={busy}
+      error={error}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }
 
@@ -149,6 +188,7 @@ export function Projects({
   const { busy, error, send } = useWriter();
   const [name, setName] = useState("");
   const [lead, setLead] = useState("");
+  const [doomed, setDoomed] = useState<Doomed | null>(null);
 
   return (
     <section>
@@ -216,23 +256,28 @@ export function Projects({
                   <option key={s} value={s}>{s[0] + s.slice(1).toLowerCase()}</option>
                 ))}
               </select>
-              <button
-                type="button"
+              <IconButton
+                label={`Retire ${p.name}`}
                 disabled={busy}
-                onClick={() => {
-                  if (window.confirm(`Retire “${p.name}”? Its ${p.ticket_count} ticket(s) stay on their boards, unfiled.`)) {
-                    send(`/api/v1/projects/${p.id}`, "DELETE");
-                  }
-                }}
-                aria-label={`Retire ${p.name}`}
-                className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2"
+                onClick={() => setDoomed({
+                  kind: "project", id: p.id, name: p.name,
+                  consequence: `Its ${p.ticket_count} ticket${p.ticket_count === 1 ? "" : "s"} stay on their boards, unfiled. A project is a grouping, not an owner.`,
+                })}
               >
-                <Trash2 size={13} aria-hidden />
-              </button>
+                <Trash2 size={16} aria-hidden />
+              </IconButton>
             </div>
           </div>
         ))}
       </div>
+
+      <RetireDialog
+        doomed={doomed}
+        busy={busy}
+        error={error}
+        onConfirm={() => doomed && send(`/api/v1/projects/${doomed.id}`, "DELETE").then(() => setDoomed(null))}
+        onCancel={() => setDoomed(null)}
+      />
     </section>
   );
 }
@@ -251,6 +296,7 @@ export function Cycles({
   const [name, setName] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [doomed, setDoomed] = useState<Doomed | null>(null);
 
   return (
     <section>
@@ -304,22 +350,27 @@ export function Cycles({
                 {c.starts_on} → {c.ends_on} · {c.done_count}/{c.ticket_count} done
               </p>
             </div>
-            <button
-              type="button"
+            <IconButton
+              label={`Delete ${c.name}`}
               disabled={busy}
-              onClick={() => {
-                if (window.confirm(`Delete “${c.name}”? Its tickets stay put and lose the cycle.`)) {
-                  send(`/api/v1/cycles/${c.id}`, "DELETE");
-                }
-              }}
-              aria-label={`Delete ${c.name}`}
-              className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2"
+              onClick={() => setDoomed({
+                kind: "cycle", id: c.id, name: c.name,
+                consequence: `Its ${c.ticket_count} ticket${c.ticket_count === 1 ? "" : "s"} stay put and lose the cycle.`,
+              })}
             >
-              <Trash2 size={13} aria-hidden />
-            </button>
+              <Trash2 size={16} aria-hidden />
+            </IconButton>
           </div>
         ))}
       </div>
+
+      <RetireDialog
+        doomed={doomed}
+        busy={busy}
+        error={error}
+        onConfirm={() => doomed && send(`/api/v1/cycles/${doomed.id}`, "DELETE").then(() => setDoomed(null))}
+        onCancel={() => setDoomed(null)}
+      />
     </section>
   );
 }

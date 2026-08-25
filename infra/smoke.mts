@@ -804,6 +804,10 @@ for (const [path, must, label] of [
   ["/tickets?scope=all", ["Triage", "Backlog", "Todo", "In Progress"], "board columns"],
   ["/tickets/planning", ["Labels", "Projects", "Cycles"], "planning panels"],
   ["/budget", ["Reserve", "Allocated"], "budget totals"],
+  // The redesign's load-bearing sentence: Available is derived, and Pending is a
+  // deduction. If this disappears the five numbers are five boxes again.
+  ["/budget", ["Pending is held back from Available"], "the derivation, explained"],
+  ["/dashboard", ["Money", "Work", "Oversight"], "grouped navigation"],
   // The sentence everyone in a channel is meant to see, not only the administrator.
   // Aimed at a real channel: /chat itself only redirects to one.
   [`/chat/${techChannel}`, ["Administrators can read this channel"], "the disclosure"],

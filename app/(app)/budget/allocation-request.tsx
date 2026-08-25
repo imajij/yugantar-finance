@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { formatPaise } from "@/lib/money";
+import { Button } from "@/components/ui";
+import { ConfirmWithReason } from "@/components/confirm";
 
 /**
  * A department head asking for a different allocation, and Finance answering.
@@ -184,81 +186,97 @@ export function AskForBudget({
 }
 
 export function DecideAllocation({
-  id, departmentName, requestedPaise, currentPaise, reason, requestedBy,
+  id, departmentName, requestedPaise, currentPaise, reservePaise, reason, requestedBy,
 }: {
   id: string;
   departmentName: string;
   requestedPaise: number;
   currentPaise: number;
+  /** Stated in the panel: granting it leaves this much unallocated across the fest. */
+  reservePaise: number;
   reason: string;
   requestedBy: string;
 }) {
   const router = useRouter();
-  const [note, setNote] = useState("");
+  const [decision, setDecision] = useState<"APPROVE" | "DECLINE" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const delta = requestedPaise - currentPaise;
 
-  async function decide(decision: "APPROVE" | "DECLINE") {
+  const delta = requestedPaise - currentPaise;
+  const reserveAfter = reservePaise - delta;
+
+  async function decide(note: string) {
     setBusy(true);
     setError(null);
     const res = await fetch(`/api/v1/allocation-requests/${id}/decision`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ decision, note: note.trim() }),
+      body: JSON.stringify({ decision, note }),
     });
     setBusy(false);
     if (!res.ok) { setError(message(await res.json().catch(() => null))); return; }
+    setDecision(null);
     router.refresh();
   }
 
   return (
     <div
-      className="rounded-xl p-3"
-      style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
+      className={`flex flex-wrap items-center gap-5 rounded-[var(--r-card)] p-[18px_20px] ${busy ? "is-pending" : ""}`}
+      style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-sm">
-          <strong>{departmentName}</strong> is asking for{" "}
-          <span className="tnum">{formatPaise(requestedPaise)}</span>
-          <span className="text-text-muted">
-            {" · "}{delta > 0 ? `${formatPaise(delta)} more` : `${formatPaise(-delta)} back to Reserve`}
-          </span>
+      <div className="flex min-w-[260px] flex-1 flex-col gap-1">
+        <p className="text-[13.5px] font-medium">
+          {departmentName} asks for{" "}
+          <span className="tnum">{formatPaise(Math.abs(delta))}</span>
+          {delta > 0 ? " more" : " less"}
         </p>
-        <p className="text-xs text-text-muted">{requestedBy}</p>
+        <p className="text-[12.5px] leading-snug text-text-muted">
+          &ldquo;{reason}&rdquo; — {requestedBy}.{" "}
+          {delta > 0
+            ? `Granting it leaves ${formatPaise(Math.max(0, reserveAfter))} unallocated across the fest.`
+            : `Granting it returns ${formatPaise(-delta)} to Reserve.`}
+        </p>
       </div>
-      <p className="mt-1 text-xs text-text-soft">&ldquo;{reason}&rdquo;</p>
 
-      <input
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        placeholder="Your answer — the department reads this either way"
-        className={`${FIELD} mt-2`}
-        aria-label={`Note on the request from ${departmentName}`}
+      {error && (
+        <p className="basis-full text-[12px]" style={{ color: "var(--flag-high-fg)" }}>{error}</p>
+      )}
+
+      <div className="flex gap-2.5">
+        <Button tone="ghost" disabled={busy} onClick={() => setDecision("DECLINE")}>
+          Decline with a reason
+        </Button>
+        <Button tone="primary" disabled={busy} onClick={() => setDecision("APPROVE")}>
+          Grant {formatPaise(requestedPaise)}
+        </Button>
+      </div>
+
+      <ConfirmWithReason
+        open={decision !== null}
+        title={decision === "APPROVE" ? `Set ${departmentName} to ${formatPaise(requestedPaise)}?` : `Decline ${departmentName}'s request?`}
+        consequence={
+          decision === "APPROVE"
+            ? <>This moves <span style={{ color: "var(--yg-sky)" }}>{formatPaise(Math.abs(delta))}</span>{" "}
+                {delta > 0 ? "out of Reserve" : "back to Reserve"} and records the transfer. The arithmetic is
+                checked now, not when they asked — if Reserve no longer covers it, this will be refused.</>
+            : <>{departmentName} stays at {formatPaise(currentPaise)}. {requestedBy} is notified and reads
+                your note, so it is worth saying what would change your mind.</>
+        }
+        confirmLabel={decision === "APPROVE" ? "Approve and transfer" : "Decline"}
+        cancelLabel="Leave it waiting"
+        tone={decision === "APPROVE" ? "default" : "destructive"}
+        reason={{
+          label: decision === "APPROVE" ? "Note" : "Why not",
+          placeholder: decision === "APPROVE"
+            ? "Approved against the revised sound quote."
+            : "Reserve is spoken for until the sponsor payment clears.",
+          minLength: 1,
+        }}
+        busy={busy}
+        error={error}
+        onConfirm={decide}
+        onCancel={() => { setDecision(null); setError(null); }}
       />
-
-      {error && <p className="mt-1 text-[11px]" style={{ color: "var(--flag-high-fg)" }}>{error}</p>}
-
-      <div className="mt-2 flex gap-2">
-        <button
-          type="button"
-          disabled={busy || note.trim().length < 1}
-          onClick={() => decide("APPROVE")}
-          className="rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
-        >
-          {busy ? "Working…" : "Approve and transfer"}
-        </button>
-        <button
-          type="button"
-          disabled={busy || note.trim().length < 1}
-          onClick={() => decide("DECLINE")}
-          className="rounded-full px-3 py-1 text-xs disabled:opacity-40"
-          style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-        >
-          Decline
-        </button>
-      </div>
     </div>
   );
 }

@@ -273,6 +273,32 @@ Unlike a rule's flag these are not deduplicated — two people noticing two diff
 things about one record is the point — so the partial unique index that stops a
 re-running rule piling up duplicates is scoped to rule-raised flags.
 
+### The interface
+
+`system-design.md` is the design brief and the record of what was built from it.
+The short version: colour tokens are unchanged — which state is which colour appears
+in exports and in an audit and is not a styling decision — and what changed is
+structure.
+
+One typographic and density scale (rows 44px, cards 28px inside, sections 24px
+apart, radii 20 / 16 / 14 / 999), a 44px floor under anything you tap, and three
+levels of emphasis with a rule for each.
+
+The piece that matters most is the five numbers. They were five sibling boxes, which
+is a lie about what they are: Available is not a peer of Allocated, Pending,
+Committed and Spent — it is what is *left* after them. HODs read five equal cards,
+saw a number lower than they expected, and had no way to discover that a request
+awaiting a decision had already been held back. Now the figure is Available and the
+other four are drawn as what it was derived from — a segmented bar in spend order,
+and the arithmetic written out as deductions beneath it (`components/five-numbers.tsx`).
+
+Two other things worth knowing. `/requests/new` is three steps with the camera
+first, because the hard case is a Member outside a venue at 11pm holding a phone in
+one hand. And every `window.prompt` is gone: anything needing a written reason for
+the permanent record opens `components/confirm.tsx`, which states the consequence
+before it asks, says the reason goes to the audit log against your name, and will
+not enable the action until there is one.
+
 ## Integrations
 
 Each degrades to something usable rather than failing, so the app runs with none of

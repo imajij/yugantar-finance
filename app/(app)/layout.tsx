@@ -1,146 +1,255 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
-  Bell, ClipboardList, FileText, FileDown, Flag, Gauge, HandCoins, ListChecks,
-  MessagesSquare, ScrollText, Settings, Ticket, Truck,
+  Archive, Bell, Camera, ClipboardList, CircleDot, FileText, Flag, Gauge, HandCoins,
+  Home, MessagesSquare, ScrollText, Settings, Truck, Wallet,
 } from "lucide-react";
 import { getSession, clerkConfigured } from "@/lib/session";
 import { can, type Action } from "@/lib/authz";
 import { unreadCount } from "@/lib/services/notifications";
 import { unreadTotal } from "@/lib/services/chat";
+import { openFlagCounts } from "@/lib/services/flags";
 import { SignOutButton } from "@/components/sign-out";
 
 /** Every page here reads the session cookie, so none of them may be prerendered. */
 export const dynamic = "force-dynamic";
 
-/** Sidebar entries are filtered by the same `can` the API enforces (18.2 rule 1). */
-const NAV: { href: string; label: string; icon: typeof Gauge; action: Action }[] = [
-  { href: "/dashboard", label: "Dashboard", icon: Gauge, action: "fest.view" },
-  { href: "/requests", label: "Reimbursements", icon: FileText, action: "reimbursement.create" },
-  { href: "/tickets", label: "Work tickets", icon: Ticket, action: "ticket.create" },
-  { href: "/chat", label: "Channels", icon: MessagesSquare, action: "fest.view" },
-  { href: "/budget", label: "Budget", icon: ListChecks, action: "department.budget.view" },
-  { href: "/vendors", label: "Vendors", icon: Truck, action: "vendor.view" },
-  { href: "/income", label: "Income", icon: HandCoins, action: "income.view" },
-  { href: "/queues", label: "Queues", icon: ClipboardList, action: "reimbursement.create" },
-  { href: "/flags", label: "Flags", icon: Flag, action: "flag.view" },
-  { href: "/close-out", label: "Close-out", icon: FileDown, action: "closeOut.view" },
-  { href: "/audit", label: "Audit log", icon: ScrollText, action: "audit.view" },
-  { href: "/admin", label: "Admin", icon: Settings, action: "user.manage" },
+interface NavItem {
+  href: string;
+  label: string;
+  icon: typeof Gauge;
+  action: Action;
+  /** The count worth interrupting somebody for. */
+  badge?: "messages" | "flags" | "notifications";
+  /** An amber badge is a queue with your name on it, not a tally. */
+  hot?: boolean;
+}
+
+/**
+ * Twelve flat entries became three groups.
+ *
+ * The grouping is the actual mental model: **money** is the ledger and everything
+ * that moves it, **work** is what people are doing to each other, **oversight** is
+ * what somebody reviews afterwards. A flat list made "Audit log" a sibling of
+ * "Reimbursements", which they have never been.
+ *
+ * Sidebar entries are filtered by the same `can` the API enforces (18.2 rule 1).
+ */
+const GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Money",
+    items: [
+      { href: "/dashboard", label: "Dashboard", icon: Gauge, action: "fest.view" },
+      { href: "/budget", label: "Budget", icon: Wallet, action: "department.budget.view" },
+      { href: "/requests", label: "Reimbursements", icon: FileText, action: "reimbursement.create" },
+      { href: "/queues", label: "Queues", icon: ClipboardList, action: "reimbursement.create", hot: true },
+      { href: "/vendors", label: "Vendors", icon: Truck, action: "vendor.view" },
+      { href: "/income", label: "Income", icon: HandCoins, action: "income.view" },
+    ],
+  },
+  {
+    label: "Work",
+    items: [
+      { href: "/tickets", label: "Tickets", icon: CircleDot, action: "ticket.create" },
+      { href: "/chat", label: "Channels", icon: MessagesSquare, action: "fest.view", badge: "messages" },
+    ],
+  },
+  {
+    label: "Oversight",
+    items: [
+      { href: "/flags", label: "Flags", icon: Flag, action: "flag.view", badge: "flags" },
+      { href: "/close-out", label: "Close-out", icon: Archive, action: "closeOut.view" },
+      { href: "/audit", label: "Audit log", icon: ScrollText, action: "audit.view" },
+      { href: "/admin", label: "Admin", icon: Settings, action: "user.manage" },
+    ],
+  },
 ];
+
+/**
+ * The phone's navigation. Five destinations, thumb-reachable, and deliberately not
+ * the sidebar shrunk down — the horizontally scrolling strip of twelve pills it
+ * replaces hid most of itself off-screen.
+ *
+ * "Claim" is the camera. It is the thing a Member opens the app to do at 11pm, and
+ * it earns a permanent place over anything they would only read.
+ */
+const TABS: { href: string; label: string; icon: typeof Home; action: Action }[] = [
+  { href: "/dashboard", label: "Home", icon: Home, action: "fest.view" },
+  { href: "/budget", label: "Budget", icon: Wallet, action: "department.budget.view" },
+  { href: "/requests/new", label: "Claim", icon: Camera, action: "reimbursement.create" },
+  { href: "/tickets", label: "Tickets", icon: CircleDot, action: "ticket.create" },
+  { href: "/chat", label: "Chat", icon: MessagesSquare, action: "fest.view" },
+];
+
+const initials = (name: string) =>
+  name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await getSession();
   if (!user) redirect("/sign-in");
 
   const scope = { festId: user.festId, departmentId: user.departmentId };
-  const nav = NAV.filter((n) => can(user, n.action, scope));
-  const [unread, unreadMessages] = await Promise.all([unreadCount(user), unreadTotal(user)]);
+  const [unread, unreadMessages, flags] = await Promise.all([
+    unreadCount(user), unreadTotal(user), openFlagCounts(user),
+  ]);
 
-  const navLinks = (
-    <>
-      {nav.map(({ href, label, icon: Icon }) => (
-        <Link
-          key={href}
-          href={href}
-          className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-soft hover:bg-surface-2 hover:text-text"
-        >
-          <Icon size={16} aria-hidden />
-          {label}
-          {href === "/chat" && unreadMessages > 0 && (
-            <span
-              className="ml-auto rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums"
-              style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
-              aria-label={`${unreadMessages} unread messages`}
-            >
-              {unreadMessages > 99 ? "99+" : unreadMessages}
-            </span>
-          )}
-        </Link>
-      ))}
-      <Link
-        href="/notifications"
-        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-soft hover:bg-surface-2 hover:text-text"
-      >
-        <Bell size={16} aria-hidden />
-        Notifications
-        {unread > 0 && (
-          <span
-            className="ml-auto rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums"
-            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
-            aria-label={`${unread} unread`}
-          >
-            {unread > 99 ? "99+" : unread}
-          </span>
-        )}
-      </Link>
-    </>
-  );
+  const counts = { messages: unreadMessages, flags: flags.total, notifications: unread };
+  const groups = GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((n) => can(user, n.action, scope)) }))
+    .filter((g) => g.items.length > 0);
+  const tabs = TABS.filter((t) => can(user, t.action, scope));
 
   return (
     <div className="flex min-h-screen">
+      {/* ------------------------------------------------------------ sidebar */}
       <aside
-        className="hidden w-60 shrink-0 flex-col p-4 md:flex"
+        className="hidden w-[244px] shrink-0 flex-col gap-[22px] overflow-y-auto p-[22px_14px] md:flex"
         style={{ background: "var(--yg-surface)", borderRight: "1px solid var(--yg-surface-2)" }}
       >
-        <Link href="/dashboard" className="font-display text-lg text-lime">
-          Yugaantar &rsquo;26
+        <Link href="/dashboard" className="flex items-center gap-2.5 px-2">
+          <span
+            className="font-display flex size-8 items-center justify-center rounded-[11px] text-[19px] font-bold"
+            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+            aria-hidden
+          >
+            Y
+          </span>
+          <span className="font-display text-[14px]">Yugaantar &rsquo;26</span>
         </Link>
-        <p className="mt-1 text-xs text-text-muted">Finance &amp; Operations</p>
 
-        <nav className="mt-6 flex flex-col gap-0.5">{navLinks}</nav>
+        <nav className="flex flex-col gap-[22px]">
+          {groups.map((group) => (
+            <div key={group.label} className="flex flex-col gap-[3px]">
+              <p
+                className="font-display px-2.5 pb-[7px] text-[10px] tracking-[0.18em] text-text-muted uppercase"
+              >
+                {group.label}
+              </p>
+              {group.items.map((item) => (
+                <NavLink key={item.href} item={item} count={item.badge ? counts[item.badge] : 0} />
+              ))}
+            </div>
+          ))}
 
-        <div className="mt-auto space-y-2 pt-6 text-xs">
-          <div>
-            <p className="text-text">{user.name}</p>
-            <p className="text-text-muted">
-              {user.departmentName} &middot; {user.role.replace("_", " ").toLowerCase()}
+          <div className="flex flex-col gap-[3px]">
+            <p className="font-display px-2.5 pb-[7px] text-[10px] tracking-[0.18em] text-text-muted uppercase">
+              You
             </p>
+            <NavLink
+              item={{ href: "/notifications", label: "Notifications", icon: Bell, action: "fest.view" }}
+              count={unread}
+            />
+          </div>
+        </nav>
+
+        <div className="mt-auto flex flex-col gap-2.5">
+          <div
+            className="flex items-center gap-2.5 rounded-[var(--r-control)] p-2.5"
+            style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
+          >
+            <span
+              className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-[12px] font-bold"
+              style={{ background: "var(--yg-pink)", color: "var(--yg-on-accent)" }}
+              aria-hidden
+            >
+              {initials(user.name)}
+            </span>
+            <div className="flex min-w-0 flex-col">
+              <span className="truncate text-[12.5px]">{user.name}</span>
+              <span className="text-[10.5px] text-text-muted">
+                {user.departmentName} · {user.role.replace("_", " ").toLowerCase()}
+                {user.isSuperAdmin ? " · admin" : ""}
+              </span>
+            </div>
           </div>
           <SignOutButton withClerk={clerkConfigured()} />
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* --------------------------------------------------------------- main */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header
-          className="sticky top-0 z-10 md:hidden"
+          className="sticky top-0 z-20 md:hidden"
           style={{ background: "var(--yg-surface)", borderBottom: "1px solid var(--yg-surface-2)" }}
         >
-          <div className="flex items-center justify-between px-4 py-3">
-            <Link href="/dashboard" className="font-display text-lime">Yugaantar &rsquo;26</Link>
-            <div className="flex items-center gap-3 text-xs">
-              <Link href="/notifications" className="relative text-text-soft" aria-label="Notifications">
-                <Bell size={18} aria-hidden />
-                {unread > 0 && (
-                  <span
-                    className="absolute -right-1.5 -top-1.5 rounded-full px-1 text-[10px] font-semibold"
-                    style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
-                  >
-                    {unread > 9 ? "9+" : unread}
-                  </span>
-                )}
-              </Link>
-              <span className="text-text-muted">{user.name}</span>
-            </div>
-          </div>
-          {/* Members submit from phones mid-fest (PRD 14), so the nav has to reach them there. */}
-          <nav className="flex gap-1 overflow-x-auto px-3 pb-2">
-            {nav.map(({ href, label, icon: Icon }) => (
-              <Link
-                key={href}
-                href={href}
-                className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs whitespace-nowrap text-text-soft"
-                style={{ background: "var(--yg-surface-2)" }}
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+            <Link href="/dashboard" className="flex items-center gap-2">
+              <span
+                className="font-display flex size-7 items-center justify-center rounded-[10px] text-[16px] font-bold"
+                style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+                aria-hidden
               >
-                <Icon size={13} aria-hidden />
-                {label}
-              </Link>
-            ))}
-          </nav>
+                Y
+              </span>
+              <span className="font-display text-[14px]">Yugaantar &rsquo;26</span>
+            </Link>
+            <Link href="/notifications" className="tap relative text-text-soft" aria-label="Notifications">
+              <Bell size={19} aria-hidden />
+              {unread > 0 && (
+                <span
+                  className="absolute top-1.5 right-1.5 size-2 rounded-full"
+                  style={{ background: "var(--yg-lime)" }}
+                  aria-label={`${unread} unread`}
+                />
+              )}
+            </Link>
+          </div>
         </header>
 
-        <main className="min-w-0 flex-1 px-4 py-6 md:px-6 md:py-8">{children}</main>
+        {/*
+          `min-h-0` so a child can be a fixed two-pane layout (chat) rather than
+          every screen having to be a scrolling document. The bottom padding on
+          small screens clears the tab bar.
+        */}
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col px-4 py-5 pb-24 md:px-7 md:py-8 md:pb-8">
+          {children}
+        </main>
+
+        <nav
+          className="fixed inset-x-0 bottom-0 z-20 flex justify-around gap-1 px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:hidden"
+          style={{ background: "var(--yg-surface)", borderTop: "1px solid var(--yg-surface-2)" }}
+          aria-label="Primary"
+        >
+          {tabs.map(({ href, label, icon: Icon }) => (
+            <Link
+              key={href}
+              href={href}
+              className="flex min-w-[var(--row-h)] flex-col items-center gap-1 py-1 text-[10px] text-text-muted"
+            >
+              <span className="flex h-9 w-[var(--row-h)] items-center justify-center rounded-xl">
+                <Icon size={18} aria-hidden />
+              </span>
+              {label}
+            </Link>
+          ))}
+        </nav>
       </div>
     </div>
+  );
+}
+
+function NavLink({ item, count }: { item: NavItem; count: number }) {
+  const { href, label, icon: Icon, hot } = item;
+  return (
+    <Link
+      href={href}
+      className="flex h-10 items-center gap-[11px] rounded-xl px-2.5 text-[13.5px] text-text-soft hover:bg-surface-2 hover:text-text"
+    >
+      <Icon size={16} className="shrink-0" aria-hidden />
+      <span className="flex-1 truncate">{label}</span>
+      {count > 0 && (
+        <span
+          className="tnum rounded-full px-2 py-0.5 text-[11px]"
+          style={
+            hot
+              ? { background: "var(--flag-medium-bg)", color: "var(--flag-medium-fg)" }
+              : { background: "var(--yg-surface-2)", color: "var(--yg-text-muted)" }
+          }
+          aria-label={`${count} waiting`}
+        >
+          {count > 99 ? "99+" : count}
+        </span>
+      )}
+    </Link>
   );
 }

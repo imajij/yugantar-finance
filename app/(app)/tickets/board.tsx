@@ -95,8 +95,24 @@ const SCOPES = [
 const PRIORITIES = ["URGENT", "HIGH", "MEDIUM", "LOW"] as const;
 
 const PRIORITY_TONE: Record<string, string> = {
-  URGENT: "var(--state-bad-fg)", HIGH: "var(--yg-yellow)",
-  MEDIUM: "var(--yg-text-soft)", LOW: "var(--yg-text-muted)",
+  URGENT: "var(--flag-high-fg)", HIGH: "var(--flag-high-fg)",
+  MEDIUM: "var(--flag-medium-fg)", LOW: "var(--yg-text-muted)",
+};
+
+/** Priority is a chip like everything else, not bare lowercase text. */
+const PRIORITY_BG: Record<string, string> = {
+  URGENT: "var(--flag-high-bg)", HIGH: "var(--flag-high-bg)",
+  MEDIUM: "var(--flag-medium-bg)", LOW: "var(--yg-surface-2)",
+};
+
+/** The dot on a board column head — the same semantic tones as the chips. */
+const CATEGORY_TONE: Record<TicketCategory, string> = {
+  TRIAGE: "var(--state-waiting-fg)",
+  BACKLOG: "var(--state-waiting-fg)",
+  TODO: "var(--state-moving-fg)",
+  IN_PROGRESS: "var(--state-moving-fg)",
+  DONE: "var(--state-done-fg)",
+  CANCELLED: "var(--flag-high-fg)",
 };
 
 const GROUPS: { key: GroupBy; label: string }[] = [
@@ -357,7 +373,7 @@ export function Board(props: BoardProps) {
             type="button"
             title={s.hint}
             onClick={() => setParam({ scope: s.key })}
-            className="rounded-full px-3 py-1.5 text-sm"
+            className="flex h-[var(--row-h)] items-center rounded-full px-4 text-[13px]"
             style={
               scope === s.key
                 ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
@@ -373,7 +389,7 @@ export function Board(props: BoardProps) {
       {/* ---- toolbar */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div
-          className="flex min-w-56 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5"
+          className="flex h-[var(--row-h)] min-w-56 flex-1 items-center gap-2.5 rounded-full px-4"
           style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
         >
           <Search size={14} className="text-text-muted" aria-hidden />
@@ -501,7 +517,7 @@ export function Board(props: BoardProps) {
             onClick={() => setParam({ layout: "board" })}
             aria-label="Board view"
             aria-pressed={layout === "board"}
-            className="rounded-lg p-1.5"
+            className="tap"
             style={layout === "board"
               ? { background: "var(--yg-surface-2)", color: "var(--yg-text)" }
               : { color: "var(--yg-text-muted)" }}
@@ -513,7 +529,7 @@ export function Board(props: BoardProps) {
             onClick={() => setParam({ layout: "list" })}
             aria-label="List view"
             aria-pressed={layout === "list"}
-            className="rounded-lg p-1.5"
+            className="tap"
             style={layout === "list"
               ? { background: "var(--yg-surface-2)", color: "var(--yg-text)" }
               : { color: "var(--yg-text-muted)" }}
@@ -524,7 +540,7 @@ export function Board(props: BoardProps) {
             type="button"
             onClick={() => setShowKeys((v) => !v)}
             aria-label="Keyboard shortcuts"
-            className="rounded-lg p-1.5 text-text-muted"
+            className="tap text-text-muted"
           >
             <Keyboard size={15} aria-hidden />
           </button>
@@ -559,7 +575,7 @@ export function Board(props: BoardProps) {
           {groups.map((g) => (
             <section
               key={g.key}
-              className="flex w-72 shrink-0 flex-col rounded-xl p-2"
+              className="flex w-72 shrink-0 flex-col rounded-[var(--r-shell)] p-3"
               style={{
                 background: dropTarget === g.key ? "var(--yg-surface-2)" : "var(--yg-surface)",
                 border: `1px solid ${dropTarget === g.key ? "var(--yg-lime)" : "var(--yg-surface-2)"}`,
@@ -577,9 +593,16 @@ export function Board(props: BoardProps) {
                 setDragging(null);
               }}
             >
-              <header className="flex items-center justify-between px-2 py-1.5">
-                <h2 className="text-sm font-medium">{g.label}</h2>
-                <span className="tnum text-xs text-text-muted">{g.tickets.length}</span>
+              <header className="flex items-center gap-2.5 px-1 pb-3">
+                {g.category && (
+                  <span
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ background: CATEGORY_TONE[g.category] }}
+                    aria-hidden
+                  />
+                )}
+                <h2 className="text-[13px] font-medium">{g.label}</h2>
+                <span className="tnum text-[11.5px] text-text-muted">{g.tickets.length}</span>
               </header>
               <div className="flex flex-col gap-2">
                 {g.tickets.map((t) => (
@@ -683,8 +706,8 @@ function Row({
   });
 
   const frame = card
-    ? "rounded-lg p-2.5"
-    : "px-3 py-2.5";
+    ? "rounded-[var(--r-card)] p-[15px]"
+    : "px-4 py-3";
   const style = card
     ? {
         background: "var(--yg-bg-app)",
@@ -713,7 +736,15 @@ function Row({
             open={openMenu === "status"}
             onToggle={(v) => setMenu(v ? "status" : null)}
             trigger={
-              <span className="rounded-full px-2 py-0.5 text-xs font-medium" style={chipStyle(t.status)}>
+              <span
+                className="inline-flex items-center gap-[6px] rounded-full py-[4px] pr-2.5 pl-2 text-[11.5px] font-medium"
+                style={chipStyle(t.status)}
+              >
+                <span
+                  className="size-[6px] rounded-full"
+                  style={{ background: chipStyle(t.status).color }}
+                  aria-hidden
+                />
                 {stateLabel(t.status)}
               </span>
             }
@@ -738,8 +769,11 @@ function Row({
             open={openMenu === "priority"}
             onToggle={(v) => setMenu(v ? "priority" : null)}
             trigger={
-              <span className="text-xs font-medium" style={{ color: PRIORITY_TONE[t.priority] }}>
-                {t.priority.toLowerCase()}
+              <span
+                className="rounded-full px-2.5 py-[3px] text-[10.5px]"
+                style={{ background: PRIORITY_BG[t.priority], color: PRIORITY_TONE[t.priority] }}
+              >
+                {t.priority[0] + t.priority.slice(1).toLowerCase()}
               </span>
             }
           >
@@ -962,7 +996,7 @@ function Dropdown({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs"
+        className="flex h-[var(--row-h)] items-center gap-2 rounded-full px-4 text-[13px]"
         style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
       >
         {icon}

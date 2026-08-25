@@ -215,11 +215,13 @@ beside them.
 6. **Absent, not disabled.** A control somebody may never use is not rendered. A
    disabled Approve button invites them to ask why.
 
-## 7. Where it falls down — the actual brief
+## 7. Where it fell down — the brief, and what was built
 
-Honest assessment of the current interface, worst first.
+Honest assessment of the interface as it was, worst first. **Every item below is now
+implemented** from the Claude Design artboards in *Yugaantar Redesign.dc.html*; each
+one records what shipped so the next person can see whether it held.
 
-### 7.1 It is desktop-shaped and the hard case is a phone
+### 7.1 Desktop-shaped, when the hard case is a phone — **done**
 
 `/requests/new` is the screen a Member uses standing outside a venue at 11pm with
 one hand. It is currently a vertical stack of eleven labelled inputs. The budget
@@ -230,76 +232,97 @@ which is where an HOD checks Available before saying yes to someone.
 my department got left", and a table strategy that degrades to something readable
 rather than something scrollable.
 
-### 7.2 There is no hierarchy — everything is a card of equal weight
+### 7.2 No hierarchy — everything a card of equal weight — **done**
 
 The dashboard, `/budget`, and `/admin` are all vertical stacks of `Card`s at the
 same elevation, same padding, same border. The five numbers get `StatCard`s that
 differ from an ordinary card only by having a bigger number in them. Nothing on any
 screen says "look here first".
 
-**Ask:** a hierarchy — a primary figure treatment, a secondary supporting treatment,
-and a tertiary/metadata treatment — and a rule for which is used when.
+**Built:** three emphasis levels with a rule for each. **A** is the hero — one per
+screen, and only where the question the page answers *is* "how much is left". **B**
+is a card among several. **C** is a row in a list. `components/five-numbers.tsx`
+exports one per level so the choice is made by which function you call.
 
-### 7.3 Pending is unexplained, and it is the thing people get wrong
+### 7.3 Pending unexplained, and it is what people get wrong — **done**
 
 Available is lower than HODs expect because Pending is subtracted. The five cards
 sit in a row with no relationship shown between them. Nothing communicates that
 Available is a *derivation*.
 
-**Ask:** a treatment for the five numbers that shows the arithmetic — the parts and
-the remainder — rather than five sibling boxes. This is the single highest-value
-piece of visual design in the product.
+**Built:** the figure is Available; the other four are drawn as what it was derived
+from — a segmented bar in spend order, and the arithmetic itself written out beneath
+it as deductions. Pending reads as a deduction because it is drawn as one, and the
+sentence "you cannot spend the same rupee twice" sits under the hero wherever
+Pending is non-zero. The bar's tail is dashed rather than filled: what is left is an
+absence, and colouring it would make Available look like a fifth kind of spending.
 
-### 7.4 Actions that need a reason use `window.prompt`
+### 7.4 Actions needing a reason used `window.prompt` — **done**
 
 Rejecting, blocking, sending back, closing a line item — all consequential, all
 requiring a written reason that goes into the permanent record — currently open a
 browser prompt dialog. It is ugly, unstyled, uncopyable, and utterly at odds with
 "everything is on the record".
 
-**Ask:** a proper confirm-with-reason pattern. It is used a dozen places and should
-be one component.
+**Built:** `components/confirm.tsx`. It states the consequence in the words of the
+thing about to happen, says where the reason goes ("written to the audit log against
+your name, it cannot be edited afterwards"), and will not enable the action before
+there is one. Every `window.prompt` and `window.confirm` in the app is gone —
+declining, sending back, blocking, cancelling, closing a line item, retiring a
+vendor, deleting a label, removing a message. Transitions needing exactly one free-
+text reason route through it automatically; anything needing a reference, a date or
+an amount stays an inline form, because that is data entry rather than a decision.
 
-### 7.5 Feedback is ad-hoc
+### 7.5 Ad-hoc feedback — **done**
 
 Errors appear as inline red text in some places and as a tinted banner in others.
 There are no loading states — pages are server-rendered and swap whole. Nothing
 acknowledges a successful write except the page changing.
 
-**Ask:** one error pattern, one success pattern, one pending pattern, and a decision
-about what happens visually in the gap between clicking Approve and the page
-returning.
+**Built:** `ErrorNote` / `SuccessNote` / `InfoNote` in `components/feedback.tsx`,
+each an icon, a fact, and an optional second line saying what to do about it — the
+second line is the part that matters, since "Tech has already committed ₹3,65,800"
+explains the refusal and "lower the figure or close a line item first" is the answer.
+For the gap: the button holds a spinner and the row it belongs to takes `.is-pending`
+(55% opacity, no pointer events) until the page returns.
 
-### 7.6 Navigation is a flat list of twelve
+### 7.6 Navigation a flat list of twelve — **done**
 
 The sidebar is twelve ungrouped items. The mobile version is a horizontally
 scrolling strip of the same twelve, which is close to unusable. Nothing groups
 *money* / *work* / *oversight*, and nothing indicates the current section.
 
-**Ask:** grouped navigation, an honest mobile pattern, and a visible current-location
-indicator.
+**Built:** three groups — **Money** (the ledger and what moves it), **Work** (what
+people are doing to each other), **Oversight** (what is reviewed afterwards) — which
+is the actual mental model; a flat list made "Audit log" a sibling of
+"Reimbursements", which they have never been. Badges distinguish a queue with your
+name on it (amber) from a tally (grey). On a phone, five thumb-reachable tabs.
 
-### 7.7 Density is inconsistent across the newest screens
+### 7.7 Inconsistent density — **done**
 
 `/tickets` (board) and `/chat` were built most recently and are much denser than the
 rest. `/chat` sets its own height with `calc(100vh - 2rem)` and fights the app shell.
 `/admin` is the least designed screen and holds the most controls.
 
-**Ask:** one density scale applied across all screens, and an app shell that supports
-both a scrolling document (`/budget`) and a fixed two-pane layout (`/chat`).
+**Built:** one scale in `app/globals.css` — rows 44px, cards 28px inside, sections
+24px apart, radii 20 / 16 / 14 / 999 — applied from the board to the budget table.
+The shell's `main` is `min-h-0 flex-1`, so `/chat` fills it instead of guessing with
+`calc(100vh - 2rem)`, which was wrong whenever the mobile header appeared.
 
-### 7.8 Tap targets are too small
+### 7.8 Tap targets too small — **done**
 
 Icon buttons are `p-1.5` around a 13–14px icon — roughly 26–28px. The floor is 44px
 for anything used during fest week.
 
-### 7.9 Empty and first-run states are one grey sentence
+### 7.9 Empty and first-run states one grey sentence — **done**
 
 `Empty` renders a single line of muted text. A fest that has just been created is
 *entirely* empty states, and that is a new Finance HOD's first impression of the
 product.
 
-**Ask:** real empty states that say what the thing is for and what to do next.
+**Built:** an icon, a title, a sentence about what the screen is *for*, and the
+action that fills it. "When you pay for something out of pocket, photograph the
+receipt here and your HOD sees it within minutes."
 
 ## 8. Technical constraints for the implementation
 
@@ -352,19 +375,26 @@ design away by shortening labels.
 - **Segregation of duties as absence.** Do not turn missing controls into disabled
   ones.
 
-## 11. What would be most useful back
+## 11. Still open
 
-In rough priority order:
+The redesign is implemented. What it did not settle:
 
-1. The five-numbers treatment (§7.3) — one component, three levels, showing the
-   arithmetic.
-2. Phone-first receipt submission (§7.1).
-3. The confirm-with-reason pattern (§7.4).
-4. A typographic and density scale, applied to two contrasting screens — `/budget`
-   (dense, tabular) and `/requests/new` (form, phone).
-5. Navigation, grouped, with a mobile pattern (§7.6).
-6. Empty and first-run states (§7.9).
-7. A favicon and, if the vector original can be found, a proper wordmark lockup.
+- **A favicon**, and a proper wordmark lockup if the vector original can be found —
+  the SVG in the website repo is a PNG wrapped in SVG.
+- **Light theme** for faculty (PRD open question 18). Emails and exports are already
+  light and have their own treatment; the app is dark only.
+- **`/admin`** still holds the most controls with the least design. It now uses the
+  shared primitives, but its information architecture is untouched.
+- **Motion.** There is no animation library and the redesign added none beyond a
+  spinner. Whether page transitions are worth the weight is undecided.
 
-Screens worth designing in full, as they exercise everything else: `/dashboard`,
-`/budget/[id]`, `/requests/new`, `/requests/[id]`, `/tickets`, `/chat/[id]`.
+## 12. Where each piece lives
+
+| Piece | File |
+|---|---|
+| Structural scale, `.meta-label`, `.tap`, `.is-pending` | `app/globals.css` |
+| Five numbers, three levels, the derivation bar | `components/five-numbers.tsx` |
+| Confirm with reason, the spinner | `components/confirm.tsx` |
+| Error / success / info | `components/feedback.tsx` |
+| Card, Button, IconButton, StateChip, Empty, PageTitle | `components/ui.tsx` |
+| Grouped nav, mobile tabs, the fixed-pane shell | `app/(app)/layout.tsx` |

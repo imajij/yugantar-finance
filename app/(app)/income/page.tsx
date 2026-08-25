@@ -1,4 +1,5 @@
 import { notFound as nf, redirect } from "next/navigation";
+import { HandCoins } from "lucide-react";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { departments } from "@/db/schema";
@@ -107,7 +108,11 @@ export default async function IncomePage() {
 
       <h2 className="font-display mt-8 mb-3 text-lg">Ledger</h2>
       {ledger.length === 0 ? (
-        <Empty>No income recorded yet.</Empty>
+        <Empty icon={<HandCoins size={24} aria-hidden />} title="No income recorded yet">
+          Sponsorships and ticket sales are recorded here as they are pledged and again as
+          they arrive. Until then the fest&rsquo;s cash position is what has been spent, with
+          nothing on the other side of it.
+        </Empty>
       ) : (
         <div className="space-y-2">
           {ledger.map((e) => (

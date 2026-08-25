@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Truck } from "lucide-react";
 import { redirect } from "next/navigation";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
@@ -72,7 +73,10 @@ export default async function VendorsPage() {
       )}
 
       {rows.length === 0 ? (
-        <Empty>No vendors yet. Add one before raising a payment request.</Empty>
+        <Empty icon={<Truck size={24} aria-hidden />} title="No vendors yet">
+          A vendor is anyone the fest pays directly rather than reimbursing — a sound company,
+          a printer, a caterer. Add one before raising a payment request against them.
+        </Empty>
       ) : (
         <Card className="overflow-x-auto p-0">
           <table className="w-full text-sm">
@@ -117,7 +121,7 @@ export default async function VendorsPage() {
 
       <h2 className="font-display mt-8 mb-3 text-lg">Payment requests</h2>
       {open.length === 0 ? (
-        <Empty>No vendor payment requests yet.</Empty>
+        <Empty>Nothing has been contracted with a vendor yet.</Empty>
       ) : (
         <div className="space-y-2">
           {open.map((r) => (
