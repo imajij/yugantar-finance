@@ -4,9 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { RaiseConcern } from "@/components/raise-flag";
+import { Button, StateChip } from "@/components/ui";
 import { formatPaise } from "@/lib/money";
 
-const INPUT = "rounded-lg px-3 py-2 text-sm bg-[var(--yg-bg-app)] border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
+const INPUT =
+  "h-[var(--row-h)] min-w-0 rounded-[var(--r-control)] px-3 text-[13px] "
+  + "bg-[var(--yg-surface)] border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 const ROLES = ["MEMBER", "DEPT_HOD", "FINANCE_HOD", "MANAGEMENT"] as const;
 
 function useSave() {
@@ -102,91 +105,88 @@ export function People({
 
   return (
     <>
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-text-muted">
-              <th className="pb-2 font-medium">Name</th>
-              <th className="pb-2 font-medium">Role</th>
-              <th className="pb-2 font-medium">Department</th>
-              {canManageAdmins && <th className="pb-2 font-medium">Admin</th>}
-              <th className="pb-2 font-medium">Status</th>
-              <th className="pb-2 font-medium"><span className="sr-only">Invitation</span></th>
-              {canRaiseConcerns && (
-                <th className="pb-2 font-medium"><span className="sr-only">Concern</span></th>
+      {/*
+        A list of cards, not a table. Seven columns of controls is 680px of row on a
+        screen 390px wide, and no amount of horizontal scrolling makes changing
+        somebody's department on a phone a reasonable thing to ask. Each person is
+        one card that stacks; on a desk the controls line up in a row.
+      */}
+      <ul className="mt-4 flex flex-col gap-2.5">
+        {users.map((u) => (
+          <li
+            key={u.id}
+            className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 sm:flex-row sm:items-center sm:gap-4"
+            style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
+          >
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="flex flex-wrap items-center gap-2 text-[14px]">
+                {u.name}
+                {u.id === meId && <span className="text-[11px] text-text-muted">you</span>}
+                {u.isSuperAdmin && (
+                  <span
+                    className="rounded-full px-2 py-0.5 text-[10.5px]"
+                    style={{ background: "var(--state-decided-bg)", color: "var(--state-decided-fg)" }}
+                  >
+                    administrator
+                  </span>
+                )}
+                {u.status !== "ACTIVE" && <StateChip state={u.status} />}
+              </span>
+              <span className="truncate text-[12px] text-text-muted">{u.email}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center">
+              <select
+                defaultValue={u.role} disabled={busy || u.id === meId} className={INPUT}
+                aria-label={`Role for ${u.name}`}
+                onChange={(e) => save(`/api/v1/users/${u.id}`, "PATCH", { role: e.target.value })}
+              >
+                {ROLES.map((r) => <option key={r} value={r}>{r.replace("_", " ").toLowerCase()}</option>)}
+              </select>
+              <select
+                defaultValue={u.departmentId} disabled={busy} className={INPUT}
+                aria-label={`Department for ${u.name}`}
+                onChange={(e) => save(`/api/v1/users/${u.id}`, "PATCH", { department_id: e.target.value })}
+              >
+                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {canManageAdmins && (
+                <label className="flex h-[var(--row-h)] items-center gap-2 rounded-full px-3 text-[12px] text-text-muted"
+                  style={{ border: "1px solid var(--yg-surface-2)" }}>
+                  <input
+                    type="checkbox"
+                    defaultChecked={u.isSuperAdmin}
+                    disabled={busy}
+                    onChange={(e) =>
+                      save(`/api/v1/users/${u.id}`, "PATCH", { is_super_admin: e.target.checked })}
+                  />
+                  admin
+                </label>
               )}
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} style={{ borderTop: "1px solid var(--yg-surface-2)" }}>
-                <td className="py-2">
-                  {u.name}
-                  <p className="text-xs text-text-muted">{u.email}</p>
-                </td>
-                <td className="py-2">
-                  <select
-                    defaultValue={u.role} disabled={busy || u.id === meId} className={INPUT}
-                    onChange={(e) => save(`/api/v1/users/${u.id}`, "PATCH", { role: e.target.value })}
-                  >
-                    {ROLES.map((r) => <option key={r} value={r}>{r.replace("_", " ").toLowerCase()}</option>)}
-                  </select>
-                </td>
-                <td className="py-2">
-                  <select
-                    defaultValue={u.departmentId} disabled={busy} className={INPUT}
-                    onChange={(e) => save(`/api/v1/users/${u.id}`, "PATCH", { department_id: e.target.value })}
-                  >
-                    {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>
-                </td>
-                {canManageAdmins && (
-                  <td className="py-2">
-                    <label className="flex items-center gap-1.5 text-xs text-text-muted">
-                      <input
-                        type="checkbox"
-                        defaultChecked={u.isSuperAdmin}
-                        disabled={busy}
-                        onChange={(e) =>
-                          save(`/api/v1/users/${u.id}`, "PATCH", { is_super_admin: e.target.checked })}
-                      />
-                      {u.isSuperAdmin ? "admin" : ""}
-                    </label>
-                  </td>
-                )}
-                <td className="py-2">
-                  {u.id === meId ? (
-                    <span className="text-xs text-text-muted">you</span>
-                  ) : (
-                    <button
-                      disabled={busy}
-                      onClick={() => save(`/api/v1/users/${u.id}`, "PATCH", {
-                        status: u.status === "DISABLED" ? "ACTIVE" : "DISABLED",
-                      })}
-                      className="rounded-full px-3 py-1 text-xs"
-                      style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-                    >
-                      {u.status === "DISABLED" ? "Reactivate" : u.status.toLowerCase()}
-                    </button>
-                  )}
-                </td>
-                <td className="py-2">
-                  {u.status !== "DISABLED" && <Resend userId={u.id} status={u.status} />}
-                </td>
-                {canRaiseConcerns && (
-                  <td className="py-2">
-                    {/* Flagging a person, not disciplining one: it goes to the same
-                        queue as everything else and needs a note to clear. */}
-                    {u.id === meId ? null : (
-                      <RaiseConcern entityType="USER" entityId={u.id} label="Concern" />
-                    )}
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+              {u.id !== meId && (
+                <Button
+                  tone="ghost"
+                  disabled={busy}
+                  onClick={() => save(`/api/v1/users/${u.id}`, "PATCH", {
+                    status: u.status === "DISABLED" ? "ACTIVE" : "DISABLED",
+                  })}
+                >
+                  {u.status === "DISABLED" ? "Reactivate" : "Deactivate"}
+                </Button>
+              )}
+              {u.status !== "DISABLED" && <Resend userId={u.id} status={u.status} />}
+              {/* Flagging a person, not disciplining one: it goes to the same queue
+                  as everything else and needs a note to clear. */}
+              {canRaiseConcerns && u.id !== meId && (
+                <RaiseConcern entityType="USER" entityId={u.id} label="Concern" />
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
 
       {adding ? (
         <form
@@ -380,59 +380,53 @@ export function Departments({ departments }: { departments: Dept[] }) {
 
   return (
     <>
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-text-muted">
-              <th className="pb-2 font-medium">Department</th>
-              <th className="pb-2 font-medium">Kind</th>
-              <th className="pb-2 pr-0 text-right font-medium">Allocated</th>
-              <th className="pb-2 font-medium"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {departments.map((d) => (
-              <tr key={d.id} style={{ borderTop: "1px solid var(--yg-surface-2)" }}>
-                <td className="py-2">
-                  {d.kind === "BUDGET" ? (
-                    <input
-                      defaultValue={d.name}
-                      disabled={busy}
-                      className={INPUT}
-                      onBlur={(e) => {
-                        const next = e.target.value.trim();
-                        if (next && next !== d.name) save(`/api/v1/departments/${d.id}`, "PATCH", { name: next });
-                      }}
-                    />
-                  ) : (
-                    <span>{d.name}</span>
-                  )}
-                  <p className="mt-0.5 text-xs text-text-muted">{d.slug}</p>
-                </td>
-                <td className="py-2 text-xs text-text-muted">{d.kind.toLowerCase()}</td>
-                <td className="tnum py-2 text-right">{formatPaise(d.allocatedPaise)}</td>
-                <td className="py-2 text-right">
-                  {d.kind === "BUDGET" && (
-                    <button
-                      disabled={busy}
-                      onClick={() => save(`/api/v1/departments/${d.id}`, "PATCH", { is_active: !d.isActive })}
-                      className="rounded-full px-3 py-1 text-xs"
-                      style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-                      title={
-                        d.isActive && (d.openRecords > 0 || d.allocatedPaise > 0)
-                          ? "Close its open records and move its allocation back to Reserve first"
-                          : undefined
-                      }
-                    >
-                      {d.isActive ? "Deactivate" : "Reactivate"}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ul className="mt-4 flex flex-col gap-2.5">
+        {departments.map((d) => (
+          <li
+            key={d.id}
+            className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 sm:flex-row sm:items-center sm:gap-4"
+            style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
+          >
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              {d.kind === "BUDGET" ? (
+                <input
+                  defaultValue={d.name}
+                  disabled={busy}
+                  className={INPUT}
+                  aria-label={`Name of ${d.name}`}
+                  onBlur={(e) => {
+                    const next = e.target.value.trim();
+                    if (next && next !== d.name) save(`/api/v1/departments/${d.id}`, "PATCH", { name: next });
+                  }}
+                />
+              ) : (
+                <span className="text-[14px]">{d.name}</span>
+              )}
+              <span className="text-[12px] text-text-muted">
+                {d.slug} · {d.kind.toLowerCase()}
+                {!d.isActive && " · inactive"}
+              </span>
+            </div>
+
+            <span className="tnum text-[14px] sm:text-right">{formatPaise(d.allocatedPaise)}</span>
+
+            {d.kind === "BUDGET" && (
+              <Button
+                tone="ghost"
+                disabled={busy}
+                onClick={() => save(`/api/v1/departments/${d.id}`, "PATCH", { is_active: !d.isActive })}
+                title={
+                  d.isActive && (d.openRecords > 0 || d.allocatedPaise > 0)
+                    ? "Close its open records and move its allocation back to Reserve first"
+                    : undefined
+                }
+              >
+                {d.isActive ? "Deactivate" : "Reactivate"}
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
 
       {adding ? (
         <form

@@ -65,39 +65,42 @@ export default async function IncomePage() {
       )}
 
       <h2 className="font-display mt-8 mb-3 text-lg">By type</h2>
-      <Card className="overflow-x-auto p-0">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-text-muted">
-              <th className="px-4 py-3 font-medium">Type</th>
-              <th className="px-4 py-3 text-right font-medium">Pledged</th>
-              <th className="px-4 py-3 text-right font-medium">Received</th>
-              <th className="px-4 py-3 text-right font-medium">Expected</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cashByType.map((t) => (
-              <tr key={t.type} style={{ borderTop: "1px solid var(--yg-surface-2)" }}>
-                <td className="px-4 py-3">{TYPE_LABEL[t.type] ?? t.type}</td>
-                <td className="px-4 py-3 text-right"><Amount paise={t.pledgedPaise} /></td>
-                <td className="px-4 py-3 text-right"><Amount paise={t.receivedPaise} className="text-lime" /></td>
-                <td className="px-4 py-3 text-right"><Amount paise={t.expectedPaise} className="text-yellow" /></td>
-              </tr>
-            ))}
-            {inKind && (
-              <tr style={{ borderTop: "1px solid var(--yg-surface-2)" }}>
-                <td className="px-4 py-3 text-text-muted">
-                  {TYPE_LABEL.SPONSORSHIP_IN_KIND}
-                  <span className="ml-2 text-xs">excluded from cash</span>
-                </td>
-                <td className="px-4 py-3 text-right text-text-muted"><Amount paise={inKind.pledgedPaise} /></td>
-                <td className="px-4 py-3 text-right text-text-muted"><Amount paise={inKind.receivedPaise} /></td>
-                <td className="px-4 py-3 text-right text-text-muted">—</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </Card>
+      <div className="flex flex-col gap-2.5">
+        {cashByType.map((t) => (
+          <div
+            key={t.type}
+            className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 sm:flex-row sm:items-center sm:gap-4"
+            style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+          >
+            <span className="min-w-0 flex-1 text-[14px]">{TYPE_LABEL[t.type] ?? t.type}</span>
+            <div className="grid grid-cols-3 gap-4 sm:w-[320px] sm:shrink-0">
+              <Figure label="Pledged" paise={t.pledgedPaise} />
+              <Figure label="Received" paise={t.receivedPaise} tone="var(--yg-lime)" />
+              <Figure label="Expected" paise={t.expectedPaise} tone="var(--yg-yellow)" />
+            </div>
+          </div>
+        ))}
+
+        {inKind && (
+          <div
+            className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 sm:flex-row sm:items-center sm:gap-4"
+            style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+          >
+            <span className="min-w-0 flex-1 text-[14px] text-text-muted">
+              {TYPE_LABEL.SPONSORSHIP_IN_KIND}
+              <span className="ml-2 text-[11.5px]">excluded from cash</span>
+            </span>
+            <div className="grid grid-cols-3 gap-4 sm:w-[320px] sm:shrink-0">
+              <Figure label="Pledged" paise={inKind.pledgedPaise} />
+              <Figure label="Received" paise={inKind.receivedPaise} />
+              <span className="flex flex-col gap-0.5 sm:text-right">
+                <span className="text-[11px] text-text-muted">Expected</span>
+                <span className="text-[13.5px] text-text-muted">&mdash;</span>
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
 
       {canManage && (
         <Card className="mt-4">
@@ -152,5 +155,17 @@ export default async function IncomePage() {
         </div>
       )}
     </>
+  );
+}
+
+/** A labelled amount — the label is what a table head used to carry. */
+function Figure({ label, paise, tone }: { label: string; paise: number; tone?: string }) {
+  return (
+    <span className="flex flex-col gap-0.5 sm:text-right">
+      <span className="text-[11px] text-text-muted">{label}</span>
+      <span className="tnum text-[13.5px]" style={{ color: tone }}>
+        <Amount paise={paise} />
+      </span>
+    </span>
   );
 }

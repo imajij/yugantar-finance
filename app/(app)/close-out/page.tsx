@@ -105,18 +105,21 @@ export default async function CloseOutPage() {
       <div className="grid gap-3 sm:grid-cols-2">
         {PACK.map((p) => (
           <Card key={p.kind}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm text-text">{p.label}</p>
-                <p className="mt-0.5 text-xs text-text-muted">{p.hint}</p>
+            {/* Stacks rather than shrinking: three download pills beside a label
+                do not fit half of a tablet, and `shrink-0` made them push the card
+                past the viewport instead of wrapping. */}
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <p className="text-[13.5px] text-text">{p.label}</p>
+                <p className="mt-0.5 text-[12px] text-text-muted">{p.hint}</p>
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-2">
                 {p.formats.map((format, i) => (
                   <a
                     key={format}
                     href={`/api/v1/exports/${p.kind}?format=${format === "print" ? "html" : format}`}
                     {...(format === "print" ? { target: "_blank", rel: "noreferrer" } : {})}
-                    className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium"
+                    className="flex h-9 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-medium"
                     style={i === 0
                       ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
                       : { background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
@@ -139,23 +142,23 @@ export default async function CloseOutPage() {
       <div className="grid gap-2 sm:grid-cols-2">
         {departments.map((d) => (
           <Card key={d.id}>
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-text">{d.name}</p>
-              <div className="flex shrink-0 items-center gap-1.5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0 truncate text-[13.5px] text-text">{d.name}</p>
+              <div className="flex flex-wrap items-center gap-2">
                 <a
                   href={`/api/v1/exports/department-statement?id=${d.id}&format=html`}
                   target="_blank" rel="noreferrer"
-                  className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs"
+                  className="flex h-9 items-center gap-1.5 rounded-full px-4 text-[12.5px]"
                   style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
                 >
-                  <Printer size={12} aria-hidden /> Print
+                  <Printer size={13} aria-hidden /> Print
                 </a>
                 <a
                   href={`/api/v1/exports/department-statement?id=${d.id}&format=xlsx`}
-                  className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs"
+                  className="flex h-9 items-center gap-1.5 rounded-full px-4 text-[12.5px]"
                   style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
                 >
-                  <Download size={12} aria-hidden /> Excel
+                  <Download size={13} aria-hidden /> Excel
                 </a>
               </div>
             </div>

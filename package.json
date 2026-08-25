@@ -16,7 +16,8 @@
     "r2:check": "tsx --env-file=.env.local infra/r2-check.mts",
     "smoke": "tsx --env-file=.env.local infra/smoke.mts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "responsive": "tsx --env-file=.env.local infra/responsive.mts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.7.9",
@@ -42,6 +43,7 @@
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
+    "playwright": "^1.62.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.12",
     "typescript": "^5",

@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { auditEvents, users } from "@/db/schema";
 import { getSession } from "@/lib/session";
 import { can } from "@/lib/authz";
-import { Card, Empty, PageTitle } from "@/components/ui";
+import { Empty, PageTitle } from "@/components/ui";
 
 const ENTITY_TYPES = [
   "REIMBURSEMENT", "VENDOR_REQUEST", "TICKET", "LINE_ITEM", "DEPARTMENT", "INCOME_ENTRY", "VENDOR", "USER", "FEST",
@@ -91,42 +91,50 @@ export default async function AuditPage({
       {pageRows.length === 0 ? (
         <Empty>Nothing matches those filters.</Empty>
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-text-muted">
-                <th className="px-4 py-3 font-medium">When</th>
-                <th className="px-4 py-3 font-medium">Who</th>
-                <th className="px-4 py-3 font-medium">Action</th>
-                <th className="px-4 py-3 font-medium">Entity</th>
-                <th className="px-4 py-3 font-medium">Change</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map((e) => {
-                const href = HREF[e.entityType]?.(e.entityId);
-                return (
-                  <tr key={e.id} style={{ borderTop: "1px solid var(--yg-surface-2)" }} className="align-top">
-                    <td className="tnum px-4 py-3 text-xs whitespace-nowrap text-text-muted">
-                      {new Date(e.createdAt).toLocaleString("en-IN")}
-                    </td>
-                    <td className="px-4 py-3 text-text-soft">{e.actor ?? "System"}</td>
-                    <td className="px-4 py-3">{e.action}</td>
-                    <td className="px-4 py-3 text-xs text-text-muted">
-                      {href
-                        ? <Link href={href} style={{ color: "var(--yg-pink)" }}>{e.entityType.toLowerCase()}</Link>
-                        : e.entityType.toLowerCase()}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-text-muted">
-                      <Diff before={e.before} after={e.after} />
-                      {e.reason && <p className="mt-1 text-text-soft">&ldquo;{e.reason}&rdquo;</p>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
+        /*
+         * Entries, not a table. Five columns with a JSON diff in the last one is a
+         * thousand pixels of row; the log is read at 3am by somebody working out
+         * what happened, and often on a phone.
+         */
+        <ol className="flex flex-col gap-2">
+          {pageRows.map((e) => {
+            const href = HREF[e.entityType]?.(e.entityId);
+            return (
+              <li
+                key={e.id}
+                className="flex flex-col gap-2 rounded-[var(--r-card)] p-4 sm:flex-row sm:gap-4"
+                style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+              >
+                <time
+                  className="tnum shrink-0 text-[11.5px] text-text-muted sm:w-[132px]"
+                  dateTime={new Date(e.createdAt).toISOString()}
+                >
+                  {new Date(e.createdAt).toLocaleString("en-IN", {
+                    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+                  })}
+                </time>
+
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <p className="text-[13.5px]">
+                    <span className="text-text-soft">{e.actor ?? "System"}</span>{" "}
+                    <span className="tnum text-[12.5px]">{e.action}</span>{" "}
+                    {href ? (
+                      <Link href={href} style={{ color: "var(--yg-pink)" }}>
+                        {e.entityType.toLowerCase().replace("_", " ")}
+                      </Link>
+                    ) : (
+                      <span className="text-text-muted">{e.entityType.toLowerCase().replace("_", " ")}</span>
+                    )}
+                  </p>
+                  <div className="text-[12px] break-words text-text-muted">
+                    <Diff before={e.before} after={e.after} />
+                    {e.reason && <p className="mt-1 text-text-soft">&ldquo;{e.reason}&rdquo;</p>}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
       )}
 
       {more && (

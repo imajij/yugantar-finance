@@ -881,9 +881,22 @@ console.log();
 return failed.length;
 }
 
-// Always tear the fest down, always print the report, and fail if either the walk
-// died or any call came back wrong.
-await dropFestBySlug(db, FEST_SLUG);
+/*
+ * Always tear the fest down, always print the report, and fail if either the walk
+ * died or any call came back wrong.
+ *
+ * `--keep` is the exception, and it exists because the fest this builds is the only
+ * realistic dataset anywhere: departments with allocations, line items in several
+ * states, claims at every stage, vendors, tickets, channels with messages. Looking
+ * at the interface — or sweeping it for responsive breakage — against the bootstrap
+ * seed shows empty states on every screen and proves nothing.
+ */
+const keep = process.argv.includes("--keep");
+if (keep) {
+  console.log(`\n  ${D}Keeping ${FEST_SLUG} for inspection — run pnpm responsive, or sign in as its Finance HOD.${O}`);
+} else {
+  await dropFestBySlug(db, FEST_SLUG);
+}
 const failures = report();
 
 if (walkError) {
