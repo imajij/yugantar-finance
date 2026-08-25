@@ -45,3 +45,6 @@ package-lock.json
 *.tsbuildinfo
 next-env.d.ts
 .uploads/
+
+# The rendered handout — regenerate with `pnpm walkthrough:pdf`.
+docs/*.pdf

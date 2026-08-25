@@ -1,0 +1,1237 @@
+<title>Yugaantar Walkthrough</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600&family=Reem+Kufi+Fun:wght@400;500;700&family=Source+Code+Pro:wght@400;500;600&display=swap">
+
+<style>
+/*
+ * Single-theme on screen, on purpose: this walks through a product whose own design
+ * system is dark-only. Print flips to the light variant, which is that same
+ * system's rule — emails and printed exports are light regardless — so a handout
+ * comes off the printer legible instead of drinking a cartridge.
+ *
+ * Every diagram colour is a token for exactly that reason: the SVGs restyle
+ * themselves for paper rather than being redrawn.
+ */
+:root {
+  --ink:       #0b0c16;
+  --surface:   #16172a;
+  --surface-2: #1d1e33;
+  --edge:      #2a2b3d;
+  --edge-soft: #22233a;
+
+  --lime:   #d2fc3c;
+  --pink:   #f5449e;
+  --sky:    #7fd5ff;
+
+  --text:  #ffffff;
+  --soft:  #c3c3d0;
+  --muted: #8f90a6;
+  --on-accent: #06061f;
+
+  /* Brand colour never encodes a state; these do. */
+  --waiting: #f5c542;
+  --moving:  #7fd5ff;
+  --decided: #d2fc3c;
+  --done:    #90ee90;
+  --bad:     #ee9090;
+  --stuck:   #b39dff;
+
+  /* Diagram surfaces, so a figure needs no rework to print. */
+  --dg-box:  #1d1e33;
+  --dg-edge: #2a2b3d;
+  --dg-dash: #4a4b63;
+
+  --display: "Reem Kufi Fun", Georgia, serif;
+  --body: "Lexend", system-ui, -apple-system, sans-serif;
+  --mono: "Source Code Pro", ui-monospace, "SFMono-Regular", monospace;
+
+  --measure: 70ch;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px 96px; }
+
+/* ---------------------------------------------------------------- type */
+
+h1, h2, h3 { font-family: var(--display); font-weight: 500; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(34px, 6.4vw, 58px); line-height: 1.05; letter-spacing: -0.01em; }
+h2 { font-size: clamp(24px, 3.5vw, 32px); line-height: 1.15; }
+h3 { font-size: 17px; line-height: 1.32; }
+p  { margin: 0; max-width: var(--measure); }
+
+.eyebrow { font-family: var(--display); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.lead { font-size: clamp(16px, 2vw, 18.5px); color: var(--soft); font-weight: 300; }
+.note { font-size: 13.5px; color: var(--muted); max-width: var(--measure); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.prose { display: flex; flex-direction: column; gap: 14px; margin-top: 24px; }
+.prose p { font-size: 15px; color: var(--soft); }
+.prose strong { color: var(--text); font-weight: 500; }
+
+a { color: var(--pink); text-decoration: none; border-bottom: 1px solid rgba(245,68,158,0.35); }
+a:hover { color: #f873b6; }
+:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; border-radius: 4px; }
+
+/* ---------------------------------------------------------------- masthead */
+
+.masthead { display: flex; flex-direction: column; gap: 26px; padding: 72px 0 52px; border-bottom: 1px solid var(--edge); }
+.brand { display: flex; align-items: center; gap: 13px; }
+.mark { width: 46px; height: 46px; border-radius: 15px; background: var(--lime); color: var(--on-accent); display: grid; place-items: center; font-family: var(--display); font-size: 27px; font-weight: 700; line-height: 1; }
+.brand-name { font-family: var(--display); font-size: 15px; }
+.brand-sub { font-size: 12px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+
+.stats { display: flex; flex-wrap: wrap; gap: 10px; }
+.stat { display: flex; flex-direction: column; gap: 2px; padding: 11px 16px; border-radius: 13px; background: var(--surface); border: 1px solid var(--edge); }
+.stat b { font-family: var(--mono); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11px; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
+
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.toc a { display: inline-flex; align-items: baseline; gap: 8px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--edge); background: var(--surface); color: var(--soft); font-size: 13px; }
+.toc a span { font-family: var(--mono); font-size: 11px; color: var(--lime); }
+
+/* ---------------------------------------------------------------- acts */
+
+.act { padding: 58px 0 0; }
+.act-head { display: flex; flex-direction: column; gap: 12px; margin-bottom: 28px; }
+.act-no { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--lime); letter-spacing: 0.14em; }
+
+/* ---------------------------------------------------------------- figure */
+
+figure { margin: 0; padding: 26px 22px 18px; border-radius: 20px; background: var(--surface); border: 1px solid var(--edge); overflow-x: auto; }
+figure svg { display: block; width: 100%; max-width: 100%; height: auto; min-width: 540px; }
+figure + figure { margin-top: 14px; }
+figcaption { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--edge-soft); font-size: 13px; line-height: 1.6; color: var(--muted); max-width: var(--measure); }
+figcaption b { color: var(--soft); font-weight: 500; }
+
+/* Diagram type, so print restyles it in one place. */
+.dg-box  { fill: var(--dg-box); stroke: var(--dg-edge); }
+.dg-name { fill: var(--text); font-size: 14px; }
+.dg-sub  { fill: var(--muted); font-size: 11.5px; }
+.dg-tag  { font-family: var(--mono); font-size: 11px; }
+.dg-arm  { stroke: var(--muted); fill: none; }
+.dg-note { fill: var(--muted); font-size: 11px; }
+.dg-head { fill: var(--muted); font-size: 11px; letter-spacing: 1.6px; }
+
+/* ---------------------------------------------------------------- grid + cards */
+
+.grid { display: grid; gap: 14px; margin-top: 26px; }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(218px, 1fr)); }
+
+.card { display: flex; flex-direction: column; gap: 8px; padding: 20px; border-radius: 16px; background: var(--surface); border: 1px solid var(--edge); }
+.card h3 { font-size: 16px; }
+.card p { font-size: 13.5px; line-height: 1.6; color: var(--muted); }
+.card .who { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sky); }
+
+.role { border-left: 3px solid var(--edge); }
+.role[data-owns="submit"]  { border-left-color: var(--waiting); }
+.role[data-owns="endorse"] { border-left-color: var(--moving); }
+.role[data-owns="approve"] { border-left-color: var(--decided); }
+.role[data-owns="pay"]     { border-left-color: var(--done); }
+.role[data-owns="watch"]   { border-left-color: var(--stuck); }
+
+/* ---------------------------------------------------------------- chips */
+
+.chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 20px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--surface-2); color: var(--soft); border: 1px solid var(--edge); }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+.chip[data-tone="waiting"] { color: var(--waiting); }
+.chip[data-tone="moving"]  { color: var(--moving); }
+.chip[data-tone="decided"] { color: var(--decided); }
+.chip[data-tone="done"]    { color: var(--done); }
+.chip[data-tone="bad"]     { color: var(--bad); }
+.chip[data-tone="stuck"]   { color: var(--stuck); }
+
+/* ---------------------------------------------------------------- rules */
+
+.rules { list-style: none; margin: 26px 0 0; padding: 0; display: grid; gap: 1px; background: var(--edge-soft); border-radius: 16px; overflow: hidden; border: 1px solid var(--edge); }
+.rules li { display: flex; gap: 16px; padding: 14px 20px; background: var(--surface); align-items: baseline; }
+.rules .n { font-family: var(--mono); font-size: 12px; color: var(--lime); min-width: 18px; }
+.rules .t { font-size: 14px; line-height: 1.55; color: var(--soft); max-width: var(--measure); }
+.rules .t em { font-style: normal; color: var(--text); }
+
+/* ---------------------------------------------------------------- tables */
+
+.tablewrap { overflow-x: auto; margin-top: 24px; border-radius: 16px; border: 1px solid var(--edge); }
+table { width: 100%; border-collapse: collapse; min-width: 620px; background: var(--surface); }
+th, td { text-align: left; padding: 12px 18px; font-size: 13.5px; vertical-align: top; }
+th { font-family: var(--display); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--edge); }
+td { border-bottom: 1px solid var(--edge-soft); color: var(--muted); line-height: 1.55; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { color: var(--text); }
+td .k { font-family: var(--mono); font-size: 11.5px; color: var(--sky); display: block; margin-top: 2px; }
+.nowrap { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- script */
+
+.script { list-style: none; margin: 26px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.script li { display: grid; grid-template-columns: 58px 1fr; gap: 18px; align-items: baseline; padding: 15px 20px; border-radius: 14px; background: var(--surface); border: 1px solid var(--edge); }
+.script .at { font-family: var(--mono); font-size: 12px; color: var(--lime); }
+.script .do { font-size: 14px; line-height: 1.6; max-width: var(--measure); }
+.script .do b { font-weight: 500; }
+.script .do span { display: block; margin-top: 3px; font-size: 12.5px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- faq */
+
+.faq { display: grid; gap: 12px; margin-top: 26px; }
+.faq details { border-radius: 16px; background: var(--surface); border: 1px solid var(--edge); overflow: hidden; }
+.faq summary { cursor: pointer; padding: 16px 20px; font-size: 15px; font-weight: 500; list-style: none; display: flex; gap: 14px; align-items: baseline; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::before { content: "+"; font-family: var(--mono); color: var(--lime); font-size: 15px; line-height: 1; }
+.faq details[open] summary::before { content: "\2212"; }
+.faq details[open] summary { border-bottom: 1px solid var(--edge-soft); }
+.faq .a { padding: 14px 20px 18px 48px; display: flex; flex-direction: column; gap: 10px; }
+.faq .a p { font-size: 14px; line-height: 1.65; color: var(--soft); }
+.faq .a p.caveat { color: var(--muted); font-size: 13px; }
+
+/* ---------------------------------------------------------------- close */
+
+.close { margin-top: 58px; padding: 30px 26px; border-radius: 20px; background: var(--surface); border: 1px solid var(--edge); display: flex; flex-direction: column; gap: 12px; }
+.close p { font-size: 14.5px; color: var(--soft); }
+
+@media (max-width: 620px) {
+  .masthead { padding: 48px 0 38px; }
+  .act { padding-top: 44px; }
+  .script li { grid-template-columns: 1fr; gap: 4px; }
+  .faq .a { padding-left: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ---------------------------------------------------------------- print */
+
+@page { size: A4; margin: 14mm 13mm; }
+
+@media print {
+  :root {
+    --ink:       #ffffff;
+    --surface:   #ffffff;
+    --surface-2: #f4f4f8;
+    --edge:      #d3d4de;
+    --edge-soft: #e6e7ee;
+
+    --lime:   #5c7a00;
+    --pink:   #b81a6a;
+    --sky:    #0b6c96;
+
+    --text:  #10111c;
+    --soft:  #35364a;
+    --muted: #61637a;
+
+    --waiting: #8a6a00;
+    --moving:  #0b6c96;
+    --decided: #4f6b00;
+    --done:    #1f6b1f;
+    --bad:     #a32b2b;
+    --stuck:   #5b3fbf;
+
+    --dg-box:  #ffffff;
+    --dg-edge: #c9cad6;
+    --dg-dash: #9a9cb0;
+
+    /* The accent darkens for paper, so what sits on it has to lighten to match. */
+    --on-accent: #ffffff;
+  }
+
+  body { font-size: 10.5pt; line-height: 1.5; }
+  .wrap { max-width: none; padding: 0; }
+  a { color: var(--pink); border-bottom: 0; }
+
+  h1 { font-size: 30pt; }
+  h2 { font-size: 17pt; }
+  h3 { font-size: 11.5pt; }
+  .lead { font-size: 11pt; }
+
+  .masthead { padding: 0 0 18pt; }
+  .toc { display: none; }
+
+  /* Each act starts a page; nothing splits across one. */
+  .act { padding-top: 0; break-before: page; }
+  .act-head { margin-bottom: 16pt; }
+  figure, .card, .script li, .rules, .faq details, .tablewrap, .close { break-inside: avoid; }
+  figure { padding: 14pt 12pt 10pt; }
+  figure svg { min-width: 0; }
+  .grid, .chips, .rules, .script, .faq, .tablewrap { margin-top: 14pt; }
+
+  /* Answers are the point of an FAQ on paper. */
+  .faq details { break-inside: avoid; }
+  .faq summary { cursor: auto; }
+  .faq .a { display: flex !important; }
+
+  table { min-width: 0; }
+  th, td { padding: 7pt 10pt; font-size: 9.5pt; }
+
+  .stat, .card, .script li, figure, .faq details, .close, .toc a { box-shadow: none; }
+}
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">Y</div>
+      <div>
+        <div class="brand-sub">Yugaantar &rsquo;26</div>
+        <div class="brand-name">Finance &amp; Operations</div>
+      </div>
+    </div>
+
+    <h1>Every rupee of the fest,<br>from receipt to payout.</h1>
+
+    <p class="lead">
+      A role-based dashboard that tracks the budget, every reimbursement and vendor payment,
+      the sponsorship income that funds it, and the cross-department work that spends it.
+      Nothing is typed in twice and nothing is decided twice.
+    </p>
+
+    <div class="stats">
+      <div class="stat"><b>4</b><span>roles</span></div>
+      <div class="stat"><b>5</b><span>numbers</span></div>
+      <div class="stat"><b>14</b><span>flag rules</span></div>
+      <div class="stat"><b>37</b><span>tables</span></div>
+      <div class="stat"><b>76</b><span>endpoints</span></div>
+      <div class="stat"><b>710</b><span>tests</span></div>
+    </div>
+
+    <nav class="toc" aria-label="Contents">
+      <a href="#a1"><span>01</span> Who may touch a rupee</a>
+      <a href="#a2"><span>02</span> The five numbers</a>
+      <a href="#a3"><span>03</span> The dashboards</a>
+      <a href="#a4"><span>04</span> Claims and contracts</a>
+      <a href="#a5"><span>05</span> Work and channels</a>
+      <a href="#a6"><span>06</span> What catches mistakes</a>
+      <a href="#a7"><span>07</span> Every feature</a>
+      <a href="#a8"><span>08</span> The rules underneath</a>
+      <a href="#a9"><span>09</span> An eight-minute demo</a>
+      <a href="#a10"><span>10</span> Questions people ask</a>
+    </nav>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════ 01 -->
+  <section class="act" id="a1">
+    <div class="act-head">
+      <p class="act-no">01</p>
+      <h2>Who may touch a rupee</h2>
+      <p class="lead">
+        Four roles, one direction of travel, and two places where the chain deliberately
+        bends. This is the spine &mdash; every other screen is a view onto it.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 900 320" role="img"
+           aria-label="A reimbursement passes from Member to Department HOD to Finance HOD to Management. A Finance HOD's own claim skips Finance and is approved by Management instead.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="Lexend, sans-serif">
+          <text x="0" y="16" class="dg-head">THE ORDINARY PATH</text>
+
+          <rect x="0"   y="34" width="186" height="72" rx="14" class="dg-box" stroke="var(--waiting)" stroke-width="1.5"/>
+          <text x="16" y="60" class="dg-name">Member</text>
+          <text x="16" y="80" class="dg-sub">pays, photographs it</text>
+          <text x="16" y="97" class="dg-tag" fill="var(--waiting)">SUBMITTED</text>
+
+          <rect x="238" y="34" width="186" height="72" rx="14" class="dg-box" stroke="var(--moving)" stroke-width="1.5"/>
+          <text x="254" y="60" class="dg-name">Department HOD</text>
+          <text x="254" y="80" class="dg-sub">confirms it happened</text>
+          <text x="254" y="97" class="dg-tag" fill="var(--moving)">HOD_ENDORSED</text>
+
+          <rect x="476" y="34" width="186" height="72" rx="14" class="dg-box" stroke="var(--decided)" stroke-width="1.5"/>
+          <text x="492" y="60" class="dg-name">Finance HOD</text>
+          <text x="492" y="80" class="dg-sub">checks it against budget</text>
+          <text x="492" y="97" class="dg-tag" fill="var(--decided)">APPROVED</text>
+
+          <rect x="714" y="34" width="186" height="72" rx="14" class="dg-box" stroke="var(--done)" stroke-width="1.5"/>
+          <text x="730" y="60" class="dg-name">Management</text>
+          <text x="730" y="80" class="dg-sub">transfers the money</text>
+          <text x="730" y="97" class="dg-tag" fill="var(--done)">PAID</text>
+
+          <g color="var(--muted)">
+            <line x1="190" y1="70" x2="232" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"/>
+            <line x1="428" y1="70" x2="470" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"/>
+            <line x1="666" y1="70" x2="708" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)"/>
+          </g>
+
+          <g color="var(--bad)">
+            <path d="M 480 112 C 420 148, 300 148, 244 112" fill="none" stroke="currentColor" stroke-width="1.3"
+                  stroke-dasharray="5 4" marker-end="url(#ar)"/>
+            <text x="298" y="152" font-size="11" fill="var(--bad)">sent back to fix &mdash; with a written reason</text>
+          </g>
+
+          <text x="0" y="204" class="dg-head">WHEN THE CLAIM IS FINANCE&rsquo;S OWN</text>
+
+          <rect x="0"   y="222" width="186" height="62" rx="14" class="dg-box"/>
+          <text x="16" y="248" class="dg-name">Finance HOD</text>
+          <text x="16" y="268" class="dg-sub">claims for themselves</text>
+
+          <g opacity="0.5">
+            <rect x="476" y="222" width="186" height="62" rx="14" class="dg-box" stroke-dasharray="5 4"/>
+            <text x="492" y="248" font-size="14" fill="var(--muted)">Finance HOD</text>
+            <text x="492" y="268" class="dg-sub">cannot approve it</text>
+          </g>
+
+          <rect x="714" y="222" width="186" height="62" rx="14" class="dg-box" stroke="var(--done)" stroke-width="1.5"/>
+          <text x="730" y="248" class="dg-name">Management</text>
+          <text x="730" y="268" class="dg-sub">approves and pays</text>
+
+          <g color="var(--decided)">
+            <path d="M 190 253 C 320 253, 340 200, 480 200 C 640 200, 640 253, 708 253"
+                  fill="none" stroke="currentColor" stroke-width="1.6" marker-end="url(#ar)"/>
+            <text x="350" y="192" font-size="11" fill="var(--decided)">routed past themselves</text>
+          </g>
+
+          <g stroke="var(--bad)" stroke-width="1.6">
+            <line x1="562" y1="216" x2="576" y2="230"/>
+            <line x1="576" y1="216" x2="562" y2="230"/>
+          </g>
+        </g>
+      </svg>
+      <figcaption>
+        <b>Segregation of duties, drawn.</b> Nobody endorses their own claim, nobody approves it,
+        and Management never records a payment to themselves. A Finance HOD&rsquo;s own claim is routed
+        to Management instead. The rule lives in one function that both the API and the interface
+        ask, so a control you may not use is not rendered rather than rendered and disabled.
+      </figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>
+        <strong>Why the chain matters more than it looks.</strong> A fest spends real money on
+        somebody else&rsquo;s behalf &mdash; the college&rsquo;s, a sponsor&rsquo;s &mdash; and is audited
+        afterwards by people who were not there. The question an auditor asks is never &ldquo;is the
+        total right?&rdquo; It is &ldquo;who decided this, and could they have decided it alone?&rdquo;
+        Three signatures on every rupee, none of which can be the same person, is the answer.
+      </p>
+      <p>
+        <strong>The chain is enforced twice, deliberately.</strong> Once in the permission function
+        that every route handler calls before it does anything, and once in the transition table that
+        says which state a record may move to and who may move it. Neither of them is the interface:
+        hiding a button is a courtesy, not a control.
+      </p>
+    </div>
+
+    <div class="grid g3">
+      <div class="card role" data-owns="submit">
+        <p class="who">Member</p>
+        <h3>Spends and claims</h3>
+        <p>Photographs receipts, sees their department&rsquo;s remaining budget, raises tickets. Cannot see another department at all.</p>
+      </div>
+      <div class="card role" data-owns="endorse">
+        <p class="who">Department HOD</p>
+        <h3>Owns a budget&rsquo;s shape</h3>
+        <p>Splits the allocation into line items, endorses their team&rsquo;s claims, raises vendor contracts, triages the ticket inbox, runs the department&rsquo;s channels.</p>
+      </div>
+      <div class="card role" data-owns="approve">
+        <p class="who">Finance HOD</p>
+        <h3>Owns the money</h3>
+        <p>Sets the fest total, allocates to departments, approves claims and contracts, resolves flags, manages people and settings.</p>
+      </div>
+      <div class="card role" data-owns="pay">
+        <p class="who">Management</p>
+        <h3>Moves the money</h3>
+        <p>Records every payout with its reference and date. The only role that can &mdash; and never for their own claim.</p>
+      </div>
+      <div class="card role" data-owns="watch">
+        <p class="who">Administrator &middot; a flag, not a role</p>
+        <h3>Oversight without authority</h3>
+        <p>Reads the audit log, the close-out pack, every department&rsquo;s numbers and every channel. Gains no power to approve or pay anything, even as a Member.</p>
+      </div>
+      <div class="card">
+        <p class="who">A rule with teeth</p>
+        <h3>The last administrator</h3>
+        <p>Cannot be removed or deactivated, by themselves or anyone else. A fest with none has nobody who can appoint one and no way back to the audit log.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ 02 -->
+  <section class="act" id="a2">
+    <div class="act-head">
+      <p class="act-no">02</p>
+      <h2>The five numbers</h2>
+      <p class="lead">
+        Nobody types in how much has been spent. Five figures are derived from the transactions
+        by SQL views at three levels &mdash; line item, department, fest &mdash; so every screen agrees.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 900 268" role="img"
+           aria-label="Available is Allocated minus Pending, Committed and Spent. A bar shows the parts in spend order with the remainder dashed.">
+        <g font-family="Lexend, sans-serif">
+          <text x="0" y="14" class="dg-head">ONE DEPARTMENT&rsquo;S ALLOCATION &mdash; &#8377;4,80,000</text>
+
+          <rect x="0"   y="34" width="470" height="30" rx="6" fill="var(--done)"/>
+          <rect x="474" y="34" width="188" height="30" rx="6" fill="var(--decided)"/>
+          <rect x="666" y="34" width="112" height="30" rx="6" fill="var(--waiting)"/>
+          <rect x="782" y="34" width="118" height="30" rx="6" fill="none" stroke="var(--dg-dash)" stroke-dasharray="5 4"/>
+
+          <text x="0"   y="88" font-size="12.5" fill="var(--done)">Spent</text>
+          <text x="0"   y="106" class="dg-tag" fill="var(--muted)">&#8377;2,61,800</text>
+          <text x="0"   y="124" class="dg-note">paid out</text>
+
+          <text x="474" y="88" font-size="12.5" fill="var(--decided)">Committed</text>
+          <text x="474" y="106" class="dg-tag" fill="var(--muted)">&#8377;1,04,000</text>
+          <text x="474" y="124" class="dg-note">approved, not paid</text>
+
+          <text x="666" y="88" font-size="12.5" fill="var(--waiting)">Pending</text>
+          <text x="666" y="106" class="dg-tag" fill="var(--muted)">&#8377;62,400</text>
+          <text x="666" y="124" class="dg-note">awaiting a decision</text>
+
+          <text x="782" y="88" font-size="12.5" fill="var(--text)">Available</text>
+          <text x="782" y="106" class="dg-tag" fill="var(--decided)">&#8377;51,800</text>
+          <text x="782" y="124" class="dg-note">what is left</text>
+
+          <path d="M 722 138 L 722 176" stroke="var(--waiting)" stroke-width="1.3" stroke-dasharray="4 3"/>
+          <rect x="474" y="180" width="426" height="58" rx="12" class="dg-box" stroke="var(--waiting)" stroke-width="1.2"/>
+          <text x="492" y="204" font-size="12.5" fill="var(--waiting)">Pending is held back from Available.</text>
+          <text x="492" y="224" class="dg-sub">You cannot spend the same rupee twice.</text>
+
+          <rect x="0" y="180" width="440" height="58" rx="12" class="dg-box"/>
+          <text x="18" y="205" class="dg-tag" fill="var(--soft)" font-size="12.5">Available = Allocated &minus; Pending</text>
+          <text x="18" y="225" class="dg-tag" fill="var(--soft)" font-size="12.5">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&minus; Committed &minus; Spent</text>
+        </g>
+      </svg>
+      <figcaption>
+        <b>The one thing people get wrong.</b> An HOD sees less money than they expect because a
+        request sitting in the approval queue has already been deducted. The interface draws Pending
+        as a deduction rather than as a fifth box, and says so in words underneath.
+      </figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>
+        <strong>The same five at every level.</strong> A line item has them, a department is the sum
+        of its line items, and the fest is the sum of its departments. Because they come from one
+        SQL definition rather than five screens each doing their own arithmetic, the department page
+        and the close-out pack cannot disagree &mdash; which is the failure that makes people stop
+        trusting a finance tool.
+      </p>
+      <p>
+        <strong>Above the five sit three more.</strong> <em>Reserve</em> is the fest total minus
+        everything allocated &mdash; money not yet given to anybody. <em>Cash position</em> is income
+        actually received minus what has been spent. <em>Projected close</em> is income expected
+        minus spent, committed and pending: the number that answers &ldquo;do we finish in the
+        black?&rdquo; before the fest has finished.
+      </p>
+      <p>
+        <strong>Where the money moves.</strong> An allocation only ever changes by a transfer between
+        a department and the Reserve, with a reason attached. There is no field anybody can type a
+        new allocation into. A department can never be taken below what it has already committed or
+        spent, and Σ allocations can never exceed the fest total &mdash; the single hard block in the
+        whole system.
+      </p>
+    </div>
+
+    <div class="grid g3">
+      <div class="card">
+        <p class="who">Line item</p>
+        <h3>&ldquo;Sound &middot; main PA&rdquo;</h3>
+        <p>The pot a receipt is charged against, with its own five numbers and its supporting quotations.</p>
+      </div>
+      <div class="card">
+        <p class="who">Department</p>
+        <h3>Tech, Logistics, Cultural&hellip;</h3>
+        <p>The sum of its line items, plus the unplanned buffer between what is allocated and what has been broken down.</p>
+      </div>
+      <div class="card">
+        <p class="who">Fest</p>
+        <h3>The headline</h3>
+        <p>The sum of every department, beside a Reserve that has not been handed to anybody yet.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ 03 -->
+  <section class="act" id="a3">
+    <div class="act-head">
+      <p class="act-no">03</p>
+      <h2>What each person sees on opening it</h2>
+      <p class="lead">
+        The dashboard answers one question, and a different one per role:
+        <em>what is waiting on me?</em>
+      </p>
+    </div>
+
+    <div class="grid g2">
+      <div class="card">
+        <p class="who">Member &middot; phone, mid-fest</p>
+        <h3>&ldquo;Claim a receipt&rdquo;</h3>
+        <p>Their department&rsquo;s Available as one figure, the line items with what is left in each,
+          and one button that opens the camera. Their own claims and their tickets, nothing else.</p>
+      </div>
+      <div class="card">
+        <p class="who">Department HOD</p>
+        <h3>&ldquo;Three to endorse&rdquo;</h3>
+        <p>The department&rsquo;s five numbers, the queue of claims waiting on them, line items with
+          utilisation, the ticket inbox, and a control to ask Finance for a bigger allocation.</p>
+      </div>
+      <div class="card">
+        <p class="who">Finance HOD</p>
+        <h3>&ldquo;Nine things are waiting on you&rdquo;</h3>
+        <p>Fest Available derived from every transaction, the approval queue with anything over
+          36 hours called out, departments closest to their cap, open flags, and today&rsquo;s activity.</p>
+      </div>
+      <div class="card">
+        <p class="who">Management</p>
+        <h3>&ldquo;Pay 4&rdquo;</h3>
+        <p>The payment queue grouped by payee with bank details, a downloadable payment batch,
+          and the whole fest read-only. Approving is not theirs; paying is.</p>
+      </div>
+    </div>
+
+    <div class="grid g2">
+      <div class="card" style="border-color:var(--stuck)">
+        <p class="who" style="color:var(--stuck)">The one that catches a stall</p>
+        <h3>When a seat is empty</h3>
+        <p>A segregated workflow deadlocks if nobody holds the next role. If claims are approved and
+          there is no active Management account, Committed climbs and Spent never moves &mdash; correct
+          arithmetic, stopped workflow. The budget screen says so, with the amount and a link to fix
+          it: fill the seat, rather than move the authority.</p>
+      </div>
+      <div class="card">
+        <p class="who">Everywhere</p>
+        <h3>Nothing is a dead end</h3>
+        <p>Every refusal explains itself with the numbers in it &mdash; <span class="mono">&ldquo;Tech has
+          already committed or spent &#8377;3,65,800, so its allocation cannot go below that&rdquo;</span>
+          &mdash; and every consequential action states what will happen before it asks you to confirm.</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        <strong>Designed for the phone, not adapted to it.</strong> Fest week happens standing up, at
+        night, one-handed. Submitting a receipt is three steps: photograph, then amount and line item
+        with what will be left shown before you commit, then everything else pre-filled from who you
+        are and correctable in place. Every screen is checked at 360, 390, 768, 1024 and 1440 pixels
+        by an automated sweep that fails the build if anything scrolls sideways.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ 04 -->
+  <section class="act" id="a4">
+    <div class="act-head">
+      <p class="act-no">04</p>
+      <h2>Claims and contracts</h2>
+      <p class="lead">
+        Two ways money leaves the fest: somebody spent their own and wants it back, or the fest owes
+        a company. Both are state machines, and the interface never invents a state.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 900 250" role="img"
+           aria-label="Reimbursement states: draft to submitted to endorsed to approved to paid, with send-back, decline and hold as branches.">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="Source Code Pro, monospace">
+          <text x="0" y="14" class="dg-head" font-family="Lexend, sans-serif">A REIMBURSEMENT</text>
+
+          <rect x="0" y="60" width="132" height="40" rx="10" class="dg-box"/>
+          <text x="66" y="85" class="dg-tag" fill="var(--muted)" font-size="12" text-anchor="middle">DRAFT</text>
+
+          <rect x="176" y="60" width="132" height="40" rx="10" class="dg-box" stroke="var(--waiting)"/>
+          <text x="242" y="85" class="dg-tag" fill="var(--waiting)" font-size="12" text-anchor="middle">SUBMITTED</text>
+
+          <rect x="352" y="60" width="154" height="40" rx="10" class="dg-box" stroke="var(--moving)"/>
+          <text x="429" y="85" class="dg-tag" fill="var(--moving)" font-size="12" text-anchor="middle">HOD_ENDORSED</text>
+
+          <rect x="550" y="60" width="132" height="40" rx="10" class="dg-box" stroke="var(--decided)"/>
+          <text x="616" y="85" class="dg-tag" fill="var(--decided)" font-size="12" text-anchor="middle">APPROVED</text>
+
+          <rect x="726" y="60" width="132" height="40" rx="10" class="dg-box" stroke="var(--done)"/>
+          <text x="792" y="85" class="dg-tag" fill="var(--done)" font-size="12" text-anchor="middle">PAID</text>
+
+          <g color="var(--muted)">
+            <line x1="136" y1="80" x2="170" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2)"/>
+            <line x1="312" y1="80" x2="346" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2)"/>
+            <line x1="510" y1="80" x2="544" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2)"/>
+            <line x1="686" y1="80" x2="720" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2)"/>
+          </g>
+
+          <g font-family="Lexend, sans-serif" font-size="10.5" fill="var(--muted)" text-anchor="middle">
+            <text x="153" y="52">submit</text>
+            <text x="329" y="52">endorse</text>
+            <text x="527" y="52">approve</text>
+            <text x="703" y="52">record payment</text>
+          </g>
+
+          <rect x="176" y="164" width="132" height="40" rx="10" class="dg-box" stroke="var(--stuck)"/>
+          <text x="242" y="189" class="dg-tag" fill="var(--stuck)" font-size="12" text-anchor="middle">SENT_BACK</text>
+
+          <rect x="550" y="164" width="132" height="40" rx="10" class="dg-box" stroke="var(--bad)"/>
+          <text x="616" y="189" class="dg-tag" fill="var(--bad)" font-size="12" text-anchor="middle">DECLINED</text>
+
+          <rect x="726" y="164" width="132" height="40" rx="10" class="dg-box" stroke="var(--stuck)"/>
+          <text x="792" y="189" class="dg-tag" fill="var(--stuck)" font-size="12" text-anchor="middle">ON_HOLD</text>
+
+          <g color="var(--stuck)">
+            <path d="M 400 104 C 400 140, 320 144, 300 168" fill="none" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)"/>
+            <path d="M 216 160 C 200 132, 210 118, 226 104" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ar2)"/>
+            <line x1="792" y1="104" x2="792" y2="158" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)"/>
+          </g>
+          <g color="var(--bad)">
+            <line x1="616" y1="104" x2="616" y2="158" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)"/>
+          </g>
+
+          <g font-family="Lexend, sans-serif" font-size="10.5" fill="var(--muted)">
+            <text x="326" y="140">send back &mdash; needs a reason</text>
+            <text x="118" y="130" text-anchor="middle">resubmit</text>
+            <text x="630" y="134">decline</text>
+            <text x="806" y="134">hold</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption>
+        <b>Every branch off the happy path demands a written reason</b> that goes to the append-only
+        audit log against the actor&rsquo;s name and cannot be edited afterwards. The dialog says so
+        before it asks.
+      </figcaption>
+    </figure>
+
+    <figure>
+      <svg viewBox="0 0 900 200" role="img"
+           aria-label="A vendor contract: approved commits its whole value, the advance milestone converts part to spent, delivery is confirmed, the balance is approved and paid, then it closes.">
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="Lexend, sans-serif">
+          <text x="0" y="14" class="dg-head">A VENDOR CONTRACT &mdash; &#8377;1,00,000, PAID IN TWO</text>
+
+          <rect x="0"   y="40" width="150" height="44" rx="11" class="dg-box" stroke="var(--decided)"/>
+          <text x="75" y="67" class="dg-tag" fill="var(--decided)" font-size="11.5" text-anchor="middle">APPROVED</text>
+
+          <rect x="194" y="40" width="164" height="44" rx="11" class="dg-box" stroke="var(--moving)"/>
+          <text x="276" y="67" class="dg-tag" fill="var(--moving)" font-size="11.5" text-anchor="middle">ADVANCE_PAID</text>
+
+          <rect x="402" y="40" width="150" height="44" rx="11" class="dg-box" stroke="var(--moving)"/>
+          <text x="477" y="67" class="dg-tag" fill="var(--moving)" font-size="11.5" text-anchor="middle">DELIVERED</text>
+
+          <rect x="596" y="40" width="176" height="44" rx="11" class="dg-box" stroke="var(--decided)"/>
+          <text x="684" y="67" class="dg-tag" fill="var(--decided)" font-size="11.5" text-anchor="middle">BALANCE_APPROVED</text>
+
+          <rect x="816" y="40" width="84" height="44" rx="11" class="dg-box" stroke="var(--done)"/>
+          <text x="858" y="67" class="dg-tag" fill="var(--done)" font-size="11.5" text-anchor="middle">CLOSED</text>
+
+          <g color="var(--muted)">
+            <line x1="154" y1="62" x2="188" y2="62" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar4)"/>
+            <line x1="362" y1="62" x2="396" y2="62" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar4)"/>
+            <line x1="556" y1="62" x2="590" y2="62" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar4)"/>
+            <line x1="776" y1="62" x2="810" y2="62" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar4)"/>
+          </g>
+
+          <text x="0" y="118" class="dg-head">WHAT THE NUMBERS DO</text>
+
+          <rect x="0"   y="132" width="150" height="52" rx="11" class="dg-box"/>
+          <text x="14" y="152" font-size="11" fill="var(--decided)">Committed</text>
+          <text x="14" y="170" class="dg-tag" fill="var(--muted)">+&#8377;1,00,000</text>
+
+          <rect x="194" y="132" width="164" height="52" rx="11" class="dg-box"/>
+          <text x="208" y="152" font-size="11" fill="var(--done)">Spent</text>
+          <text x="208" y="170" class="dg-tag" fill="var(--muted)">+&#8377;40,000 advance</text>
+
+          <rect x="596" y="132" width="176" height="52" rx="11" class="dg-box"/>
+          <text x="610" y="152" font-size="11" fill="var(--done)">Spent</text>
+          <text x="610" y="170" class="dg-tag" fill="var(--muted)">+&#8377;60,000 balance</text>
+
+          <rect x="402" y="132" width="150" height="52" rx="11" class="dg-box" stroke-dasharray="4 3"/>
+          <text x="416" y="152" font-size="11" fill="var(--muted)">delivery confirmed</text>
+          <text x="416" y="170" class="dg-sub" font-size="10.5">invoice attached</text>
+        </g>
+      </svg>
+      <figcaption>
+        <b>Approving a contract commits its whole value at once</b>, so the budget reflects the
+        obligation the moment it exists rather than when the first invoice lands. Each paid milestone
+        moves that slice from Committed to Spent. If Finance releases a smaller balance &mdash;
+        partial delivery, a penalty &mdash; the difference returns to Available automatically.
+      </figcaption>
+    </figure>
+
+    <div class="chips">
+      <span class="chip" data-tone="waiting">SUBMITTED</span>
+      <span class="chip" data-tone="moving">HOD_ENDORSED</span>
+      <span class="chip" data-tone="decided">APPROVED</span>
+      <span class="chip" data-tone="done">PAID</span>
+      <span class="chip" data-tone="bad">DECLINED</span>
+      <span class="chip" data-tone="stuck">ON_HOLD</span>
+      <span class="chip">DRAFT</span>
+    </div>
+    <p class="note" style="margin-top:12px">
+      Colour never carries a state on its own &mdash; every chip has its label, because fest week
+      happens at night on cheap phone screens.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ 05 -->
+  <section class="act" id="a5">
+    <div class="act-head">
+      <p class="act-no">05</p>
+      <h2>Work, and who can read about it</h2>
+      <p class="lead">
+        Money is only half a fest. The other half is one department asking another for forty chairs
+        by four o&rsquo;clock, and the conversation around it.
+      </p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 900 208" role="img"
+           aria-label="A ticket moves from Triage to Backlog or Todo, then In Progress, then Done. Backlog is the answer that was missing.">
+        <defs>
+          <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="Lexend, sans-serif">
+          <text x="0" y="14" class="dg-head">THE BOARD, LEFT TO RIGHT</text>
+
+          <rect x="0"   y="34" width="150" height="56" rx="12" class="dg-box" stroke="var(--waiting)"/>
+          <text x="16" y="58" class="dg-name" font-size="13">Triage</text>
+          <text x="16" y="77" class="dg-sub" font-size="11">asked of your department</text>
+
+          <rect x="242" y="34" width="150" height="56" rx="12" class="dg-box" stroke="var(--moving)"/>
+          <text x="258" y="58" class="dg-name" font-size="13">Todo</text>
+          <text x="258" y="77" class="dg-sub" font-size="11">accepted, scheduled</text>
+
+          <rect x="484" y="34" width="150" height="56" rx="12" class="dg-box" stroke="var(--moving)"/>
+          <text x="500" y="58" class="dg-name" font-size="13">In Progress</text>
+          <text x="500" y="77" class="dg-sub" font-size="11">or blocked, with a reason</text>
+
+          <rect x="726" y="34" width="150" height="56" rx="12" class="dg-box" stroke="var(--done)"/>
+          <text x="742" y="58" class="dg-name" font-size="13">Done</text>
+          <text x="742" y="77" class="dg-sub" font-size="11">the asker confirms</text>
+
+          <g color="var(--muted)">
+            <line x1="154" y1="62" x2="236" y2="62" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar5)"/>
+            <line x1="396" y1="62" x2="478" y2="62" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar5)"/>
+            <line x1="638" y1="62" x2="720" y2="62" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar5)"/>
+          </g>
+
+          <rect x="242" y="130" width="150" height="56" rx="12" class="dg-box" stroke="var(--waiting)" stroke-width="1.5"/>
+          <text x="258" y="154" class="dg-name" font-size="13">Backlog</text>
+          <text x="258" y="173" class="dg-sub" font-size="11">ours, not this week</text>
+
+          <g color="var(--waiting)">
+            <path d="M 92 94 C 92 130, 180 158, 236 158" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5)"/>
+            <path d="M 340 126 L 340 96" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#ar5)"/>
+          </g>
+          <text x="104" y="126" font-size="10.5" fill="var(--waiting)">the third answer</text>
+          <text x="352" y="118" font-size="10.5" fill="var(--waiting)">schedule it</text>
+
+          <text x="484" y="146" class="dg-note">Dragging a card does not set a status. A drop resolves to the</text>
+          <text x="484" y="164" class="dg-note">first legal transition into that column, and is refused out loud</text>
+          <text x="484" y="182" class="dg-note">when there is none.</text>
+        </g>
+      </svg>
+      <figcaption>
+        <b>Backlog was the answer the machine could not express.</b> Without it a department either
+        accepts work it cannot schedule or rejects work it means to do, and the inbox count stops
+        meaning anything. Tickets also carry labels, projects, cycles and one level of sub-tickets;
+        the board groups by any of seven axes and every filter lives in the URL, so a board is a link
+        you can send.
+      </figcaption>
+    </figure>
+
+    <figure>
+      <svg viewBox="0 0 900 250" role="img"
+           aria-label="Tech's channel is readable by Tech's members. Logistics' HOD and the Finance HOD are refused. An administrator can read it, and that read is written to the audit log.">
+        <defs>
+          <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="Lexend, sans-serif">
+          <rect x="330" y="78" width="230" height="94" rx="16" class="dg-box" stroke="var(--decided)" stroke-width="1.5"/>
+          <text x="445" y="110" class="dg-tag" font-size="15" fill="var(--text)" text-anchor="middle">#tech-stage</text>
+          <text x="445" y="132" class="dg-sub" text-anchor="middle">audience = membership rows</text>
+          <text x="445" y="152" class="dg-sub" text-anchor="middle">14 people</text>
+
+          <rect x="0" y="60" width="196" height="52" rx="13" class="dg-box" stroke="var(--done)"/>
+          <text x="18" y="82" class="dg-name" font-size="13">Tech&rsquo;s HOD and members</text>
+          <text x="18" y="100" font-size="11" fill="var(--done)">in it &mdash; read and post</text>
+          <g color="var(--done)">
+            <line x1="200" y1="92" x2="324" y2="106" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3)"/>
+          </g>
+
+          <rect x="0" y="138" width="196" height="70" rx="13" class="dg-box" stroke="var(--bad)"/>
+          <text x="18" y="160" class="dg-name" font-size="13">Logistics&rsquo; HOD</text>
+          <text x="18" y="178" class="dg-name" font-size="13">Finance HOD</text>
+          <text x="18" y="196" font-size="11" fill="var(--bad)">not in it &mdash; told it does not exist</text>
+          <line x1="200" y1="168" x2="324" y2="150" stroke="var(--bad)" stroke-width="1.4" stroke-dasharray="5 4"/>
+          <g stroke="var(--bad)" stroke-width="1.6">
+            <line x1="256" y1="152" x2="270" y2="166"/>
+            <line x1="270" y1="152" x2="256" y2="166"/>
+          </g>
+
+          <rect x="700" y="42" width="200" height="70" rx="13" class="dg-box" stroke="var(--sky)"/>
+          <text x="718" y="66" class="dg-name" font-size="13">Administrator</text>
+          <text x="718" y="84" font-size="11" fill="var(--sky)">reads every channel</text>
+          <text x="718" y="100" class="dg-sub" font-size="11">cannot post without joining</text>
+          <g color="var(--sky)">
+            <line x1="694" y1="86" x2="566" y2="104" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3)"/>
+            <line x1="800" y1="116" x2="800" y2="134" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3)"/>
+          </g>
+          <text x="812" y="130" font-size="10.5" fill="var(--sky)">writes</text>
+
+          <rect x="700" y="140" width="200" height="70" rx="13" class="dg-box"/>
+          <text x="718" y="164" font-size="12.5" fill="var(--soft)">Audit log</text>
+          <text x="718" y="182" class="dg-tag" fill="var(--muted)">channel.oversight_read</text>
+          <text x="718" y="198" class="dg-sub" font-size="11">append-only</text>
+
+          <text x="330" y="200" class="dg-note">Disclosed in the channel header to everyone in it &mdash;</text>
+          <text x="330" y="216" class="dg-note">not only to the administrator doing the reading.</text>
+        </g>
+      </svg>
+      <figcaption>
+        <b>Oversight, not surveillance.</b> Two things make the difference and both are load-bearing:
+        the people in a channel are <em>told</em> administrators can read it, and each read of a
+        channel you are not in is written to the append-only log &mdash; so the oversight is itself
+        overseen. Reading is all it is; posting needs membership, which puts your name in the list.
+      </figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>
+        <strong>Membership is the wall, not a role check.</strong> Another department&rsquo;s head
+        cannot open this one&rsquo;s channel because they are not in it &mdash; not because a check
+        somewhere said no, which is the kind of thing that gets forgotten at one call site out of
+        twelve. Membership follows the department: moving somebody out of Tech takes their Tech
+        channels with them, and deactivating an account removes it from every channel at once.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ 06 -->
+  <section class="act" id="a6">
+    <div class="act-head">
+      <p class="act-no">06</p>
+      <h2>What catches mistakes</h2>
+      <p class="lead">
+        Fourteen rules run on every write, and none of them block anything. The point is that
+        somebody looked.
+      </p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th class="nowrap">Rule</th><th>Fires when</th><th class="nowrap">Severity</th></tr></thead>
+        <tbody>
+          <tr><td class="nowrap">Duplicate receipt</td><td>The same file, or the same amount, date and merchant, has been claimed before</td><td class="nowrap">High</td></tr>
+          <tr><td class="nowrap">Outside the window</td><td>The transaction date falls outside the fest&rsquo;s receipt window</td><td class="nowrap">Medium</td></tr>
+          <tr><td class="nowrap">Round number</td><td>A large amount with no paise, which is often an estimate rather than a receipt</td><td class="nowrap">Low</td></tr>
+          <tr><td class="nowrap">Over budget</td><td>Approving would take the line item or department below zero</td><td class="nowrap">High</td></tr>
+          <tr><td class="nowrap">Split claim</td><td>Several claims from one person in a short window that together clear a threshold</td><td class="nowrap">Medium</td></tr>
+          <tr><td class="nowrap">Unusual payee</td><td>The payee is not the submitter, or the UPI ID has never been seen</td><td class="nowrap">Medium</td></tr>
+          <tr><td class="nowrap">Advance-heavy</td><td>A vendor advance is more than half the contract</td><td class="nowrap">Medium</td></tr>
+          <tr><td class="nowrap">Invoice mismatch</td><td>The invoice does not match what was approved</td><td class="nowrap">High</td></tr>
+          <tr><td class="nowrap">Missing quotes</td><td>A line item at or above the threshold has no supporting document</td><td class="nowrap">Medium</td></tr>
+          <tr><td class="nowrap">Above the lowest quote</td><td>A line item is planned higher than the cheapest quotation attached to it</td><td class="nowrap">Low</td></tr>
+          <tr><td class="nowrap">Raised by a person</td><td>Anyone running a department flags a claim, a line item, a department or a person by hand</td><td class="nowrap">their choice</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <p>
+        <strong>Flags never block a decision.</strong> Approving over an open High flag is allowed and
+        asks for a note &mdash; and that note is what the audit log keeps. A system that stops people
+        working gets worked around; one that makes them explain themselves gets read.
+      </p>
+      <p>
+        <strong>Underneath the rules sit the guarantees that need no judgement.</strong> Two people
+        approving the same request at the same moment cannot both succeed, because the row is locked
+        for the length of the transaction. A double-tap on a bad connection cannot pay twice, because
+        every transition and payment carries an idempotency key. A department cannot be taken below
+        what it has already committed. And Σ allocations can never exceed the fest total, which is the
+        one place the system refuses outright rather than flagging.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ 07 -->
+  <section class="act" id="a7">
+    <div class="act-head">
+      <p class="act-no">07</p>
+      <h2>Everything, in one place</h2>
+      <p class="lead">The whole surface, for the part of the demo where somebody asks &ldquo;does it also&hellip;&rdquo;</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Feature</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td class="nowrap">Budget setup<span class="k">/budget</span></td><td>Fest total, department allocations out of a Reserve, and line items inside each. Σ allocations can never exceed the total.</td></tr>
+          <tr><td class="nowrap">Line items<span class="k">/budget/[dept]</span></td><td>Named pots a receipt is charged against, with supporting quotations and web listings. An HOD manages their own; the cap binds under a row lock, not a role check.</td></tr>
+          <tr><td class="nowrap">Allocation requests<span class="k">Ask for more</span></td><td>An HOD states the total they need and why; Finance answers with a note. Approving performs the transfer in the same transaction, so the ask and the money are one trail.</td></tr>
+          <tr><td class="nowrap">Reimbursements<span class="k">/requests</span></td><td>Three steps on a phone: photograph, amount and line item, check and submit. Camera-first, with what will be left shown before you commit.</td></tr>
+          <tr><td class="nowrap">Vendor payments<span class="k">/vendors</span></td><td>Contracts with advance and balance milestones, delivery confirmation, refunds, and total exposure per vendor across departments. Bank details masked below Finance.</td></tr>
+          <tr><td class="nowrap">Income<span class="k">/income</span></td><td>Sponsorships and ticket sales, pledged then received, with cash position and projected close. In-kind shown but never counted as cash.</td></tr>
+          <tr><td class="nowrap">Queues<span class="k">/queues</span></td><td>Whichever decision your role owns &mdash; endorse, approve, or pay &mdash; flagged first, oldest first, with bulk approve for clean items.</td></tr>
+          <tr><td class="nowrap">Work tickets<span class="k">/tickets</span></td><td>Cross-department asks on a Linear-style board: board and list, grouping by seven axes, labels, projects, cycles, sub-tickets, keyboard shortcuts.</td></tr>
+          <tr><td class="nowrap">Channels<span class="k">/chat</span></td><td>Per-department channels and direct messages, with threads, files, @mentions, and links to records that render with their live status.</td></tr>
+          <tr><td class="nowrap">Flags<span class="k">/flags</span></td><td>Rules watching for duplicates, over-budget approvals, missing quotes and stalled departments &mdash; plus concerns anyone running a department can raise by hand, including on a person.</td></tr>
+          <tr><td class="nowrap">Audit log<span class="k">/audit</span></td><td>Every action anyone took, append-only at the database by trigger and by revoked grants. Filterable by entity, actor, action and date.</td></tr>
+          <tr><td class="nowrap">Close-out<span class="k">/close-out</span></td><td>The end-of-fest pack: fest summary, department statements an HOD can sign, payment batches, vendor and income ledgers, in CSV, Excel and print.</td></tr>
+          <tr><td class="nowrap">Notifications</td><td>In-app and email for what is waiting on you, what mentions you, and money moving in a department you run. Nothing else.</td></tr>
+          <tr><td class="nowrap">Admin<span class="k">/admin</span></td><td>People, roles, departments, expense types, flag thresholds and fest settings. Invitations can be re-sent without losing the account every audit row points at.</td></tr>
+          <tr><td class="nowrap">Sign-in</td><td>A one-time link to a college address, or Google via Clerk where it is configured. Invitation-only: an address nobody invited gets the same answer as one that was.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ 08 -->
+  <section class="act" id="a8">
+    <div class="act-head">
+      <p class="act-no">08</p>
+      <h2>The rules underneath</h2>
+      <p class="lead">
+        Ten decisions the whole system is built to keep. Worth a slide because they are what makes
+        the numbers trustworthy a year later, in front of somebody who was not there.
+      </p>
+    </div>
+
+    <ol class="rules">
+      <li><span class="n">1</span><span class="t">One authorization function. Every route asks it before doing anything; the interface asks the same one to decide what to show, and <em>hiding is never the enforcement</em>.</span></li>
+      <li><span class="n">2</span><span class="t">State machines are data. No handler branches on a status, so what a button offers is exactly what the rules allow.</span></li>
+      <li><span class="n">3</span><span class="t">The five numbers come from SQL views. Never stored, never recomputed in application code, so two screens cannot disagree.</span></li>
+      <li><span class="n">4</span><span class="t">Money is integer paise everywhere, formatted in exactly one place. No floating point ever touches a rupee.</span></li>
+      <li><span class="n">5</span><span class="t">Every write is one transaction with its audit event <em>inside</em> it. A crash cannot leave money moved with nothing saying why.</span></li>
+      <li><span class="n">6</span><span class="t">Segregation of duties lives in the permission function, not in the interface.</span></li>
+      <li><span class="n">7</span><span class="t">Soft delete only, and the audit log is append-only &mdash; enforced by trigger <em>and</em> by revoked database grants.</span></li>
+      <li><span class="n">8</span><span class="t">Human-readable IDs (<span class="mono">RB-0001</span>, <span class="mono">YG-142</span>) allocated in the creating transaction, so people can say them out loud.</span></li>
+      <li><span class="n">9</span><span class="t">Transitions and payments honour an idempotency key &mdash; a double-tap on a bad connection cannot pay twice.</span></li>
+      <li><span class="n">10</span><span class="t">Every query is scoped by the caller&rsquo;s fest. No endpoint accepts a fest ID from the client, because <em>a UUID is not a secret</em>.</span></li>
+    </ol>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ 09 -->
+  <section class="act" id="a9">
+    <div class="act-head">
+      <p class="act-no">09</p>
+      <h2>An eight-minute demo</h2>
+      <p class="lead">In order, with the point of each step. Sign in as the Finance HOD; keep a phone to hand for step two.</p>
+    </div>
+
+    <ol class="script">
+      <li><span class="at">0:00</span><span class="do"><b>Dashboard.</b>
+        <span>Read the first line aloud &mdash; &ldquo;nine things are waiting on you&rdquo;. Point at the big figure and the bar under it: that is the whole product in one shape.</span></span></li>
+      <li><span class="at">1:00</span><span class="do"><b>Claim a receipt on the phone.</b>
+        <span>Camera, amount, line item. Show the line saying what will be left after the claim, and the one at the end: &ldquo;&#8377;8,400 shows as pending until it is endorsed.&rdquo;</span></span></li>
+      <li><span class="at">2:30</span><span class="do"><b>Watch Available move.</b>
+        <span>Back on the budget screen, the department&rsquo;s Available has already dropped. Nobody typed that. This is the moment the derivation lands &mdash; do not rush it.</span></span></li>
+      <li><span class="at">3:30</span><span class="do"><b>Endorse, then approve.</b>
+        <span>Two people, two screens. Then try to approve your own claim: the control is not there. That is segregation of duties, not a disabled button.</span></span></li>
+      <li><span class="at">4:30</span><span class="do"><b>Decline something instead.</b>
+        <span>The dialog states what will happen and where the reason goes: the audit log, against your name, uneditable. Then show it in the log.</span></span></li>
+      <li><span class="at">5:30</span><span class="do"><b>Raise a ticket, move it on the board.</b>
+        <span>Ask another department for something. Drag a card &mdash; and drag one somewhere it may not go, to show the board refuse out loud.</span></span></li>
+      <li><span class="at">6:30</span><span class="do"><b>Open a channel you are not in.</b>
+        <span>As an administrator. Read the disclosure in the header, then find your own visit already written into the audit log.</span></span></li>
+      <li><span class="at">7:30</span><span class="do"><b>Close-out.</b>
+        <span>Download a department statement. Everything shown in the last eight minutes is in it, and it prints on one page for an HOD to sign.</span></span></li>
+    </ol>
+
+    <div class="close">
+      <p class="eyebrow">If there is time for one more thing</p>
+      <p>
+        Open the flags screen and acknowledge one. Flags never block a decision &mdash; approving over
+        an open High flag is allowed and asks for a note. That note is what the audit log keeps, and it
+        is the difference between a system that stops people working and one that makes them explain
+        themselves.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ 10 -->
+  <section class="act" id="a10">
+    <div class="act-head">
+      <p class="act-no">10</p>
+      <h2>Questions people ask</h2>
+      <p class="lead">
+        The ones that come up in the room, answered the way they should be answered &mdash;
+        including where the answer is &ldquo;no&rdquo;.
+      </p>
+    </div>
+
+    <div class="faq">
+
+      <details open>
+        <summary>Can the Finance HOD pay money to themselves?</summary>
+        <div class="a">
+          <p>No, and not by any route. They cannot approve their own claim &mdash; it is routed to
+            Management instead &mdash; and they cannot record a payment at all, because that authority
+            belongs only to Management. Two different people have to act before a rupee moves.</p>
+          <p class="caveat">The same holds in reverse: Management cannot record a payment against
+            their own claim either.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Who can see my bank details and UPI ID?</summary>
+        <div class="a">
+          <p>Finance and Management see them in full, because they are the people who have to make
+            the transfer. Everyone else &mdash; including a department head looking at a vendor their
+            own department contracted &mdash; sees a masked number ending in the last four digits.</p>
+          <p class="caveat">Masking happens before the data leaves the server, not in the browser.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Can an administrator read my direct messages?</summary>
+        <div class="a">
+          <p>Yes. That is a deliberate decision and the honest answer is worth giving plainly rather
+            than burying. What makes it oversight rather than surveillance is that it is
+            <em>disclosed</em> &mdash; the channel header tells everyone in it, in plain words &mdash;
+            and <em>recorded</em>: opening a channel you are not a member of writes an entry to the
+            append-only audit log with your name on it.</p>
+          <p>An administrator cannot post without joining first, which puts their name in the member
+            list where everybody can see it.</p>
+          <p class="caveat">If you would not want it read, treat it the way you would treat a message
+            in any organisation&rsquo;s system. This one at least tells you.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>What if somebody makes a mistake &mdash; can we delete it?</summary>
+        <div class="a">
+          <p>Nothing is ever really deleted. Records are marked deleted and stop appearing; the row
+            stays, and the audit log entry that created it stays. A removed message keeps its place in
+            a conversation and shows as removed, because a gap reads as somebody being edited out.</p>
+          <p>Correcting is the normal path: a claim can be sent back to be fixed, a line item can be
+            renamed or resized, an allocation can be moved. Every one of those leaves a reason.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>What happens on a bad connection at the venue?</summary>
+        <div class="a">
+          <p>Uploads that fail can be retried, and a claim can be saved as a draft and submitted
+            later. Transitions and payments carry an idempotency key, so if the connection drops after
+            the server acted but before the phone heard back, tapping again returns the original
+            result rather than doing it twice.</p>
+          <p class="caveat">It is not a fully offline app: the phone needs signal to submit. If the
+            venue is a dead zone, save the draft and send it from the corridor.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>How do we know the numbers are right?</summary>
+        <div class="a">
+          <p>Because nobody enters them. Every figure is computed from the transactions by one SQL
+            definition, which is why a department page and the close-out pack cannot disagree. The
+            arithmetic itself is pinned by a test fixture taken straight from the specification &mdash;
+            if the views ever stop implementing it, the build fails.</p>
+          <p>710 automated tests run on every change, and a separate sweep drives all 76 endpoints
+            against a live server to check that permissions, refusals and the money paths behave as
+            written.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Two people approve the same request at the same moment. What happens?</summary>
+        <div class="a">
+          <p>One succeeds and one is told the record changed while they were looking at it. The row is
+            locked for the length of the transaction, so the second approval cannot slip past the
+            first &mdash; and the same lock is what stops two allocation transfers both drawing on a
+            Reserve that only covers one.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Somebody leaves the team, or loses their phone.</summary>
+        <div class="a">
+          <p>Deactivate the account from Admin. It ends every signed-in session immediately, kills any
+            outstanding sign-in link, and removes them from every channel. Their history stays exactly
+            where it is &mdash; the claims they submitted, the approvals they made, the reasons they
+            wrote.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Nobody has accepted the Management invitation. Is that a problem?</summary>
+        <div class="a">
+          <p>Yes, and the app now says so rather than letting you find out. Approved claims pile up in
+            Committed and Spent never moves, because only Management can record a payment. The budget
+            screen shows the stalled amount with a link to re-send the invitation.</p>
+          <p class="caveat">The fix is to fill the seat, not to move the authority &mdash; loosening
+            that rule is the thing the whole design exists to avoid.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Can we hand something to the college finance office?</summary>
+        <div class="a">
+          <p>Yes. The close-out pack produces a fest summary, a statement per department with its five
+            numbers and every transaction behind them, the payment batches, and the vendor and income
+            ledgers. CSV and Excel for anyone who wants to work with the figures, and a print layout
+            that an HOD can sign.</p>
+          <p class="caveat">Excel carries amounts as real numbers with Indian grouping, so nothing has
+            to be retyped on the other side.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>What stops a fake or duplicated receipt?</summary>
+        <div class="a">
+          <p>The same file uploaded twice is caught by its hash. The same amount, date and merchant
+            claimed twice is flagged as a possible duplicate. Claims from one person clustering in a
+            short window are flagged as a possible split. A payee who is not the submitter, or a UPI
+            ID never seen before, is flagged too.</p>
+          <p>None of it blocks anything &mdash; it puts the claim in front of a person with the reason
+            written next to it, which is the only thing that actually catches fraud.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Can we use it again next year?</summary>
+        <div class="a">
+          <p>Yes. Every record belongs to a fest, and every query is scoped by the caller&rsquo;s fest
+            &mdash; no endpoint accepts a fest ID from the client. Next year&rsquo;s committee gets a
+            new fest, and this year&rsquo;s stays readable and unchanged for whoever audits it.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Where does the data live, and what does it cost?</summary>
+        <div class="a">
+          <p>A Postgres database and a file bucket for receipts, both on the free tiers of ordinary
+            hosting. Sign-in links and notifications go out over a transactional email service.
+            Running a fest on it costs nothing beyond a domain.</p>
+          <p class="caveat">The one thing to plan for is the receipt bucket, which grows with the
+            fest &mdash; a few thousand photographs, not a few million.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>What is deliberately not built?</summary>
+        <div class="a">
+          <p>Receipt OCR that reads the amount off a photograph, and the flag rules that depend on it.
+            Push and WhatsApp notifications for urgent tickets. A light theme for the app itself
+            &mdash; emails and printed exports are already light. And there is no offline mode.</p>
+          <p class="caveat">Saying what is missing is part of the demo. A tool that claims everything
+            is the one people stop believing.</p>
+        </div>
+      </details>
+
+    </div>
+  </section>
+
+</div>
