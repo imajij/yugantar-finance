@@ -88,7 +88,8 @@ From there everything is done in the app, in this order:
 | `pnpm db:seed` | Bootstrap the fest and its first administrator (idempotent; `--reset` starts over) |
 | `pnpm db:studio` | Drizzle Studio |
 | `pnpm env:check` | Which API keys are set, what they unlock, what is missing |
-| `pnpm smoke` | Drive every endpoint against a running server over HTTP, then tidy up |
+| `pnpm smoke` | Drive every endpoint against a running server over HTTP, then tidy up. `--keep` leaves the fest behind — it is the only realistic dataset there is |
+| `pnpm responsive` | Load every screen at five widths in a headless browser and fail on anything that scrolls sideways. Takes a path to check one |
 | `pnpm r2:check` | Round-trip the real R2 bucket: presign, upload, read back, delete |
 
 ## Architecture
@@ -272,6 +273,29 @@ somebody else's stays Finance's call.
 Unlike a rule's flag these are not deduplicated — two people noticing two different
 things about one record is the point — so the partial unique index that stops a
 re-running rule piling up duplicates is scoped to rule-raised flags.
+
+### Checking it stays responsive
+
+`pnpm responsive` loads every screen at 360, 390, 768, 1024 and 1440 in headless
+Chromium and measures whether the page itself scrolls sideways — which is the
+dominant cause of "the UI breaks on my phone" and is a fact rather than a matter of
+taste. It reports the widest offending element, so a failure names the thing to fix.
+
+Two details it took a wrong answer to get right. It compares against
+`documentElement.clientWidth`, not the window: a vertical scrollbar narrows the
+content box while `scrollWidth` stays put, which reads as a phantom few pixels of
+overflow on any page long enough to scroll. And it ignores anything inside a
+horizontal scroller — a Kanban board is *meant* to scroll — while still reporting a
+scroller whose content is far wider than a phone, because a table you have to swipe
+to read is legal and still useless. Buried controls are measured at the bottom of
+the page; mid-scroll, whatever sits under the fixed tab bar can be scrolled out of
+it.
+
+Run it against data. `pnpm db:seed` produces an empty fest, so every table renders
+its empty state and the sweep passes without testing anything —
+`pnpm smoke --keep` leaves behind a fest with departments, line items, claims at
+every stage, vendors, tickets and channels, and the sweep points itself at whichever
+fest has the most in it.
 
 ### The interface
 

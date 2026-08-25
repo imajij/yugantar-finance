@@ -78,45 +78,38 @@ export default async function VendorsPage() {
           a printer, a caterer. Add one before raising a payment request against them.
         </Empty>
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-text-muted">
-                <th className="px-4 py-3 font-medium">Vendor</th>
-                <th className="px-4 py-3 font-medium">Contact</th>
-                <th className="px-4 py-3 text-right font-medium">Contracted</th>
-                <th className="px-4 py-3 text-right font-medium">Paid</th>
-                <th className="px-4 py-3 text-right font-medium">Outstanding</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((v) => {
-                const e = byVendor.get(v.id);
-                const safe = redactVendor(user, v);
-                return (
-                  <tr key={v.id} style={{ borderTop: "1px solid var(--yg-surface-2)" }}>
-                    <td className="px-4 py-3">
-                      <Link href={`/vendors/${v.id}`} style={{ color: "var(--yg-pink)" }}>{safe.name}</Link>
-                      {safe.gstin && <p className="tnum text-xs text-text-muted">{safe.gstin}</p>}
-                    </td>
-                    <td className="px-4 py-3 text-text-soft">
-                      {safe.contactName ?? "—"}
-                      {safe.phone && <p className="tnum text-xs text-text-muted">{safe.phone}</p>}
-                    </td>
-                    <td className="px-4 py-3 text-right"><Amount paise={e?.contractedPaise ?? 0} /></td>
-                    <td className="px-4 py-3 text-right"><Amount paise={e?.paidPaise ?? 0} /></td>
-                    <td className="px-4 py-3 text-right">
-                      <Amount
-                        paise={e?.outstandingPaise ?? 0}
-                        className={e && e.outstandingPaise > 0 ? "text-yellow" : "text-text-muted"}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
+        <div className="flex flex-col gap-2.5">
+          {rows.map((v) => {
+            const e = byVendor.get(v.id);
+            const safe = redactVendor(user, v);
+            return (
+              <Link
+                key={v.id}
+                href={`/vendors/${v.id}`}
+                className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 hover:border-lime sm:flex-row sm:items-center sm:gap-4"
+                style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+              >
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="text-[14px]">{safe.name}</span>
+                  <span className="text-[12px] text-text-muted">
+                    {safe.contactName ?? "no contact"}
+                    {safe.phone && <span className="tnum"> · {safe.phone}</span>}
+                    {safe.gstin && <span className="tnum"> · {safe.gstin}</span>}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-4 sm:w-[300px] sm:shrink-0">
+                  <Figure label="Contracted" paise={e?.contractedPaise ?? 0} />
+                  <Figure label="Paid" paise={e?.paidPaise ?? 0} />
+                  <Figure
+                    label="Outstanding"
+                    paise={e?.outstandingPaise ?? 0}
+                    tone={e && e.outstandingPaise > 0 ? "var(--yg-yellow)" : undefined}
+                  />
+                </div>
+              </Link>
+            );
+          })}
+        </div>
       )}
 
       <h2 className="font-display mt-8 mb-3 text-lg">Payment requests</h2>
@@ -147,5 +140,17 @@ export default async function VendorsPage() {
         </div>
       )}
     </>
+  );
+}
+
+/** A labelled amount — the label is what a table head used to carry. */
+function Figure({ label, paise, tone }: { label: string; paise: number; tone?: string }) {
+  return (
+    <span className="flex flex-col gap-0.5 sm:text-right">
+      <span className="text-[11px] text-text-muted">{label}</span>
+      <span className="tnum text-[13.5px]" style={{ color: tone }}>
+        <Amount paise={paise} />
+      </span>
+    </span>
   );
 }

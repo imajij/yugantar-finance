@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { departments, lineItems, reimbursementRequests, users } from "@/db/schema";
 import { getSession } from "@/lib/session";
 import { canFestWide } from "@/lib/authz";
-import { Amount, buttonClass, buttonStyle, Card, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
+import { Amount, buttonClass, buttonStyle, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
 import { waitingOn } from "@/lib/services/reimbursements";
 
 export default async function RequestsPage() {
@@ -83,48 +83,46 @@ export default async function RequestsPage() {
           Finance approves it.
         </Empty>
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full min-w-[52rem] text-sm">
-            <thead>
-              <tr className="text-left text-xs text-text-muted" style={{ borderBottom: "1px solid var(--yg-surface-2)" }}>
-                <th className="px-4 py-3 font-medium">ID</th>
-                <th className="px-4 py-3 font-medium">What for</th>
-                {seesAll && <th className="px-4 py-3 font-medium">Submitter</th>}
-                <th className="px-4 py-3 text-right font-medium">Amount</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Waiting on</th>
-                <th className="px-4 py-3 font-medium">Age</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} style={{ borderBottom: "1px solid var(--yg-surface-2)" }}>
-                  <td className="tnum px-4 py-3">
-                    <Link href={`/requests/${r.id}`} className="hover:text-lime">{r.humanId}</Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="block">{r.description}</span>
-                    <span className="block text-xs text-text-muted">{r.department} · {r.lineItem}</span>
-                  </td>
-                  {seesAll && <td className="px-4 py-3 text-text-soft">{r.submitter}</td>}
-                  <td className="px-4 py-3 text-right"><Amount paise={r.amountPaise} /></td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <StateChip state={r.status} />
-                      {r.flagCount > 0 && (
-                        <FlagChip severity={r.highFlags > 0 ? "HIGH" : "MEDIUM"}>
-                          {r.flagCount} flag{r.flagCount === 1 ? "" : "s"}
-                        </FlagChip>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-text-muted">{waitingOn(r.status, r.submitterRole)}</td>
-                  <td className="px-4 py-3"><Age days={r.ageDays} status={r.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+        /*
+         * A list of rows, not a table. Seven columns is 870px of row, and this is
+         * the screen a Member opens on a phone to see whether their claim moved —
+         * the answer should not be behind a sideways swipe.
+         */
+        <div className="flex flex-col gap-2.5">
+          {rows.map((r) => (
+            <Link
+              key={r.id}
+              href={`/requests/${r.id}`}
+              className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 hover:border-lime sm:flex-row sm:items-center sm:gap-4"
+              style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+            >
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="tnum text-[11.5px] text-text-muted">{r.humanId}</span>
+                  <StateChip state={r.status} />
+                  {r.flagCount > 0 && (
+                    <FlagChip severity={r.highFlags > 0 ? "HIGH" : "MEDIUM"}>
+                      {r.flagCount} flag{r.flagCount === 1 ? "" : "s"}
+                    </FlagChip>
+                  )}
+                </div>
+                <span className="text-[14px]">{r.description}</span>
+                <span className="text-[12px] text-text-muted">
+                  {r.department} · {r.lineItem}
+                  {seesAll && ` · ${r.submitter}`}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-end sm:gap-1.5">
+                <span className="tnum text-[15px]"><Amount paise={r.amountPaise} /></span>
+                <span className="flex items-center gap-2 text-[12px] text-text-muted">
+                  {waitingOn(r.status, r.submitterRole)}
+                  <Age days={r.ageDays} status={r.status} />
+                </span>
+              </div>
+            </Link>
+          ))}
+        </div>
       )}
     </>
   );

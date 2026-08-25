@@ -128,14 +128,17 @@ function Line({
       className="flex items-baseline justify-between gap-3 py-2"
       style={{ borderBottom: "1px solid var(--yg-surface-2)" }}
     >
-      <span className="flex items-center gap-2.5">
+      <span className="flex min-w-0 items-center gap-2.5">
         <span className="size-2.5 shrink-0 rounded-[3px]" style={{ background: colour }} aria-hidden />
         <span className="text-[13px]" style={{ color: strong ? "var(--yg-text)" : "var(--yg-text-soft)" }}>
           {label}
         </span>
-        {note && <span className="text-[11.5px] text-text-muted">{note}</span>}
+        {note && <span className="hidden truncate text-[11.5px] text-text-muted sm:inline">{note}</span>}
       </span>
-      <span className="tnum text-[14px]" style={{ color: strong ? "var(--yg-text)" : "var(--yg-text-soft)" }}>
+      <span
+        className="tnum shrink-0 text-[13px] sm:text-[14px]"
+        style={{ color: strong ? "var(--yg-text)" : "var(--yg-text-soft)" }}
+      >
         {value}
       </span>
     </div>
@@ -158,15 +161,22 @@ export function AvailableHero({
 }) {
   return (
     <section
-      className="flex flex-col gap-[18px] rounded-[var(--r-shell)] p-6 sm:p-7"
+      className="flex min-w-0 flex-col gap-[18px] rounded-[var(--r-shell)] p-5 sm:p-7"
       style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
     >
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4 min-w-0">
         <div className="flex min-w-0 flex-col gap-2">
           <h2 className="meta-label">{label}</h2>
+          {/*
+            Fluid, not a breakpoint. A fest total is an eight-figure amount and
+            "₹4,98,97,500.00" is fifteen unbreakable tabular glyphs — at a fixed
+            34px that is 306px of number inside a 328px phone, and the whole page
+            scrolls sideways. `clamp` against the viewport makes the figure fit the
+            screen it is on rather than the screen it was designed on.
+          */}
           <p
-            className="tnum text-[34px] leading-none font-semibold sm:text-[44px]"
-            style={{ color: availableTone(totals) }}
+            className="tnum leading-none font-semibold"
+            style={{ color: availableTone(totals), fontSize: "clamp(26px, 7.5vw, 44px)" }}
           >
             {formatPaise(totals.availablePaise)}
           </p>
@@ -203,7 +213,10 @@ export function AvailableCard({
   const body = (
     <>
       <p className="meta-label">{label}</p>
-      <p className="tnum text-[26px] leading-none font-semibold" style={{ color: availableTone(totals) }}>
+      <p
+        className="tnum leading-none font-semibold"
+        style={{ color: availableTone(totals), fontSize: "clamp(20px, 5.5vw, 26px)" }}
+      >
         {formatPaise(totals.availablePaise)}
       </p>
       <DerivationBar totals={totals} height={8} />
@@ -245,9 +258,9 @@ export function DerivationLegend({ totals }: { totals: FiveNumbers }) {
 
 function Column({ colour, label, value }: { colour: string; label: string; value: number }) {
   return (
-    <div className="flex flex-col gap-1.5 pl-3" style={{ borderLeft: `3px solid ${colour}` }}>
+    <div className="flex min-w-0 flex-col gap-1.5 pl-3" style={{ borderLeft: `3px solid ${colour}` }}>
       <span className="text-[11.5px] text-text-muted">{label}</span>
-      <span className="tnum text-[15px]">{formatPaise(value)}</span>
+      <span className="tnum text-[13.5px] sm:text-[15px]">{formatPaise(value)}</span>
     </div>
   );
 }

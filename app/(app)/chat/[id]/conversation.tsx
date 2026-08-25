@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Eye, Hash, MessageSquare, Paperclip, Send, Trash2, X } from "lucide-react";
+import { ArrowLeft, Eye, Hash, MessageSquare, Paperclip, Send, Trash2, X } from "lucide-react";
 import { chipStyle, stateLabel } from "@/lib/state-chip";
 import { ConfirmWithReason } from "@/components/confirm";
 import { usePoll } from "../sidebar";
@@ -136,13 +136,18 @@ export function Conversation({
   const parent = thread ? messages.find((m) => m.id === thread.id) ?? null : null;
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="relative flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
         <header
           className="shrink-0 px-5 py-4"
           style={{ borderBottom: "1px solid var(--yg-surface-2)" }}
         >
           <div className="flex flex-wrap items-center gap-2">
+            {/* The only way back to the channel list on a phone: the sidebar is
+                `md:block`, so without this you land in one channel and stay there. */}
+            <Link href="/chat?list=1" className="tap -ml-2 shrink-0 text-text-muted md:hidden" aria-label="All channels">
+              <ArrowLeft size={18} aria-hidden />
+            </Link>
             {channel.kind === "DIRECT"
               ? <MessageSquare size={15} className="text-text-muted" aria-hidden />
               : <Hash size={15} className="text-text-muted" aria-hidden />}
@@ -455,8 +460,13 @@ function Thread({
 
   return (
     <aside
-      className="hidden w-96 shrink-0 flex-col lg:flex"
-      style={{ borderLeft: "1px solid var(--yg-surface-2)" }}
+      className={
+        // Below lg it is the whole pane rather than a column beside one — "Reply"
+        // opened a panel that was `hidden lg:flex`, so on a phone the button did
+        // nothing at all.
+        "absolute inset-0 z-10 flex flex-col lg:static lg:z-auto lg:w-96 lg:shrink-0"
+      }
+      style={{ background: "var(--yg-bg-app)", borderLeft: "1px solid var(--yg-surface-2)" }}
     >
       <header
         className="flex shrink-0 items-center justify-between px-3 py-3"

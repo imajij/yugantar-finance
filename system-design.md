@@ -375,6 +375,36 @@ design away by shortening labels.
 - **Segregation of duties as absence.** Do not turn missing controls into disabled
   ones.
 
+## 10b. Keeping it responsive
+
+`pnpm responsive` is the arbiter. It loads every screen at five widths in headless
+Chromium and fails on horizontal overflow, naming the widest offending element.
+
+What it caught after the redesign shipped, none of which was visible on a laptop:
+
+- **A fest-sized amount broke the hero.** `₹4,98,97,500.00` is fifteen unbreakable
+  tabular glyphs; at a fixed 34px that is 306px of number inside a 328px phone. The
+  figure is `clamp(26px, 7.5vw, 44px)` now — fluid rather than a breakpoint, because
+  the problem is the number's length and not the device.
+- **`/admin` overflowed by 266px on a phone.** Seven columns of controls per person.
+  Rebuilt as stacking cards, like everything else.
+- **Four tables you could only read by swiping** — `/requests` at 872px, `/audit` at
+  1068px, `/vendors`, `/income`. All now row cards where each figure carries the
+  label a column head used to.
+- **`/close-out` pushed past a tablet** because export pills were `shrink-0` beside a
+  label that could not shrink. They wrap now.
+- **Chat had no way to switch channels on a phone.** The sidebar is `md:block`, so
+  you landed in one channel and stayed there. `/chat?list=1` is the mobile list, and
+  the conversation header links back to it.
+- **"Reply" did nothing on a phone.** The thread panel was `hidden lg:flex`, so the
+  button opened a pane that was not rendered. It is a full overlay below `lg`.
+
+The two mistakes worth remembering, both in the tool rather than the app: measure
+against `documentElement.clientWidth` (a scrollbar narrows it while `scrollWidth`
+stays put, which looks like six pixels of overflow on every long page), and measure
+buried controls at the *bottom* of the page (mid-scroll, anything can be under the
+tab bar).
+
 ## 11. Still open
 
 The redesign is implemented. What it did not settle:
