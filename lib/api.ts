@@ -10,6 +10,7 @@ import { idempotencyKeys } from "@/db/schema";
 import { Forbidden } from "@/lib/authz";
 import { InvalidTransition, ValidationError } from "@/lib/state-machines/types";
 import { Unauthenticated, requireSession, type SessionUser } from "@/lib/session";
+import { enforce } from "@/lib/rate-limit";
 import { flushOutbox } from "@/lib/services/notifications";
 
 export type ErrorCode =
@@ -91,8 +92,45 @@ export interface Ctx<P = Record<string, string>> {
 }
 
 /**
+ * The largest body any endpoint here has a use for.
+ *
+ * Every payload is a form: a description, some ids, an amount. Files never come
+ * through the API — they go straight to storage on a presigned URL (20.2) — so
+ * nothing legitimate approaches this. Without a ceiling, one request can make the
+ * server parse as much JSON as somebody cares to send.
+ */
+const MAX_BODY_BYTES = 128 * 1024;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Route params that name a record must look like one.
+ *
+ * Every id in this app is a UUID, and Postgres rejects anything else with `invalid
+ * input syntax for type uuid` — which arrives as a 500. That is wrong twice: a
+ * malformed id is the caller's mistake, not the server's, and a 500 says a database
+ * error happened where "no such record" is both truer and quieter. It also means
+ * anyone can fill the error log by typing nonsense into a URL.
+ *
+ * Checked by convention — `id`, or anything ending in `Id` — which covers every
+ * dynamic segment in `app/api` (`id`, `attachmentId`, `userId`) and deliberately
+ * leaves `kind` alone, since that one is a name and its route validates it itself.
+ */
+function assertParamsWellFormed(params: Record<string, string> | undefined): void {
+  // A route with no dynamic segments is handed no params at all, not an empty object.
+  for (const [name, value] of Object.entries(params ?? {})) {
+    if (name !== "id" && !name.endsWith("Id")) continue;
+    if (!UUID.test(value)) throw notFound();
+  }
+}
+
+/**
  * Wraps a handler: resolves the session, awaits route params, maps errors.
  * `Idempotency-Key` is honoured when `idempotent` is set (18.2 rule 9).
+ *
+ * Writes are additionally rate limited per user. The limit is far above anything a
+ * person does by hand — it is there so that a loop, a stuck retry or a stolen session
+ * cannot grind through the database unchecked.
  */
 export function route<P extends Record<string, string> = Record<string, string>>(
   handler: (ctx: Ctx<P>) => Promise<Response | unknown>,
@@ -101,7 +139,11 @@ export function route<P extends Record<string, string> = Record<string, string>>
   return async (request: Request, context: { params: Promise<P> } = { params: Promise.resolve({} as P) }) => {
     try {
       const user = await requireSession();
-      const params = await context.params;
+      const params = (await context.params) ?? ({} as P);
+      assertParamsWellFormed(params);
+
+      const isWrite = request.method !== "GET" && request.method !== "HEAD";
+      if (isWrite) await enforce("write", user.id);
 
       const key = options.idempotent ? request.headers.get("Idempotency-Key") : null;
       if (key) {
@@ -155,11 +197,31 @@ async function storeIdempotent(key: string, userId: string, response: unknown): 
     .onConflictDoNothing();
 }
 
-/** Body parsing that produces the 20.1 VALIDATION_ERROR shape on failure. */
+/**
+ * Body parsing that produces the 20.1 VALIDATION_ERROR shape on failure.
+ *
+ * The size check reads the text first rather than trusting `Content-Length`, which a
+ * client sets and can lie about. Parsing is what costs; refusing before it is the
+ * point.
+ */
 export async function parseBody<T>(request: Request, schema: ZodType<T>): Promise<T> {
+  let text: string;
+  try {
+    text = await request.text();
+  } catch {
+    throw new ApiError("VALIDATION_ERROR", "Could not read the request body");
+  }
+
+  if (text.length > MAX_BODY_BYTES) {
+    throw new ApiError("VALIDATION_ERROR", `Request body must be under ${MAX_BODY_BYTES / 1024} KB`, {
+      received_bytes: text.length,
+      limit_bytes: MAX_BODY_BYTES,
+    });
+  }
+
   let json: unknown;
   try {
-    json = await request.json();
+    json = JSON.parse(text);
   } catch {
     throw new ApiError("VALIDATION_ERROR", "Body must be JSON");
   }

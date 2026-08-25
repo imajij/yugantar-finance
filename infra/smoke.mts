@@ -19,6 +19,13 @@ import { createHash, randomBytes } from "node:crypto";
 const BASE = (process.env.SMOKE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const FEST_SLUG = `smoke-${randomBytes(4).toString("hex")}`;
 
+/**
+ * A distinct caller per run. Sign-in links are rate limited per address *and* per
+ * caller, so a suite that always arrives as the same anonymous client throttles
+ * itself after a handful of runs — the limiter doing its job, reported as a failure.
+ */
+const CALLER_IP = `203.0.113.${Math.floor(Math.random() * 254) + 1}-${randomBytes(6).toString("hex")}`;
+
 const { db } = await import("../db/index.js");
 const { sql } = await import("drizzle-orm");
 const { dropFestBySlug } = await import("../lib/test-support.js");
@@ -87,6 +94,7 @@ async function hit(
     method,
     redirect: "manual",
     headers: {
+      "x-forwarded-for": CALLER_IP,
       ...(opts.body === undefined ? {} : { "content-type": "application/json" }),
       ...(as.cookie ? { cookie: as.cookie } : {}),
     },
@@ -201,6 +209,8 @@ await db.execute(sql`
 const expenseTypeId = (await one<{ id: string }>(sql`
   select id from expense_types where fest_id = ${fest.id} limit 1`)).id;
 
+let walkError: unknown = null;
+try {
 section("Auth");
 const finance = await signIn("finance", financeId);
 const management = await signIn("mgmt", mgmtId);
@@ -547,11 +557,16 @@ for (const [name, test] of [
   });
 }
 
+} catch (error) {
+  // A hard failure part-way through still leaves a useful report — often more
+  // useful than the stack trace, because it shows what worked up to that point.
+  walkError = error;
+}
+
 /* --------------------------------------------------------------------- report */
 
-await dropFestBySlug(db, FEST_SLUG);
-
-const width = Math.max(...rows.map((r) => r.path.length)) + 2;
+function report(): number {
+  const width = Math.max(...rows.map((r) => r.path.length)) + 2;
 let lastGroup = "";
 for (const row of rows) {
   if (row.group !== lastGroup) {
@@ -576,5 +591,18 @@ if (failed.length) {
   for (const f of failed) console.log(`  ${f.method} ${f.path} as ${f.as} → ${f.status}  ${f.note ?? ""}`);
 }
 console.log();
+return failed.length;
+}
 
-process.exit(failed.length ? 1 : 0);
+// Always tear the fest down, always print the report, and fail if either the walk
+// died or any call came back wrong.
+await dropFestBySlug(db, FEST_SLUG);
+const failures = report();
+
+if (walkError) {
+  console.error(`${R}The walk stopped early${O}`);
+  console.error(walkError instanceof Error ? `  ${walkError.message}` : walkError);
+  console.error();
+}
+
+process.exit(walkError || failures ? 1 : 0);

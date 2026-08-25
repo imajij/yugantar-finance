@@ -348,8 +348,26 @@ hosted scheduler — pointed at the same endpoints. Nothing in the app changes.
 
 ### Security
 
+Three sweeps back the permission model, and two of them discover what to test rather
+than being told, so a new endpoint is covered without anyone remembering to add it:
+
+| | |
+|---|---|
+| `tests/api/no-unauthenticated-access.test.ts` | Walks `app/api/v1`, calls every method of every route with no session, and requires a refusal. The five public endpoints are allowlisted **with a stated reason each**, and the list is checked against reality |
+| `tests/api/fest-isolation.test.ts` | Builds two complete fests and, as an *administrator* of one, reaches for the other's records by their real ids — 18.2 rule 10, tested with the strongest role, because a Member being refused proves little |
+| `tests/api/permissions.test.ts` | The 5.1 matrix: every role against every endpoint it must not use |
+
 - **CSP and headers** on every response from `proxy.ts`, including
   `frame-ancestors 'none'` and HSTS in production.
+- **Id-shaped route params must be UUIDs**, checked in the route wrapper. Postgres
+  answers a malformed id with `invalid input syntax for type uuid`, which arrives as a
+  500 — wrong twice, since it is the caller's mistake and "no such record" is truer.
+- **Request bodies are capped at 128 KB**, measured on the text rather than trusted
+  from `Content-Length`. Files never come through the API; they go straight to storage
+  on a presigned URL.
+- **Writes are rate limited per user** on top of the per-endpoint limits, high enough
+  that no honest use meets it and low enough that a loop or a stolen session cannot
+  grind through the database.
 - **Attachments** are only ever URL'd to someone who can see the parent record; an
   unbound upload belongs to its uploader alone. Both are tested.
 - **Rate limiting** on presigned uploads, exports, invitations and sign-in links, in
