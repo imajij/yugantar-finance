@@ -107,6 +107,7 @@ export default async function AdminPage() {
           departments={assignable}
           meId={user.id}
           canManageAdmins={can(user, "superAdmin.manage", { festId: user.festId })}
+          canRaiseConcerns={can(user, "flag.raise", { festId: user.festId, departmentId: user.departmentId })}
         />
       </Card>
 

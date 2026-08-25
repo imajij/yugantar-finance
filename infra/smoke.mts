@@ -19,6 +19,13 @@ import { createHash, randomBytes } from "node:crypto";
 const BASE = (process.env.SMOKE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const FEST_SLUG = `smoke-${randomBytes(4).toString("hex")}`;
 
+/**
+ * A distinct caller per run. Sign-in links are rate limited per address *and* per
+ * caller, so a suite that always arrives as the same anonymous client throttles
+ * itself after a handful of runs — the limiter doing its job, reported as a failure.
+ */
+const CALLER_IP = `203.0.113.${Math.floor(Math.random() * 254) + 1}-${randomBytes(6).toString("hex")}`;
+
 const { db } = await import("../db/index.js");
 const { sql } = await import("drizzle-orm");
 const { dropFestBySlug } = await import("../lib/test-support.js");
@@ -87,6 +94,7 @@ async function hit(
     method,
     redirect: "manual",
     headers: {
+      "x-forwarded-for": CALLER_IP,
       ...(opts.body === undefined ? {} : { "content-type": "application/json" }),
       ...(as.cookie ? { cookie: as.cookie } : {}),
     },
@@ -201,13 +209,18 @@ await db.execute(sql`
 const expenseTypeId = (await one<{ id: string }>(sql`
   select id from expense_types where fest_id = ${fest.id} limit 1`)).id;
 
+let walkError: unknown = null;
+try {
 section("Auth");
 const finance = await signIn("finance", financeId);
 const management = await signIn("mgmt", mgmtId);
 
 await hit("GET", "/api/v1/me", { as: anonymous, expect: 401 });
+// A fresh address each run: the limiter is five an hour *per address* as well as
+// per caller, so a fixed one turns the sixth run of the day into a false failure.
 await hit("POST", "/api/v1/auth/request-link", {
-  body: { email: "nobody@sst.scaler.com" }, expect: 200, label: "/api/v1/auth/request-link (unknown)",
+  body: { email: `nobody-${randomBytes(4).toString("hex")}@sst.scaler.com` },
+  expect: 200, label: "/api/v1/auth/request-link (unknown)",
 });
 
 /* ------------------------------------------------------------------- the walk */
@@ -232,6 +245,10 @@ const dept = await hit("POST", "/api/v1/departments", {
   as: finance, body: { name: "Tech", slug: `tech-${randomBytes(3).toString("hex")}`, allocated_paise: 0 },
 });
 const techId = required("department id", String(dept.json?.id ?? ""));
+// Tech's HOD drives several sections below — the allocation ask, the triage
+// decisions, and the refusals that prove where each boundary sits.
+const techHodEarlyId = await mkUser("Tech HOD", "DEPT_HOD", techId);
+const techHodEarly = await signIn("tech-hod", techHodEarlyId);
 await hit("GET", "/api/v1/departments", { as: finance });
 await hit("PATCH", `/api/v1/departments/${techId}`, {
   as: finance, body: { name: "Tech" }, label: "/api/v1/departments/{id}",
@@ -270,6 +287,69 @@ await hit("POST", `/api/v1/line-items/${lineItemId}/transitions`, {
   as: finance, body: { action: "MARK_REVIEWED" }, label: "/api/v1/line-items/{id}/transitions",
 });
 await hit("GET", "/api/v1/budget-review", { as: finance });
+
+section("Allocation requests");
+// The whole point of the feature is the boundary: the HOD drives the conversation,
+// Finance still moves the money.
+await hit("POST", "/api/v1/allocation-requests", {
+  as: finance, expect: 403,
+  body: { department_id: techId, requested_paise: 5000000000, reason: "Finance does not ask, they transfer" },
+  label: "/api/v1/allocation-requests (Finance has nothing to ask)",
+});
+const ask = await hit("POST", "/api/v1/allocation-requests", {
+  as: techHodEarly,
+  body: { department_id: techId, requested_paise: 5000000000, reason: "The sound quote came in higher than budgeted" },
+});
+const askId = String(ask.json?.id ?? "");
+await hit("GET", "/api/v1/allocation-requests?status=PENDING", { as: finance });
+if (askId) {
+  await hit("POST", `/api/v1/allocation-requests/${askId}/decision`, {
+    as: techHodEarly, expect: 403,
+    body: { decision: "APPROVE", note: "Approving my own ask" },
+    label: "/api/v1/allocation-requests/{id}/decision (own ask, 5.2)",
+  });
+  await hit("POST", `/api/v1/allocation-requests/${askId}/decision`, {
+    as: finance, body: { decision: "APPROVE", note: "Approved against the quote" },
+    label: "/api/v1/allocation-requests/{id}/decision",
+  });
+}
+// A second ask, withdrawn by the HOD who raised it.
+const second = await hit("POST", "/api/v1/allocation-requests", {
+  as: techHodEarly,
+  body: { department_id: techId, requested_paise: 6000000000, reason: "One more revision to the sound quote" },
+});
+if (second.json?.id) {
+  await hit("DELETE", `/api/v1/allocation-requests/${second.json.id}`, {
+    as: techHodEarly, label: "/api/v1/allocation-requests/{id} (withdraw)",
+  });
+}
+
+section("Hand-raised flags");
+// 8.3, on the two targets no rule can examine: a department and a person.
+for (const [type, id, label] of [
+  ["DEPARTMENT", techId, "department"],
+  ["USER", techHodEarlyId, "person"],
+  ["LINE_ITEM", lineItemId, "line item"],
+] as const) {
+  await hit("POST", "/api/v1/flags", {
+    as: finance,
+    body: { entity_type: type, entity_id: id, severity: "LOW", explanation: `Smoke concern about a ${label}` },
+    label: `/api/v1/flags (raise on a ${label})`,
+  });
+}
+const raised = await hit("GET", "/api/v1/flags?source=MANUAL", { as: finance });
+const raisedId = String((raised.json?.data as { id: string }[] | undefined)?.[0]?.id ?? "");
+if (raisedId) {
+  // Whoever raised it may take it back; clearing somebody else's stays Finance's call.
+  await hit("POST", `/api/v1/flags/${raisedId}/transitions`, {
+    as: techHodEarly, expect: 403, body: { action: "WITHDRAW", note: "Not mine to withdraw" },
+    label: "/api/v1/flags/{id}/transitions WITHDRAW (not the raiser)",
+  });
+  await hit("POST", `/api/v1/flags/${raisedId}/transitions`, {
+    as: finance, body: { action: "WITHDRAW", note: "Answered in the comments" },
+    label: "/api/v1/flags/{id}/transitions (WITHDRAW)",
+  });
+}
 
 section("Attachments");
 const presigned = await hit("POST", "/api/v1/attachments/presign", {
@@ -337,7 +417,7 @@ await hit("GET", `/api/v1/reimbursements/${claimId}`, { as: finance, label: "/ap
 
 // The claim is against Tech's budget, so Tech's HOD endorses it first (7.2) — and
 // then Management approves, because the submitter is the Finance HOD (5.2).
-const techHod = await signIn("tech-hod", await mkUser("Tech HOD", "DEPT_HOD", techId));
+const techHod = techHodEarly;
 await hit("POST", `/api/v1/reimbursements/${claimId}/transitions`, {
   as: techHod, body: { action: "ENDORSE" }, label: "/api/v1/reimbursements/{id}/transitions ENDORSE",
 });
@@ -367,6 +447,20 @@ await hit("GET", `/api/v1/vendors/${vendorId}`, { as: finance, label: "/api/v1/v
 await hit("PATCH", `/api/v1/vendors/${vendorId}`, {
   as: finance, body: { contact_name: "Ravi" }, label: "/api/v1/vendors/{id}",
 });
+// Retiring one is narrower than editing it: an HOD types the phone number, Finance
+// takes the counterparty out of circulation.
+await hit("DELETE", `/api/v1/vendors/${vendorId}`, {
+  as: techHodEarly, expect: 403, label: "/api/v1/vendors/{id} (HOD cannot retire)",
+});
+const spare = await hit("POST", "/api/v1/vendors", {
+  as: finance, body: { name: `Unused Supplier ${randomBytes(3).toString("hex")}` },
+  label: "/api/v1/vendors (one to retire)",
+});
+if (spare.json?.id) {
+  await hit("DELETE", `/api/v1/vendors/${spare.json.id}?reason=Never%20used`, {
+    as: finance, label: "/api/v1/vendors/{id} (retire)",
+  });
+}
 const vr = await hit("POST", "/api/v1/vendor-requests", {
   as: finance,
   body: {
@@ -449,6 +543,74 @@ await hit("POST", `/api/v1/tickets/${ticketId}/transitions`, {
   label: "/api/v1/tickets/{id}/transitions",
 });
 
+section("Board planning");
+const techMember = await signIn("tech-member", await mkUser("Tech Member", "MEMBER", techId));
+const label = await hit("POST", "/api/v1/ticket-labels", {
+  as: finance, body: { name: `Smoke ${Date.now()}`, color: "#d2fc3c" },
+});
+const labelId = String(label.json?.id ?? "");
+const project = await hit("POST", "/api/v1/projects", {
+  as: finance, body: { name: `Main stage ${Date.now()}` },
+});
+const projectId = String(project.json?.id ?? "");
+const cycle = await hit("POST", "/api/v1/cycles", {
+  as: finance, body: { name: `Setup week ${Date.now()}`, starts_on: "2026-11-20", ends_on: "2026-11-26" },
+});
+const cycleId = String(cycle.json?.id ?? "");
+
+await hit("GET", "/api/v1/ticket-labels", { as: finance });
+await hit("GET", "/api/v1/projects", { as: finance });
+await hit("GET", "/api/v1/cycles", { as: finance });
+
+// The board's own calls: a column, a slice, and a filter combination.
+await hit("GET", "/api/v1/tickets?view=all&category=TRIAGE,BACKLOG", {
+  as: finance, label: "/api/v1/tickets (by board column)",
+});
+await hit("GET", `/api/v1/tickets?view=all&project_id=${projectId}&cycle_id=${cycleId}`, {
+  as: finance, label: "/api/v1/tickets (project + cycle)",
+});
+await hit("GET", `/api/v1/tickets?view=subscribed&label_ids=${labelId}&unassigned=1`, {
+  as: finance, label: "/api/v1/tickets (subscribed + label)",
+});
+
+// Filing a ticket from the board is a PATCH, the same call the inline menus make.
+const filed = await hit("POST", "/api/v1/tickets", {
+  as: finance,
+  body: {
+    title: "Cabling for the main stage rig",
+    description: "Runs from the DB to stage left; we have the reels.",
+    target_department_id: techId, due_at: "2026-11-27T16:00:00+05:30",
+  },
+});
+const filedId = String(filed.json?.id ?? "");
+await hit("PATCH", `/api/v1/tickets/${filedId}`, {
+  as: finance,
+  body: { label_ids: [labelId], project_id: projectId, cycle_id: cycleId },
+  label: "/api/v1/tickets/{id} (file under label, project, cycle)",
+});
+// Backlog is the triage answer the board's third column depends on — and it is a
+// triage answer, so it belongs to the department the ticket was sent to.
+await hit("POST", `/api/v1/tickets/${filedId}/transitions`, {
+  as: finance, body: { action: "BACKLOG" }, expect: 403,
+  label: "/api/v1/tickets/{id}/transitions BACKLOG (not the target dept)",
+});
+await hit("POST", `/api/v1/tickets/${filedId}/transitions`, {
+  as: techHod, body: { action: "BACKLOG" },
+  label: "/api/v1/tickets/{id}/transitions (BACKLOG)",
+});
+await hit("POST", `/api/v1/tickets/${filedId}/transitions`, {
+  as: techHod, body: { action: "SCHEDULE" },
+  label: "/api/v1/tickets/{id}/transitions (SCHEDULE)",
+});
+// A Member shapes no vocabulary — that is what keeps labels shared rather than sprawling.
+await hit("POST", "/api/v1/ticket-labels", {
+  as: techMember, body: { name: "sound" }, expect: 403,
+  label: "/api/v1/ticket-labels (member refused)",
+});
+await hit("DELETE", `/api/v1/cycles/${cycleId}`, { as: finance, label: "/api/v1/cycles/{id}" });
+await hit("DELETE", `/api/v1/projects/${projectId}`, { as: finance, label: "/api/v1/projects/{id}" });
+await hit("DELETE", `/api/v1/ticket-labels/${labelId}`, { as: finance, label: "/api/v1/ticket-labels/{id}" });
+
 section("Comments, flags, audit, notifications");
 await hit("POST", "/api/v1/comments", {
   as: finance, body: { entity_type: "REIMBURSEMENT", entity_id: claimId, body: "Checked against the quote." },
@@ -517,12 +679,31 @@ await hit("POST", "/api/v1/cron/ticket-sla", { as: anonymous, expect: 403, label
 
 section("Pages");
 await hit("GET", "/sign-in", { as: finance, expect: 307, label: "/sign-in (already signed in)" });
-for (const page of ["/dashboard", "/requests", "/tickets", "/budget", "/budget/review",
-                    "/vendors", "/income", "/queues", "/flags", "/notifications", "/close-out",
-                    "/audit", "/admin"]) {
+for (const page of ["/dashboard", "/requests", "/tickets", "/tickets/new", "/tickets/planning",
+                    "/budget", "/budget/review", "/vendors", "/income", "/queues", "/flags",
+                    "/notifications", "/close-out", "/audit", "/admin"]) {
   await hit("GET", page, { as: finance, expect: 200 });
 }
 await hit("GET", "/dashboard", { as: anonymous, expect: [307, 302], label: "/dashboard (anonymous)" });
+
+// A 200 only proves the route did not throw. These pages are the ones whose whole
+// job is a structure — the board's columns, the vocabulary screen's three panels —
+// so the sweep looks for that structure rather than trusting the status code.
+for (const [path, must, label] of [
+  // `scope=all` because an empty view renders the "nothing here" state rather than
+  // six empty columns — Finance's own inbox has nothing addressed to it.
+  ["/tickets?scope=all", ["Triage", "Backlog", "Todo", "In Progress"], "board columns"],
+  ["/tickets/planning", ["Labels", "Projects", "Cycles"], "planning panels"],
+  ["/budget", ["Reserve", "Allocated"], "budget totals"],
+] as const) {
+  const page = await hit("GET", path, { as: finance, label: `${path} (${label})` });
+  const missing = must.filter((needle) => !page.text.includes(needle));
+  rows.push({
+    group, method: "GET", path: `${path} renders ${label}`, as: "finance",
+    status: page.status, expected: "content", ok: missing.length === 0,
+    note: missing.length ? `missing: ${missing.join(", ")}` : must.join(", "),
+  });
+}
 
 // Oversight is the administrator flag's, not a role's. The target department's HOD
 // is as senior as anyone gets without it, and must not reach either.
@@ -547,11 +728,16 @@ for (const [name, test] of [
   });
 }
 
+} catch (error) {
+  // A hard failure part-way through still leaves a useful report — often more
+  // useful than the stack trace, because it shows what worked up to that point.
+  walkError = error;
+}
+
 /* --------------------------------------------------------------------- report */
 
-await dropFestBySlug(db, FEST_SLUG);
-
-const width = Math.max(...rows.map((r) => r.path.length)) + 2;
+function report(): number {
+  const width = Math.max(...rows.map((r) => r.path.length)) + 2;
 let lastGroup = "";
 for (const row of rows) {
   if (row.group !== lastGroup) {
@@ -576,5 +762,18 @@ if (failed.length) {
   for (const f of failed) console.log(`  ${f.method} ${f.path} as ${f.as} → ${f.status}  ${f.note ?? ""}`);
 }
 console.log();
+return failed.length;
+}
 
-process.exit(failed.length ? 1 : 0);
+// Always tear the fest down, always print the report, and fail if either the walk
+// died or any call came back wrong.
+await dropFestBySlug(db, FEST_SLUG);
+const failures = report();
+
+if (walkError) {
+  console.error(`${R}The walk stopped early${O}`);
+  console.error(walkError instanceof Error ? `  ${walkError.message}` : walkError);
+  console.error();
+}
+
+process.exit(walkError || failures ? 1 : 0);

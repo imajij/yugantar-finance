@@ -5,11 +5,32 @@ import { useState } from "react";
 
 const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "URGENT"] as const;
 
-/** PRD 9.5 — one screen, one ask. Title, who, what by when. */
-export function TicketForm({ departments }: { departments: { id: string; name: string }[] }) {
+export interface Option { id: string; name: string }
+export interface LabelOption extends Option { color: string }
+
+/**
+ * PRD 9.5 — one screen, one ask. Title, who, what by when.
+ *
+ * The planning fields sit under a disclosure rather than in the main flow. Most
+ * tickets are raised by somebody in a hurry who needs a van at four o'clock, and
+ * making them scroll past a project picker to reach the due date would cost more
+ * than the filing is worth. Anything skipped here can be set from the board later.
+ */
+export function TicketForm({
+  departments, labels, projects, cycles, parents,
+}: {
+  departments: Option[];
+  labels: LabelOption[];
+  projects: Option[];
+  cycles: Option[];
+  /** Tickets that could be this one's parent — top-level, still open. */
+  parents: { id: string; humanId: string; title: string }[];
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [chosenLabels, setChosenLabels] = useState<string[]>([]);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -29,6 +50,10 @@ export function TicketForm({ departments }: { departments: { id: string; name: s
         priority: f.get("priority"),
         location: String(f.get("location") ?? "").trim() || null,
         estimated_cost_paise: cost ? Math.round(Number(cost) * 100) : null,
+        label_ids: chosenLabels.length ? chosenLabels : undefined,
+        project_id: String(f.get("project_id") ?? "") || null,
+        cycle_id: String(f.get("cycle_id") ?? "") || null,
+        parent_id: String(f.get("parent_id") ?? "") || null,
       }),
     });
     const json = await res.json().catch(() => null);
@@ -79,6 +104,71 @@ export function TicketForm({ departments }: { departments: { id: string; name: s
         <Field label="Estimated cost (₹)" hint="Optional — for visibility, not a budget hold">
           <input name="estimated_cost" type="number" step="0.01" min="0" className={INPUT} />
         </Field>
+      </div>
+
+      <div>
+        <button
+          type="button"
+          onClick={() => setPlanning((v) => !v)}
+          className="text-xs text-text-muted underline underline-offset-2"
+        >
+          {planning ? "Hide" : "Add"} labels, project, cycle or a parent ticket
+        </button>
+
+        {planning && (
+          <div className="mt-3 space-y-4 rounded-xl p-3" style={{ border: "1px solid var(--yg-surface-2)" }}>
+            {labels.length > 0 && (
+              <div>
+                <span className="text-sm text-text-soft">Labels</span>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {labels.map((l) => {
+                    const on = chosenLabels.includes(l.id);
+                    return (
+                      <button
+                        key={l.id}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setChosenLabels(
+                          on ? chosenLabels.filter((x) => x !== l.id) : [...chosenLabels, l.id],
+                        )}
+                        className="rounded-full px-2.5 py-1 text-xs"
+                        style={on
+                          ? { background: `${l.color}22`, color: l.color, border: `1px solid ${l.color}` }
+                          : { border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-muted)" }}
+                      >
+                        {l.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Project" hint="Optional">
+                <select name="project_id" defaultValue="" className={INPUT}>
+                  <option value="">No project</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Cycle" hint="Optional">
+                <select name="cycle_id" defaultValue="" className={INPUT}>
+                  <option value="">No cycle</option>
+                  {cycles.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </Field>
+            </div>
+
+            <Field label="Part of" hint="Optional — makes this a sub-ticket. One level only.">
+              <select name="parent_id" defaultValue="" className={INPUT}>
+                <option value="">Not a sub-ticket</option>
+                {parents.map((p) => (
+                  <option key={p.id} value={p.id}>{p.humanId} — {p.title}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
       </div>
 
       <button

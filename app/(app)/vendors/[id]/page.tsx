@@ -7,6 +7,7 @@ import { getSession } from "@/lib/session";
 import { can } from "@/lib/authz";
 import { redactVendor, vendorExposure } from "@/lib/services/vendors";
 import { Amount, Card, Empty, PageTitle, StateChip } from "@/components/ui";
+import { VendorAdmin } from "./edit";
 
 export default async function VendorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -63,6 +64,25 @@ export default async function VendorPage({ params }: { params: Promise<{ id: str
           </p>
         )}
         {vendor.notes && <p className="mt-3 text-sm text-text-soft">{vendor.notes}</p>}
+
+        <VendorAdmin
+          vendor={{
+            id: vendor.id,
+            name: vendor.name,
+            contactName: vendor.contactName,
+            phone: vendor.phone,
+            email: vendor.email,
+            gstin: vendor.gstin,
+            upiId: vendor.upiId,
+            bankAccountName: vendor.bankAccountName,
+            bankAccountNumber: vendor.bankAccountNumber,
+            bankIfsc: vendor.bankIfsc,
+            notes: vendor.notes,
+          }}
+          canEdit={can(user, "vendor.manage", { festId: user.festId, departmentId: user.departmentId })}
+          canEditBank={seesBank}
+          canDelete={can(user, "vendor.delete", { festId: user.festId })}
+        />
       </Card>
 
       <h2 className="font-display mt-8 mb-3 text-lg">Payment requests</h2>

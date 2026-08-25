@@ -113,6 +113,14 @@ export async function updateUser(
     & { status?: "ACTIVE" | "DISABLED" },
 ) {
   assertCan(actor, "user.manage", { festId: actor.festId });
+
+  // Existence in *this* fest is settled first. Checking the seat first would answer
+  // "this fest already has a finance hod" to somebody holding another fest's user id —
+  // a refusal, but one that describes our fest to an outsider.
+  const [target] = await db.select({ id: users.id }).from(users)
+    .where(and(eq(users.id, id), eq(users.festId, actor.festId))).limit(1);
+  if (!target) throw notFound("User");
+
   if (input.role) await assertSeatFree(actor.festId, input.role, id);
 
   const updated = await db.transaction(async (tx) => {
@@ -144,6 +152,12 @@ export async function updateUser(
           "This is the only administrator. Appoint another before removing this one.",
         );
       }
+    }
+
+    if (input.departmentId && input.departmentId !== before.departmentId) {
+      const [dept] = await tx.select({ id: departments.id }).from(departments)
+        .where(and(eq(departments.id, input.departmentId), eq(departments.festId, actor.festId))).limit(1);
+      if (!dept) throw notFound("Department");
     }
 
     const [after] = await tx.update(users).set({ ...input, updatedAt: new Date() })

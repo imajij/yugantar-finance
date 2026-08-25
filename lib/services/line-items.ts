@@ -9,7 +9,7 @@
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { attachments, departments, lineItems } from "@/db/schema";
+import { attachments, departments, expenseTypes, lineItems } from "@/db/schema";
 import { assertCan, can, type Actor } from "@/lib/authz";
 import { ApiError, notFound, overAllocation } from "@/lib/api";
 import { assertLineItemTransition, type LineItemAction } from "@/lib/state-machines/line-item";
@@ -20,16 +20,26 @@ import { recordAudit, snapshot } from "./audit";
 
 const AUDITED = ["name", "description", "plannedPaise", "status", "defaultExpenseTypeId", "reviewedAt"] as const;
 
-/** Locks the department row so two concurrent creates cannot both fit under the cap. */
+/**
+ * Locks the department row so two concurrent creates cannot both fit under the cap —
+ * and confirms the department is this fest's.
+ *
+ * The fest check lives here rather than at each call site because this is where the
+ * department is already loaded, and because `can()` cannot do it: a Finance HOD is
+ * permitted `lineItem.create` for any department, so a department id from another
+ * fest passed the permission check and produced a line item belonging to fest A
+ * charged against fest B's allocation. A UUID is not a secret (18.2 rule 10), so an
+ * id from a URL or an export was enough.
+ */
 async function assertFitsAllocation(
-  tx: Tx, departmentId: string, plannedPaise: number, excludeLineItemId?: string,
+  tx: Tx, festId: string, departmentId: string, plannedPaise: number, excludeLineItemId?: string,
 ): Promise<void> {
   const [dept] = await tx
-    .select({ allocatedPaise: departments.allocatedPaise, name: departments.name })
+    .select({ allocatedPaise: departments.allocatedPaise, name: departments.name, festId: departments.festId })
     .from(departments)
     .where(eq(departments.id, departmentId))
     .for("update");
-  if (!dept) throw notFound("Department");
+  if (!dept || dept.festId !== festId) throw notFound("Department");
 
   const [{ planned }] = (await tx.execute<{ planned: string }>(sql`
     select coalesce(sum(planned_paise), 0) as planned
@@ -63,7 +73,8 @@ export async function createLineItem(actor: Actor, input: CreateLineItemInput) {
   assertCan(actor, "lineItem.create", { festId: actor.festId, departmentId: input.departmentId });
 
   return db.transaction(async (tx) => {
-    await assertFitsAllocation(tx, input.departmentId, input.plannedPaise);
+    await assertFitsAllocation(tx, actor.festId, input.departmentId, input.plannedPaise);
+    await assertExpenseTypeBelongsToFest(tx, actor.festId, input.defaultExpenseTypeId);
 
     const [row] = await tx.insert(lineItems).values({
       festId: actor.festId,
@@ -98,9 +109,10 @@ export interface UpdateLineItemInput {
 export async function updateLineItem(actor: Actor, id: string, input: UpdateLineItemInput) {
   return db.transaction(async (tx) => {
     const before = await loadForWrite(tx, actor, id, "lineItem.edit");
+    await assertExpenseTypeBelongsToFest(tx, actor.festId, input.defaultExpenseTypeId);
 
     if (input.plannedPaise !== undefined && input.plannedPaise !== before.plannedPaise) {
-      await assertFitsAllocation(tx, before.departmentId, input.plannedPaise, id);
+      await assertFitsAllocation(tx, actor.festId, before.departmentId, input.plannedPaise, id);
       // 7.5 — a line item may not shrink below money already committed or spent against it.
       const totals = await lineItemTotals(id, tx);
       const floor = (totals?.committedPaise ?? 0) + (totals?.spentPaise ?? 0);
@@ -213,6 +225,21 @@ async function bindAttachments(tx: Tx, actor: Actor, lineItemId: string, attachm
       throw new ApiError("VALIDATION_ERROR", `Attachment ${attachmentId} is not available to bind`);
     }
   }
+}
+
+/**
+ * An expense type from another fest would put that fest's label on this fest's
+ * spending, and show up in exports. Same class of bug as the department: a UUID from
+ * anywhere passed straight into a foreign key.
+ */
+async function assertExpenseTypeBelongsToFest(
+  tx: Tx, festId: string, expenseTypeId: string | null | undefined,
+): Promise<void> {
+  if (!expenseTypeId) return;
+  const [row] = await tx.select({ id: expenseTypes.id }).from(expenseTypes)
+    .where(and(eq(expenseTypes.id, expenseTypeId), eq(expenseTypes.festId, festId)))
+    .limit(1);
+  if (!row) throw notFound("Expense type");
 }
 
 async function loadForWrite(

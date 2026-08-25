@@ -7,6 +7,7 @@ import { can, satisfiesActorConstraints } from "@/lib/authz";
 import { VENDOR_TRANSITIONS } from "@/lib/state-machines/vendor";
 import { signedDownloadUrl } from "@/lib/storage";
 import { Amount, Card, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
+import { RaiseConcern } from "@/components/raise-flag";
 import { TransitionActions } from "@/components/transitions";
 import { Timeline } from "@/components/timeline";
 import { CommentThread } from "@/components/comments";
@@ -55,7 +56,18 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
 
   return (
     <div className="max-w-3xl">
-      <PageTitle action={<StateChip state={r.status} />}>
+      <PageTitle
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <RaiseConcern
+              entityType="VENDOR_REQUEST"
+              entityId={r.id}
+              allowed={can(user, "flag.raise", { festId: user.festId, departmentId: user.departmentId })}
+            />
+            <StateChip state={r.status} />
+          </div>
+        }
+      >
         <span className="tnum">{r.humanId}</span>
       </PageTitle>
 

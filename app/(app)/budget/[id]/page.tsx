@@ -3,12 +3,16 @@ import { notFound, redirect } from "next/navigation";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { AlertTriangle, CheckCircle2, FileText, Link2 } from "lucide-react";
 import { db } from "@/db";
-import { attachments, departments, fests, lineItems } from "@/db/schema";
+import { attachments, departments, expenseTypes, fests, lineItems } from "@/db/schema";
 import { getSession } from "@/lib/session";
 import { can } from "@/lib/authz";
 import { departmentTotals, lineItemTotalsForDepartment } from "@/lib/queries/budget";
 import { formatPaise, utilizationPct } from "@/lib/money";
 import { Amount, Card, Empty, PageTitle, StateChip, StatCard, UtilizationBar } from "@/components/ui";
+import { LineItemActions, NewLineItem } from "./line-items";
+import { RaiseConcern } from "@/components/raise-flag";
+import { AskForBudget } from "../allocation-request";
+import { pendingFor } from "@/lib/services/allocations";
 
 interface Settings { line_item_doc_threshold_paise?: number }
 
@@ -42,11 +46,34 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
     : [];
 
   const editable = can(user, "lineItem.edit", { festId: user.festId, departmentId: dept.id });
+  const creatable = can(user, "lineItem.create", { festId: user.festId, departmentId: dept.id });
   const buffer = (totals?.allocatedPaise ?? 0) - (totals?.plannedPaise ?? 0);
+
+  // An HOD drives their own budget's size by asking; only Finance and
+  // administrators can actually move it (see `allocation-request.tsx`).
+  const canAsk = can(user, "allocationRequest.create", { festId: user.festId, departmentId: dept.id });
+  const ask = canAsk ? await pendingFor(user, dept.id) : null;
+
+  const types = creatable || editable
+    ? await db.select({ id: expenseTypes.id, name: expenseTypes.name }).from(expenseTypes)
+        .where(and(eq(expenseTypes.festId, user.festId), eq(expenseTypes.isActive, true)))
+        .orderBy(asc(expenseTypes.sortOrder), asc(expenseTypes.name))
+    : [];
 
   return (
     <>
-      <PageTitle>{dept.name}</PageTitle>
+      <PageTitle
+        action={
+          <RaiseConcern
+            entityType="DEPARTMENT"
+            entityId={dept.id}
+            label={`Raise a concern about ${dept.name}`}
+            allowed={can(user, "flag.raise", { festId: user.festId, departmentId: user.departmentId })}
+          />
+        }
+      >
+        {dept.name}
+      </PageTitle>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard label="Allocated" paise={totals?.allocatedPaise ?? 0} />
@@ -56,18 +83,45 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
         <StatCard label="Available" paise={totals?.availablePaise ?? 0} />
       </div>
 
+      {canAsk && (
+        <div className="mt-4">
+          <AskForBudget
+            departmentId={dept.id}
+            departmentName={dept.name}
+            allocatedPaise={totals?.allocatedPaise ?? 0}
+            pending={ask && {
+              id: ask.id,
+              requestedPaise: ask.requestedPaise,
+              reason: ask.reason,
+              createdAt: ask.createdAt.toISOString(),
+            }}
+          />
+        </div>
+      )}
+
       <p className="mt-3 text-sm text-text-muted">
         Planned across line items <Amount paise={totals?.plannedPaise ?? 0} />
         {" · "}unplanned buffer <Amount paise={buffer} />
         {" · "}utilization {utilizationPct(totals?.committedPaise ?? 0, totals?.spentPaise ?? 0, totals?.allocatedPaise ?? 0).toFixed(0)}%
       </p>
 
-      <h2 className="font-display mt-8 mb-3 text-lg">Line items</h2>
+      <div className="mt-8 mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-display text-lg">Line items</h2>
+        {creatable && (
+          <NewLineItem
+            departmentId={dept.id}
+            expenseTypes={types}
+            availableToPlanPaise={buffer}
+          />
+        )}
+      </div>
 
       {items.length === 0 ? (
         <Empty>
           No line items yet.{" "}
-          {editable ? "Break the allocation down so requests have somewhere to attach." : "The department HOD has not broken the allocation down yet."}
+          {creatable
+            ? "Break the allocation down so requests have somewhere to attach."
+            : "The department HOD has not broken the allocation down yet."}
         </Empty>
       ) : (
         <Card className="overflow-x-auto p-0">
@@ -82,6 +136,7 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
                 <th className="px-4 py-3 text-right font-medium">Spent</th>
                 <th className="px-4 py-3 text-right font-medium">Available</th>
                 <th className="px-4 py-3 font-medium">Used</th>
+                {editable && <th className="px-4 py-3 font-medium"><span className="sr-only">Actions</span></th>}
               </tr>
             </thead>
             <tbody>
@@ -127,6 +182,19 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
                     <td className="px-4 py-3">
                       <UtilizationBar pct={utilizationPct(t?.committedPaise ?? 0, t?.spentPaise ?? 0, i.plannedPaise)} />
                     </td>
+                    {editable && (
+                      <td className="px-4 py-3">
+                        <LineItemActions
+                          item={{
+                            id: i.id, name: i.name, description: i.description,
+                            plannedPaise: i.plannedPaise,
+                            defaultExpenseTypeId: i.defaultExpenseTypeId,
+                            status: i.status,
+                          }}
+                          expenseTypes={types}
+                        />
+                      </td>
+                    )}
                   </tr>
                 );
               })}

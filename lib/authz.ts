@@ -47,20 +47,21 @@ export type Action =
   | "reimbursement.view" | "vendor.view" | "vendorRequest.view"
   | "vendor.bankDetails.view"
   | "income.view" | "ticket.view" | "flag.view" | "audit.view" | "export.run"
-  | "closeOut.view" | "superAdmin.manage"
+  | "closeOut.view" | "superAdmin.manage" | "allocationRequest.view"
   // writes — budget
   | "fest.manage" | "department.manage" | "budget.transfer"
+  | "allocationRequest.create" | "allocationRequest.decide"
   | "lineItem.create" | "lineItem.edit" | "lineItem.close" | "lineItem.markReviewed"
   | "lineItem.document.manage"
   // writes — money
   | "reimbursement.create" | "reimbursement.edit" | "reimbursement.endorse"
   | "reimbursement.approve" | "reimbursement.recordPayment" | "reimbursement.hold"
-  | "vendor.manage" | "vendorRequest.create" | "vendorRequest.edit"
+  | "vendor.manage" | "vendor.delete" | "vendorRequest.create" | "vendorRequest.edit"
   | "vendorRequest.approve" | "vendorRequest.confirmDelivery" | "vendorRequest.recordPayment"
   | "income.manage"
   // writes — everything else
-  | "ticket.create" | "ticket.triage" | "ticket.work" | "ticket.close"
-  | "comment.create" | "flag.resolve" | "user.manage" | "expenseType.manage";
+  | "ticket.create" | "ticket.triage" | "ticket.work" | "ticket.close" | "ticket.plan"
+  | "comment.create" | "flag.resolve" | "flag.raise" | "user.manage" | "expenseType.manage";
 
 const isFinance = (a: Actor) => a.role === "FINANCE_HOD";
 const isSuperAdmin = (a: Actor) => a.isSuperAdmin === true;
@@ -114,6 +115,11 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
     case "budgetReview.view":
       return finance;
 
+    case "allocationRequest.view":
+      // The department that asked sees its own ask; Finance and administrators see
+      // the queue they have to answer.
+      return finance || management || superAdmin || own;
+
     case "reimbursement.view":
       return finance || management || (hod && own) || resource.submitterId === actor.id;
 
@@ -157,6 +163,18 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
       return finance || management || superAdmin || (hod && own);
 
     /* --------------------------------------------------------------- budget */
+    case "allocationRequest.create":
+      // An HOD asks for their own department's allocation and nobody else's. The ask
+      // is not the money: approving it is a `budget.transfer`, which stays with
+      // Finance and administrators, so 5.2's segregation is untouched — a department
+      // still cannot hand itself a rupee.
+      return hod && own;
+
+    case "allocationRequest.decide":
+      // Whoever may move an allocation may answer a request for one. Same people as
+      // `budget.transfer` on purpose: the approval *performs* the transfer.
+      return finance || superAdmin;
+
     case "budget.transfer":
       // Allocating a department's budget. Finance does it as the money's custodian;
       // an administrator because they own the fest's shape. Both leave the same audit
@@ -176,7 +194,10 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
     case "lineItem.edit":
     case "lineItem.close":
     case "lineItem.document.manage":
-      return finance || (hod && own);
+      // An administrator breaks down any department's allocation, the same way they
+      // read any department's numbers. The department cap still binds them — it is
+      // enforced under a row lock in the service, not by who they are.
+      return finance || superAdmin || (hod && own);
 
     /* ---------------------------------------------------------------- money */
     case "reimbursement.create":
@@ -206,6 +227,12 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
 
     case "vendor.manage":
       return finance || hod;
+
+    case "vendor.delete":
+      // Narrower than editing on purpose. A vendor carries the payment trail for
+      // every request raised against it, so retiring one is the custodian's call —
+      // and the service still refuses while any request is live.
+      return finance || superAdmin;
 
     case "vendorRequest.create":
       // An HOD raises vendor requests against their own department's line items only.
@@ -240,6 +267,12 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
         ((finance || hod) && resource.targetDepartmentId === actor.departmentId)
       );
 
+    case "ticket.plan":
+      // Labels, projects and cycles are how a board is sliced, not who may spend.
+      // Anyone who runs work — an HOD, Finance, Management, an administrator —
+      // shapes them; a Member uses them.
+      return finance || management || superAdmin || hod;
+
     case "ticket.close":
       return (
         resource.requesterId === actor.id ||
@@ -248,6 +281,13 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
       );
 
     /* ------------------------------------------------------------- comments */
+    case "flag.raise":
+      // Raising a concern by hand (8.3). Deliberately wider than `flag.resolve`:
+      // the person who notices something is rarely the person who clears it, and an
+      // HOD watching their own department is exactly who notices first. What may be
+      // flagged is decided by whether the caller can see it, in the service.
+      return finance || management || superAdmin || hod;
+
     case "comment.create":
       // Anyone who can see the entity may comment on it (7.6). Callers pass the
       // entity's own view action through `canComment` below.

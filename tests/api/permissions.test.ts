@@ -135,14 +135,15 @@ const CASES: Case[] = [
       params: { id: f.departments.logistics },
       body: { name: `Item ${crypto.randomUUID().slice(0, 6)}`, planned_paise: 1000 },
     }),
-    allow: ["otherHod", "finance"],
+    // The administrator breaks down any department's allocation; the cap still binds.
+    allow: ["otherHod", "finance", "superAdmin"],
   },
   {
     name: "PATCH /line-items/{id} — another department's",
     load: () => import("@/app/api/v1/line-items/[id]/route") as Promise<Record<string, Handler>>,
     method: "PATCH",
     options: (f) => ({ params: { id: f.otherLineItemId }, body: { name: "Chairs" } }),
-    allow: ["otherHod", "finance"],
+    allow: ["otherHod", "finance", "superAdmin"],
   },
   {
     name: "POST /line-items/{id}/documents — another department's",
@@ -152,7 +153,7 @@ const CASES: Case[] = [
       params: { id: f.otherLineItemId },
       body: { kind: "LINK", url: "https://example.com/quote", label: "A quote" },
     }),
-    allow: ["otherHod", "finance"],
+    allow: ["otherHod", "finance", "superAdmin"],
   },
   {
     name: "GET /budget-review",

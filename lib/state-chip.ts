@@ -5,7 +5,7 @@
 export type StateTone = "waiting" | "moving" | "decided" | "done" | "bad" | "stuck";
 
 const TONES: Record<StateTone, readonly string[]> = {
-  waiting: ["DRAFT", "SUBMITTED", "HOD_ENDORSED", "OPEN", "NEEDS_INFO", "PLEDGED", "PENDING"],
+  waiting: ["DRAFT", "SUBMITTED", "HOD_ENDORSED", "OPEN", "NEEDS_INFO", "BACKLOG", "PLEDGED", "PENDING"],
   moving: ["ACCEPTED", "IN_PROGRESS", "ADVANCE_PAID", "DELIVERED", "PARTIALLY_RECEIVED"],
   decided: ["APPROVED", "BALANCE_APPROVED", "DONE", "COMMITTED"],
   done: ["PAID", "CLOSED", "RECEIVED", "SPENT"],

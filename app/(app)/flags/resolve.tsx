@@ -4,13 +4,24 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 /**
- * Both resolutions demand a note (8.3): "acknowledged" with no reason is
+ * Every resolution demands a note (8.3): "acknowledged" with no reason is
  * indistinguishable from nobody having looked, which is the failure mode the whole
  * flag system exists to avoid.
+ *
+ * Withdrawing is the third answer and belongs only to whoever raised a concern by
+ * hand. Clearing somebody else's flag stays Finance's call — but a person who
+ * raised one in error, or got an answer five minutes later, should not have to ask
+ * Finance to tidy up after them.
  */
-export function ResolveFlag({ id }: { id: string }) {
+export function ResolveFlag({
+  id, canResolve, canWithdraw,
+}: {
+  id: string;
+  canResolve: boolean;
+  canWithdraw: boolean;
+}) {
   const router = useRouter();
-  const [action, setAction] = useState<"ACKNOWLEDGE" | "DISMISS" | null>(null);
+  const [action, setAction] = useState<"ACKNOWLEDGE" | "DISMISS" | "WITHDRAW" | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,25 +45,41 @@ export function ResolveFlag({ id }: { id: string }) {
     router.refresh();
   }
 
+  if (!canResolve && !canWithdraw) return null;
+
   if (!action) {
     return (
       <div className="flex shrink-0 gap-1.5">
-        <button
-          type="button"
-          onClick={() => setAction("ACKNOWLEDGE")}
-          className="rounded-full px-3 py-1.5 text-xs font-medium"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
-        >
-          Acknowledge
-        </button>
-        <button
-          type="button"
-          onClick={() => setAction("DISMISS")}
-          className="rounded-full px-3 py-1.5 text-xs"
-          style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-        >
-          Dismiss
-        </button>
+        {canResolve && (
+          <>
+            <button
+              type="button"
+              onClick={() => setAction("ACKNOWLEDGE")}
+              className="rounded-full px-3 py-1.5 text-xs font-medium"
+              style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+            >
+              Acknowledge
+            </button>
+            <button
+              type="button"
+              onClick={() => setAction("DISMISS")}
+              className="rounded-full px-3 py-1.5 text-xs"
+              style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+            >
+              Dismiss
+            </button>
+          </>
+        )}
+        {canWithdraw && (
+          <button
+            type="button"
+            onClick={() => setAction("WITHDRAW")}
+            className="rounded-full px-3 py-1.5 text-xs"
+            style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-muted)" }}
+          >
+            Withdraw
+          </button>
+        )}
       </div>
     );
   }
@@ -62,7 +89,9 @@ export function ResolveFlag({ id }: { id: string }) {
       <label className="block text-xs text-text-muted">
         {action === "DISMISS"
           ? "Why does this rule not apply here?"
-          : "What did you check, and why is it fine?"}
+          : action === "WITHDRAW"
+            ? "Why are you taking this back?"
+            : "What did you check, and why is it fine?"}
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
@@ -81,7 +110,7 @@ export function ResolveFlag({ id }: { id: string }) {
           className="rounded-full px-3 py-1.5 text-xs font-medium disabled:opacity-40"
           style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
         >
-          {busy ? "Saving…" : action === "DISMISS" ? "Dismiss" : "Acknowledge"}
+          {busy ? "Saving…" : action === "DISMISS" ? "Dismiss" : action === "WITHDRAW" ? "Withdraw" : "Acknowledge"}
         </button>
         <button
           type="button"

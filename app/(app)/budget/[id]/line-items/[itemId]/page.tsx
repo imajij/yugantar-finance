@@ -13,6 +13,7 @@ import { LINE_ITEM_TRANSITIONS } from "@/lib/state-machines/line-item";
 import { lineItemTotals } from "@/lib/queries/budget";
 import { signedDownloadUrl } from "@/lib/storage";
 import { Amount, Card, Empty, FlagChip, PageTitle, StatCard, StateChip } from "@/components/ui";
+import { RaiseConcern } from "@/components/raise-flag";
 import { TransitionActions } from "@/components/transitions";
 import { Timeline } from "@/components/timeline";
 import { CommentThread } from "@/components/comments";
@@ -96,7 +97,20 @@ export default async function LineItemPage({
       <p className="mb-2 text-sm">
         <Link href={`/budget/${deptId}`} style={{ color: "var(--yg-pink)" }}>← {dept?.name}</Link>
       </p>
-      <PageTitle action={<StateChip state={item.status} />}>{item.name}</PageTitle>
+      <PageTitle
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <RaiseConcern
+              entityType="LINE_ITEM"
+              entityId={item.id}
+              allowed={can(user, "flag.raise", { festId: user.festId, departmentId: user.departmentId })}
+            />
+            <StateChip state={item.status} />
+          </div>
+        }
+      >
+        {item.name}
+      </PageTitle>
 
       {item.description && <p className="mb-4 text-sm text-text-soft">{item.description}</p>}
 

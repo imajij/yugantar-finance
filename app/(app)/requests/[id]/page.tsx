@@ -9,6 +9,7 @@ import { Amount, Card, FlagChip, PageTitle, StateChip } from "@/components/ui";
 import { TransitionActions } from "@/components/transitions";
 import { Timeline } from "@/components/timeline";
 import { CommentThread } from "@/components/comments";
+import { RaiseConcern } from "@/components/raise-flag";
 
 export default async function RequestDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -47,7 +48,18 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
 
   return (
     <div className="max-w-3xl">
-      <PageTitle action={<StateChip state={req.status} />}>
+      <PageTitle
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <RaiseConcern
+              entityType="REIMBURSEMENT"
+              entityId={req.id}
+              allowed={can(user, "flag.raise", { festId: user.festId, departmentId: user.departmentId })}
+            />
+            <StateChip state={req.status} />
+          </div>
+        }
+      >
         <span className="tnum">{req.humanId}</span>
       </PageTitle>
 
