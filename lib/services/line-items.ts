@@ -219,6 +219,8 @@ async function bindAttachments(tx: Tx, actor: Actor, lineItemId: string, attachm
         eq(attachments.festId, actor.festId),
         eq(attachments.uploadedBy, actor.id),   // only your own uploads (20.2 step 4)
         isNull(attachments.entityId),
+        // Matches `addDocument`: a file already withdrawn is not one to bind.
+        isNull(attachments.removedAt),
       ))
       .returning({ id: attachments.id });
     if (updated.length === 0) {

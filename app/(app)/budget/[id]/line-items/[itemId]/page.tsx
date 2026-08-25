@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound as nf, redirect } from "next/navigation";
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, FileText, Link2 } from "lucide-react";
 import { db } from "@/db";
 import {
   attachments, auditEvents, comments, departments, flags, lineItems,
@@ -16,6 +16,7 @@ import { RaiseConcern } from "@/components/raise-flag";
 import { TransitionActions } from "@/components/transitions";
 import { Timeline } from "@/components/timeline";
 import { CommentThread } from "@/components/comments";
+import { AddDocument, RemoveDocument } from "./documents";
 
 /**
  * PRD 20.5 — one line item: its five numbers, its quotes, and every request
@@ -88,9 +89,19 @@ export default async function LineItemPage({
 
   // Linked through the API rather than to a signed URL minted here — the signature
   // is short-lived and would go stale on a page somebody left open.
-  const files = docs.filter((d) => d.storageKey).map((d) => ({
-    id: d.id, name: d.fileName ?? "document", quoted: d.quotedAmountPaise,
+  const files = docs.map((d) => ({
+    id: d.id,
+    kind: d.kind,
+    // A link has no file name; its label is what it is called.
+    name: d.label ?? d.fileName ?? (d.kind === "LINK" ? "Web listing" : "document"),
+    url: d.url,
+    source: d.sourceName,
+    quoted: d.quotedAmountPaise,
   }));
+
+  const canManageDocs = can(user, "lineItem.document.manage", {
+    festId: user.festId, departmentId: item.departmentId,
+  });
 
   return (
     <div className="max-w-3xl">
@@ -142,36 +153,63 @@ export default async function LineItemPage({
       <Card className="mt-4">
         <h2 className="font-display text-sm">Quotes and documents</h2>
         {files.length === 0 ? (
-          <p className="mt-2 text-sm text-text-muted">
-            No supporting documents. Anything above the fest threshold should carry at least one quote.
+          <p className="mt-2 text-[13.5px] text-text-muted">
+            Nothing attached yet. A quotation, a proforma invoice or a link to the page you are
+            pricing from &mdash; three quotes for one item is the normal case, and it is what lets
+            Finance see the basis for the number.
           </p>
         ) : (
-          <ul className="mt-2 space-y-1 text-sm">
+          <ul className="mt-3 flex flex-col gap-1.5">
             {files.map((f) => (
-              <li key={f.id} className="flex items-center justify-between gap-3">
-                <a
-                  href={`/api/v1/attachments/${f.id}/url?redirect=1`}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ color: "var(--yg-pink)" }}
-                >
-                  {f.name}
-                </a>
-                {f.quoted != null && (
-                  <Amount
-                    paise={f.quoted}
-                    className={f.quoted === lowest ? "text-lime" : "text-text-muted"}
-                  />
+              <li
+                key={f.id}
+                className="flex items-center gap-3 rounded-[var(--r-control)] px-3 py-2"
+                style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
+              >
+                {f.kind === "LINK" ? (
+                  <Link2 size={15} className="shrink-0 text-text-muted" aria-hidden />
+                ) : (
+                  <FileText size={15} className="shrink-0 text-text-muted" aria-hidden />
                 )}
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <a
+                    href={f.kind === "LINK" && f.url ? f.url : `/api/v1/attachments/${f.id}/url?redirect=1`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="truncate text-[13.5px]"
+                    style={{ color: "var(--yg-pink)" }}
+                  >
+                    {f.name}
+                  </a>
+                  {f.source && <span className="text-[11.5px] text-text-muted">{f.source}</span>}
+                </span>
+                {f.quoted != null && (
+                  <span
+                    className="tnum shrink-0 text-[13px]"
+                    style={{ color: f.quoted === lowest ? "var(--yg-lime)" : "var(--yg-text-muted)" }}
+                  >
+                    <Amount paise={f.quoted} />
+                  </span>
+                )}
+                <RemoveDocument
+                  lineItemId={item.id}
+                  attachmentId={f.id}
+                  name={f.name}
+                  canManage={canManageDocs}
+                />
               </li>
             ))}
           </ul>
         )}
+
         {lowest !== null && quotes.length > 1 && (
-          <p className="mt-2 text-xs text-text-muted">
-            Lowest quote <Amount paise={lowest} /> — highlighted. Spending above it raises F14.
+          <p className="mt-3 text-[12px] text-text-muted">
+            Lowest quote <Amount paise={lowest} /> &mdash; highlighted. Planning above it raises a flag,
+            which does not block anything; it asks somebody to say why.
           </p>
         )}
+
+        <AddDocument lineItemId={item.id} canManage={canManageDocs} />
       </Card>
 
       {actions.length > 0 && (
