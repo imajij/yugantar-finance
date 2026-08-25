@@ -89,6 +89,7 @@ From there everything is done in the app, in this order:
 | `pnpm db:studio` | Drizzle Studio |
 | `pnpm env:check` | Which API keys are set, what they unlock, what is missing |
 | `pnpm smoke` | Drive every endpoint against a running server over HTTP, then tidy up. `--keep` leaves the fest behind — it is the only realistic dataset there is |
+| `pnpm walkthrough:pdf` | Render `docs/walkthrough.html` to an A4 handout. The page is dark; the print stylesheet flips it to the light variant, per 9.1 rule 6 |
 | `pnpm responsive` | Load every screen at five widths in a headless browser and fail on anything that scrolls sideways. Takes a path to check one |
 | `pnpm r2:check` | Round-trip the real R2 bucket: presign, upload, read back, delete |
 
@@ -273,6 +274,18 @@ somebody else's stays Finance's call.
 Unlike a rule's flag these are not deduplicated — two people noticing two different
 things about one record is the point — so the partial unique index that stops a
 re-running rule piling up duplicates is scoped to rule-raised flags.
+
+### Showing it to somebody
+
+`docs/walkthrough.html` is a presentable walkthrough — the approval spine, the five
+numbers, the state machines, every feature, an eight-minute demo script with
+timings, and the questions people actually ask in the room. It uses the fest's own
+tokens and typefaces, so the deck and the product read as one thing.
+
+`pnpm walkthrough:pdf` renders it to an A4 handout. Print asks for the light variant
+rather than screenshotting the dark screen version, which is the same rule the app
+follows for emails and exports — the diagrams restyle themselves because every
+colour in them is a token rather than a literal.
 
 ### Checking it stays responsive
 

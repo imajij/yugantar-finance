@@ -17,7 +17,8 @@
     "smoke": "tsx --env-file=.env.local infra/smoke.mts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "responsive": "tsx --env-file=.env.local infra/responsive.mts"
+    "responsive": "tsx --env-file=.env.local infra/responsive.mts",
+    "walkthrough:pdf": "tsx infra/walkthrough-pdf.mts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.7.9",
