@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Eye, Hash, MessageSquare, Paperclip, Send, Trash2, X } from "lucide-react";
 import { chipStyle, stateLabel } from "@/lib/state-chip";
+import { ConfirmWithReason } from "@/components/confirm";
 import { usePoll } from "../sidebar";
 
 /**
@@ -138,14 +139,14 @@ export function Conversation({
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
         <header
-          className="shrink-0 px-4 py-3"
+          className="shrink-0 px-5 py-4"
           style={{ borderBottom: "1px solid var(--yg-surface-2)" }}
         >
           <div className="flex flex-wrap items-center gap-2">
             {channel.kind === "DIRECT"
               ? <MessageSquare size={15} className="text-text-muted" aria-hidden />
               : <Hash size={15} className="text-text-muted" aria-hidden />}
-            <h1 className="font-display text-base">{channel.displayName}</h1>
+            <h1 className="font-display text-[18px]">{channel.displayName}</h1>
             <span className="text-xs text-text-muted">
               {channel.members.length} {channel.members.length === 1 ? "person" : "people"}
             </span>
@@ -164,8 +165,8 @@ export function Conversation({
             department channel is private to the department; this is the sentence
             that stops them being wrong about it later.
           */}
-          <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-text-muted">
-            <Eye size={11} aria-hidden />
+          <p className="mt-1.5 flex items-center gap-2 text-[12px]" style={{ color: "var(--yg-sky)" }}>
+            <Eye size={14} aria-hidden />
             Administrators can read this channel. Every time one opens a channel they
             are not in, it is recorded in the audit log.
           </p>
@@ -195,7 +196,7 @@ export function Conversation({
           </p>
         )}
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3" onScroll={onScroll}>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" onScroll={onScroll}>
           {messages.length === 0 && (
             <p className="py-10 text-center text-sm text-text-muted">
               Nothing here yet. {channel.isMember ? "Say something." : ""}
@@ -278,10 +279,15 @@ function MessageRow({
 
   const newDay = !previous || day(previous.createdAt) !== day(m.createdAt);
 
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
   async function remove() {
-    if (!window.confirm("Remove this message? It stays in place, marked removed.")) return;
+    setRemoving(true);
     const res = await fetch(`/api/v1/messages/${m.id}`, { method: "DELETE" });
+    setRemoving(false);
     if (!res.ok) { onError(errorOf(await res.json().catch(() => null))); return; }
+    setConfirming(false);
     onRemoved();
   }
 
@@ -381,13 +387,28 @@ function MessageRow({
           {!m.deleted && m.authorId === me.id && (
             <button
               type="button"
-              onClick={remove}
+              onClick={() => setConfirming(true)}
               className="flex items-center gap-1 text-text-muted hover:text-text"
             >
               <Trash2 size={10} aria-hidden /> Remove
             </button>
           )}
         </div>
+
+        <ConfirmWithReason
+          open={confirming}
+          title="Remove this message?"
+          consequence={
+            <>It keeps its place in the conversation and shows as removed — a gap would read
+              as somebody being edited out. Anyone who already saw it still saw it.</>
+          }
+          confirmLabel="Remove it"
+          cancelLabel="Leave it"
+          tone="destructive"
+          busy={removing}
+          onConfirm={remove}
+          onCancel={() => setConfirming(false)}
+        />
 
         {onReply && m.replyCount > 0 && (
           <button
@@ -434,7 +455,7 @@ function Thread({
 
   return (
     <aside
-      className="flex w-96 shrink-0 flex-col"
+      className="hidden w-96 shrink-0 flex-col lg:flex"
       style={{ borderLeft: "1px solid var(--yg-surface-2)" }}
     >
       <header
@@ -668,7 +689,7 @@ function Composer({
       )}
 
       <div
-        className="flex items-end gap-2 rounded-xl px-2.5 py-2"
+        className="flex items-end gap-1.5 rounded-[18px] px-3 py-2.5"
         style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
       >
         <textarea
@@ -690,8 +711,8 @@ function Composer({
           aria-label="Write a message"
         />
 
-        <label className="cursor-pointer rounded-lg p-1.5 text-text-muted hover:text-text">
-          <Paperclip size={15} aria-hidden />
+        <label className="tap cursor-pointer text-text-muted hover:text-text">
+          <Paperclip size={17} aria-hidden />
           <span className="sr-only">Attach a file</span>
           <input
             type="file"
@@ -703,7 +724,7 @@ function Composer({
         <button
           type="button"
           onClick={() => setPicking((v) => !v)}
-          className="rounded-lg px-1.5 py-1 text-xs text-text-muted hover:text-text"
+          className="tap text-[15px] text-text-muted hover:text-text"
           aria-label="Link a record"
         >
           #
@@ -713,11 +734,11 @@ function Composer({
           type="button"
           disabled={busy || (!body.trim() && files.length === 0 && links.length === 0)}
           onClick={send}
-          className="rounded-lg p-1.5 disabled:opacity-40"
+          className="tap shrink-0 rounded-full disabled:opacity-40"
           style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
           aria-label="Send"
         >
-          <Send size={14} aria-hidden />
+          <Send size={17} aria-hidden />
         </button>
       </div>
     </div>

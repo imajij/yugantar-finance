@@ -33,7 +33,7 @@ export interface ChannelSummary {
 export interface Person { id: string; name: string; email: string; role: string; department: string }
 
 const FIELD =
-  "w-full rounded-lg px-2.5 py-1.5 text-sm bg-[var(--yg-bg-app)] "
+  "w-full rounded-[var(--r-control)] px-3.5 py-2.5 text-[13.5px] bg-[var(--yg-bg-app)] "
   + "border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 
 const message = (b: unknown) =>
@@ -104,7 +104,7 @@ export function ChannelSidebar({
 
       <section>
         <header className="mb-1.5 flex items-center justify-between px-1">
-          <h2 className="text-[11px] tracking-wide text-text-muted uppercase">{myDepartmentName}</h2>
+          <h2 className="font-display text-[10px] tracking-[0.18em] text-text-muted uppercase">{myDepartmentName}</h2>
           {canCreate && (
             <button
               type="button"
@@ -148,7 +148,7 @@ export function ChannelSidebar({
 
       <section>
         <header className="mb-1.5 flex items-center justify-between px-1">
-          <h2 className="text-[11px] tracking-wide text-text-muted uppercase">Direct messages</h2>
+          <h2 className="font-display text-[10px] tracking-[0.18em] text-text-muted uppercase">Direct messages</h2>
           <button
             type="button"
             onClick={() => setPicking((v) => !v)}
@@ -206,7 +206,7 @@ export function ChannelSidebar({
         <section>
           <header className="mb-1.5 flex items-center gap-1.5 px-1">
             <Eye size={12} className="text-text-muted" aria-hidden />
-            <h2 className="text-[11px] tracking-wide text-text-muted uppercase">Oversight</h2>
+            <h2 className="font-display text-[10px] tracking-[0.18em] text-text-muted uppercase">Oversight</h2>
           </header>
           <p className="mb-1.5 px-2 text-[11px] text-text-muted">
             You are not in these. Opening one is recorded in the audit log.
@@ -230,7 +230,7 @@ function Row({
     <li>
       <Link
         href={`/chat/${channel.id}`}
-        className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm"
+        className="flex h-10 items-center gap-2.5 rounded-xl px-2.5 text-[13px]"
         style={
           active
             ? { background: "var(--yg-surface-2)", color: "var(--yg-text)" }

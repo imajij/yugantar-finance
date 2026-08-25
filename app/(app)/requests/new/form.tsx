@@ -2,34 +2,89 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Camera, Loader2, X } from "lucide-react";
+import {
+  ArrowLeft, Camera, ChevronDown, Loader2, Plus, Receipt as ReceiptIcon, Send, X,
+} from "lucide-react";
 import { formatPaise, rupeesToPaise } from "@/lib/money";
+import { Button, IconButton } from "@/components/ui";
+import { ErrorNote, InfoNote } from "@/components/feedback";
+import { AvailableInline } from "@/components/five-numbers";
 
-interface LineItemOption { id: string; name: string; availablePaise: number; defaultExpenseTypeId: string | null }
+/**
+ * Submitting a receipt, in three steps instead of eleven stacked inputs.
+ *
+ * This is the screen the redesign exists for. It is used by a Member standing
+ * outside a venue at 11pm, one-handed, in a hurry, and it was a desktop form: a
+ * vertical column of labelled fields where the camera was the fourth thing you
+ * reached and the amount was somewhere below the fold.
+ *
+ * The order is now the order of the task. **Photograph it** — the camera is the
+ * first and largest thing on the screen. **Say how much and against what** — the
+ * only two fields that need thought, with the line item showing what will be left
+ * afterwards so nobody discovers an overspend at approval time. **Check and
+ * submit** — everything else pre-filled from who you are and correctable in place.
+ *
+ * Nothing is hidden that the API needs; the fields that used to be typed are now
+ * defaulted, shown, and one tap from being changed.
+ */
+
+interface LineItemOption {
+  id: string;
+  name: string;
+  availablePaise: number;
+  plannedPaise: number;
+  pendingPaise: number;
+  committedPaise: number;
+  spentPaise: number;
+  defaultExpenseTypeId: string | null;
+}
+
 interface Props {
   lineItems: LineItemOption[];
   expenseTypes: { id: string; name: string }[];
-  defaults: { payeeName: string; payeeUpiId: string };
+  defaults: { payeeName: string; payeeUpiId: string; department: string };
   receiptWindow: { start: string; end: string };
 }
 
 interface Receipt { id: string; name: string }
 
-const field = "mt-1 w-full rounded-lg px-3 py-2.5 text-sm";
-const fieldStyle = { background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)", color: "var(--yg-text)" };
+const FIELD =
+  "w-full rounded-[var(--r-control)] px-4 py-3 text-[14px] bg-[var(--yg-surface)] "
+  + "border border-[var(--yg-surface-2)] text-[var(--yg-text)] outline-none";
+
+const today = () => new Date().toISOString().slice(0, 10);
 
 export function NewRequestForm({ lineItems, expenseTypes, defaults, receiptWindow }: Props) {
   const router = useRouter();
+  const [step, setStep] = useState(1);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [lineItemId, setLineItemId] = useState(lineItems[0]?.id ?? "");
+  const [pickingLineItem, setPickingLineItem] = useState(false);
   const [amount, setAmount] = useState("");
+  const [expenseTypeId, setExpenseTypeId] = useState("");
+  const [description, setDescription] = useState("");
+  const [transactionOn, setTransactionOn] = useState(today());
+  const [merchant, setMerchant] = useState("");
+  const [payeeName, setPayeeName] = useState(defaults.payeeName);
+  const [payeeUpiId, setPayeeUpiId] = useState(defaults.payeeUpiId);
 
   const selected = lineItems.find((i) => i.id === lineItemId);
   const amountPaise = safePaise(amount);
-  const overBudget = selected && amountPaise !== null && amountPaise > selected.availablePaise;
+  const chosenType = expenseTypeId || selected?.defaultExpenseTypeId || expenseTypes[0]?.id || "";
+  const remaining = selected && amountPaise !== null ? selected.availablePaise - amountPaise : null;
+  const outsideWindow = transactionOn < receiptWindow.start || transactionOn > receiptWindow.end;
+
+  if (lineItems.length === 0) {
+    return (
+      <ErrorNote detail="Ask your HOD to break the department's allocation into line items — a claim has to be charged against one.">
+        Your department has no open line items, so there is nowhere to file this claim.
+      </ErrorNote>
+    );
+  }
 
   /** 20.2 — presign, PUT the file, then complete so the server can hash it for F1. */
   async function upload(files: FileList | null) {
@@ -42,10 +97,11 @@ export function NewRequestForm({ lineItems, expenseTypes, defaults, receiptWindo
           purpose: "RECEIPT", file_name: file.name, mime_type: file.type, size_bytes: file.size,
         });
         const put = await fetch(presign.upload_url, { method: "PUT", body: file });
-        if (!put.ok) throw new Error("Upload failed");
+        if (!put.ok) throw new Error("That upload did not go through. Try again when the signal is better.");
         await postJson(`/api/v1/attachments/${presign.attachment_id}/complete`, {});
         setReceipts((r) => [...r, { id: presign.attachment_id, name: file.name }]);
       }
+      setStep(2);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
@@ -53,33 +109,25 @@ export function NewRequestForm({ lineItems, expenseTypes, defaults, receiptWindo
     }
   }
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    // Which button was pressed — the native way, no duplicate handler.
-    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
-    const andSubmit = submitter?.value !== "draft";
+  async function save(andSubmit: boolean) {
     setError(null);
-
-    let paise: number;
-    try {
-      paise = rupeesToPaise(String(form.get("amount")));
-    } catch {
-      setError("Amount must be rupees, up to two decimals");
+    if (amountPaise === null || amountPaise <= 0) {
+      setError("Enter the amount in rupees, like 8400 or 8400.50");
+      setStep(2);
       return;
     }
 
     setSubmitting(true);
     try {
       const created = await postJson("/api/v1/reimbursements", {
-        line_item_id: form.get("line_item_id"),
-        expense_type_id: form.get("expense_type_id"),
-        description: form.get("description"),
-        transaction_on: form.get("transaction_on"),
-        amount_paise: paise,
-        merchant: String(form.get("merchant") || "") || null,
-        payee_name: form.get("payee_name"),
-        payee_upi_id: form.get("payee_upi_id"),
+        line_item_id: lineItemId,
+        expense_type_id: chosenType,
+        description,
+        transaction_on: transactionOn,
+        amount_paise: amountPaise,
+        merchant: merchant.trim() || null,
+        payee_name: payeeName,
+        payee_upi_id: payeeUpiId,
         attachment_ids: receipts.map((r) => r.id),
         submit: andSubmit,
       });
@@ -92,148 +140,359 @@ export function NewRequestForm({ lineItems, expenseTypes, defaults, receiptWindo
   }
 
   return (
-    <form onSubmit={submit} className="space-y-5">
-      <div>
-        <label className="text-sm text-text-soft">
-          Receipts <span style={{ color: "var(--yg-pink)" }}>*</span>
-        </label>
-        <p className="text-xs text-text-muted">JPG, PNG, HEIC or PDF, up to 10 MB each. Five at most.</p>
+    <div className="flex w-full max-w-[430px] flex-col gap-4">
+      <header className="flex items-center justify-between gap-3">
+        {step === 1 ? (
+          <IconButton label="Leave without saving" onClick={() => router.push("/requests")}>
+            <X size={18} aria-hidden />
+          </IconButton>
+        ) : (
+          <IconButton label="Back a step" onClick={() => setStep(step - 1)}>
+            <ArrowLeft size={18} aria-hidden />
+          </IconButton>
+        )}
+        <span className="font-display text-[15px]">
+          {step === 3 ? "Check and submit" : "New reimbursement"}
+        </span>
+        <span className="tnum w-11 text-right text-[12px] text-text-muted">{step}/3</span>
+      </header>
 
-        <label
-          className="mt-2 flex cursor-pointer items-center justify-center gap-2 rounded-lg border-dashed py-6 text-sm"
-          style={{ border: "1px dashed var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-        >
-          {uploading ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Camera size={16} aria-hidden />}
-          {uploading ? "Uploading…" : "Take a photo or choose a file"}
-          <input
-            type="file" className="sr-only" multiple
-            accept="image/jpeg,image/png,image/heic,image/webp,application/pdf"
-            capture="environment"
-            disabled={uploading || receipts.length >= 5}
-            onChange={(e) => upload(e.target.files)}
+      <div className="flex gap-1.5" aria-hidden>
+        {[1, 2, 3].map((n) => (
+          <span
+            key={n}
+            className="h-1 flex-1 rounded-full"
+            style={{ background: n <= step ? "var(--yg-lime)" : "var(--yg-surface-2)" }}
           />
-        </label>
-
-        {receipts.length > 0 && (
-          <ul className="mt-2 space-y-1">
-            {receipts.map((r) => (
-              <li key={r.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-xs" style={{ background: "var(--yg-surface)" }}>
-                <span className="truncate">{r.name}</span>
-                <button
-                  type="button" aria-label={`Remove ${r.name}`}
-                  onClick={() => setReceipts((list) => list.filter((x) => x.id !== r.id))}
-                  className="text-text-muted hover:text-text"
-                >
-                  <X size={14} aria-hidden />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        ))}
       </div>
 
-      <div>
-        <label htmlFor="line_item_id" className="text-sm text-text-soft">Line item *</label>
-        <select
-          id="line_item_id" name="line_item_id" required className={field} style={fieldStyle}
-          value={lineItemId} onChange={(e) => setLineItemId(e.target.value)}
-        >
-          {lineItems.length === 0 && <option value="">No open line items in your department</option>}
-          {lineItems.map((i) => (
-            <option key={i.id} value={i.id}>{i.name} — {formatPaise(i.availablePaise)} available</option>
-          ))}
-        </select>
-        {overBudget && (
-          <p className="mt-1 text-xs" style={{ color: "var(--flag-high-fg)" }}>
-            This is more than the {formatPaise(selected!.availablePaise)} available. It will be flagged, not blocked —
-            Finance will see why.
+      {error && <ErrorNote>{error}</ErrorNote>}
+
+      {/* ───────────────────────────────────────────────── 1 · photograph it */}
+      {step === 1 && (
+        <>
+          <h2 className="font-display text-[24px] leading-tight">Photograph the receipt</h2>
+          <p className="text-[13px] leading-relaxed text-text-muted">
+            Get the total and the shop name in frame. You can add more pages after.
           </p>
-        )}
-      </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label htmlFor="expense_type_id" className="text-sm text-text-soft">Expense type *</label>
-          <select
-            id="expense_type_id" name="expense_type_id" required className={field} style={fieldStyle}
-            defaultValue={selected?.defaultExpenseTypeId ?? ""}
+          <label
+            className="flex cursor-pointer flex-col items-center justify-center gap-3.5 rounded-[20px] py-14"
+            style={{ background: "var(--yg-surface)", border: "1px dashed var(--yg-outline)" }}
           >
-            {expenseTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="amount" className="text-sm text-text-soft">Amount (₹) *</label>
-          <input
-            id="amount" name="amount" required inputMode="decimal" placeholder="1250.00"
-            className={`${field} tnum`} style={fieldStyle}
-            value={amount} onChange={(e) => setAmount(e.target.value)}
-          />
-        </div>
-      </div>
+            <span
+              className="flex size-[76px] items-center justify-center rounded-full"
+              style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+            >
+              {uploading ? <Loader2 size={32} className="yg-spin" aria-hidden /> : <Camera size={32} aria-hidden />}
+            </span>
+            <span className="text-[14px] font-medium">{uploading ? "Uploading…" : "Open camera"}</span>
+            <span className="text-[12px] text-text-muted">or choose from photos</span>
+            <input
+              type="file"
+              className="sr-only"
+              multiple
+              capture="environment"
+              accept="image/jpeg,image/png,image/heic,image/webp,application/pdf"
+              onChange={(e) => upload(e.target.files)}
+              disabled={uploading || receipts.length >= 5}
+            />
+          </label>
 
-      <div>
-        <label htmlFor="description" className="text-sm text-text-soft">What was it for? *</label>
-        <textarea
-          id="description" name="description" required minLength={10} rows={3}
-          placeholder="Cables and adapters for the main stage sound check"
-          className={field} style={fieldStyle}
-        />
-      </div>
+          {receipts.length > 0 && <ReceiptList receipts={receipts} onAdd={upload} uploading={uploading} />}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label htmlFor="transaction_on" className="text-sm text-text-soft">Date on the receipt *</label>
-          <input
-            id="transaction_on" name="transaction_on" type="date" required
-            className={`${field} tnum`} style={fieldStyle}
-          />
-          <p className="mt-1 text-xs text-text-muted">
-            Fest window {receiptWindow.start} to {receiptWindow.end}. Outside it is flagged, not blocked.
+          <p className="text-[12px] leading-relaxed text-text-muted">
+            JPG, PNG, HEIC or PDF, up to 10&nbsp;MB each, five at most. A claim can be saved
+            without one, but it cannot be submitted.
           </p>
-        </div>
-        <div>
-          <label htmlFor="merchant" className="text-sm text-text-soft">Merchant</label>
-          <input id="merchant" name="merchant" className={field} style={fieldStyle} placeholder="Optional" />
-        </div>
-      </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label htmlFor="payee_name" className="text-sm text-text-soft">Pay to *</label>
-          <input id="payee_name" name="payee_name" required defaultValue={defaults.payeeName} className={field} style={fieldStyle} />
-        </div>
-        <div>
-          <label htmlFor="payee_upi_id" className="text-sm text-text-soft">Payee UPI ID *</label>
-          <input
-            id="payee_upi_id" name="payee_upi_id" required defaultValue={defaults.payeeUpiId}
-            placeholder="name@bank" className={`${field} tnum`} style={fieldStyle}
-          />
-        </div>
-      </div>
-
-      {error && (
-        <p className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--flag-high-bg)", color: "var(--flag-high-fg)" }}>
-          {error}
-        </p>
+          <Button tone="ghost" onClick={() => setStep(2)} className="w-full">
+            {receipts.length > 0 ? "Next" : "Skip for now"}
+          </Button>
+        </>
       )}
 
-      <div className="flex flex-wrap gap-3">
-        <button
-          type="submit" disabled={submitting || receipts.length === 0}
-          className="rounded-full px-5 py-2.5 text-sm font-medium disabled:opacity-50"
-          style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
-        >
-          {submitting ? "Submitting…" : "Submit"}
-        </button>
-        <button
-          type="submit" value="draft" disabled={submitting || receipts.length === 0}
-          className="rounded-full px-5 py-2.5 text-sm disabled:opacity-50"
-          style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-        >
-          Save as draft
-        </button>
-      </div>
-    </form>
+      {/* ────────────────────────────────────── 2 · how much, and against what */}
+      {step === 2 && (
+        <>
+          {receipts.length > 0 && <ReceiptList receipts={receipts} onAdd={upload} uploading={uploading} />}
+
+          <section className="flex flex-col gap-2">
+            <label htmlFor="amount" className="meta-label">Amount you paid</label>
+            <div
+              className="flex items-baseline gap-2 rounded-[18px] px-4 py-3.5"
+              style={{
+                background: "var(--yg-surface)",
+                border: `1px solid ${amountPaise && amountPaise > 0 ? "var(--yg-lime)" : "var(--yg-surface-2)"}`,
+              }}
+            >
+              <span className="tnum text-[26px] text-text-muted">₹</span>
+              <input
+                id="amount"
+                inputMode="decimal"
+                autoFocus
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0"
+                className="tnum w-full bg-transparent text-[34px] font-semibold outline-none"
+                aria-label="Amount in rupees"
+              />
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <span className="meta-label">Against which line item</span>
+            <div
+              className="flex flex-col gap-2.5 rounded-[var(--r-card)] px-4 py-3.5"
+              style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+            >
+              <button
+                type="button"
+                onClick={() => setPickingLineItem((v) => !v)}
+                className="flex items-center justify-between gap-3 text-left"
+              >
+                <span className="text-[14px] font-medium">{selected?.name ?? "Choose one"}</span>
+                <span className="flex items-center gap-1.5 text-[12px]" style={{ color: "var(--yg-sky)" }}>
+                  Change <ChevronDown size={14} aria-hidden />
+                </span>
+              </button>
+
+              {selected && !pickingLineItem && (
+                <>
+                  <AvailableInline totals={{ ...selected, allocatedPaise: selected.plannedPaise }} />
+                  <p className="text-[12px] text-text-soft">
+                    <span className="tnum" style={{ color: remaining !== null && remaining < 0 ? "var(--flag-high-fg)" : "var(--yg-lime)" }}>
+                      {formatPaise(remaining ?? selected.availablePaise)}
+                    </span>{" "}
+                    {remaining !== null && remaining < 0 ? "over this line item after the claim" : "available after this claim"}
+                  </p>
+                </>
+              )}
+
+              {pickingLineItem && (
+                <ul className="flex flex-col gap-1">
+                  {lineItems.map((i) => (
+                    <li key={i.id}>
+                      <button
+                        type="button"
+                        onClick={() => { setLineItemId(i.id); setPickingLineItem(false); }}
+                        className="flex w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2.5 text-left hover:bg-surface-2"
+                      >
+                        <span className="text-[13.5px]">{i.name}</span>
+                        <span className="tnum text-[12.5px] text-text-muted">{formatPaise(i.availablePaise)}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <span className="meta-label">Expense type</span>
+            <div className="flex flex-wrap gap-2">
+              {expenseTypes.map((t) => {
+                const on = chosenType === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setExpenseTypeId(t.id)}
+                    className="flex h-[var(--row-h)] items-center rounded-full px-4 text-[13px]"
+                    style={
+                      on
+                        ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
+                        : { border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }
+                    }
+                  >
+                    {t.name}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <Button
+            tone="primary"
+            className="w-full"
+            disabled={!amountPaise || amountPaise <= 0 || !lineItemId}
+            onClick={() => setStep(3)}
+          >
+            Next
+          </Button>
+        </>
+      )}
+
+      {/* ────────────────────────────────────────────── 3 · check and submit */}
+      {step === 3 && (
+        <>
+          <section className="flex flex-col gap-2">
+            <label htmlFor="description" className="meta-label">What was it for</label>
+            <textarea
+              id="description"
+              rows={3}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Two truss sections hired from Shree Traders for the main stage on Wednesday."
+              className={`${FIELD} min-h-[80px] leading-relaxed`}
+            />
+            <p className="text-[11.5px] text-text-muted">
+              At least ten characters. Your HOD reads this before anything else.
+            </p>
+          </section>
+
+          <div
+            className="flex flex-col rounded-[var(--r-card)] px-4"
+            style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+          >
+            <Prefilled label="Amount" value={formatPaise(amountPaise ?? 0)} mono />
+            <Prefilled label="Line item" value={selected?.name ?? "—"} />
+            <Prefilled label="Department" value={defaults.department} />
+            <Row label="Date on receipt">
+              <input
+                type="date"
+                value={transactionOn}
+                min={receiptWindow.start}
+                max={receiptWindow.end}
+                onChange={(e) => setTransactionOn(e.target.value)}
+                className="tnum bg-transparent text-right text-[13px] outline-none"
+                aria-label="Date on receipt"
+              />
+            </Row>
+            <Row label="Shop or merchant">
+              <input
+                value={merchant}
+                onChange={(e) => setMerchant(e.target.value)}
+                placeholder="optional"
+                className="bg-transparent text-right text-[13px] outline-none"
+                aria-label="Merchant"
+              />
+            </Row>
+            <Row label="Paid by">
+              <input
+                value={payeeName}
+                onChange={(e) => setPayeeName(e.target.value)}
+                className="bg-transparent text-right text-[13px] outline-none"
+                aria-label="Payee name"
+              />
+            </Row>
+            <Row label="Pay back to" last>
+              <input
+                value={payeeUpiId}
+                onChange={(e) => setPayeeUpiId(e.target.value)}
+                placeholder="you@upi"
+                className="tnum bg-transparent text-right text-[13px] outline-none"
+                aria-label="Payee UPI ID"
+              />
+            </Row>
+          </div>
+
+          {outsideWindow && (
+            <InfoNote detail={`The fest's receipt window is ${receiptWindow.start} to ${receiptWindow.end}.`}>
+              That date is outside the receipt window. It will be flagged, not blocked.
+            </InfoNote>
+          )}
+
+          {/*
+            The consequence, before the action: an HOD who does not know Pending is
+            deducted will otherwise watch their Available drop and wonder who spent it.
+          */}
+          {selected && amountPaise !== null && (
+            <InfoNote>
+              <span className="tnum">{formatPaise(amountPaise)}</span> shows as{" "}
+              <strong>pending</strong> against {defaults.department} until it is endorsed —{" "}
+              {selected.name} drops to <span className="tnum">{formatPaise(selected.availablePaise - amountPaise)}</span>{" "}
+              available in the meantime.
+            </InfoNote>
+          )}
+
+          <div
+            className="mt-1 flex flex-col gap-2.5 pt-4"
+            style={{ borderTop: "1px solid var(--yg-surface-2)" }}
+          >
+            <Button
+              tone="hero"
+              className="h-[52px] w-full text-[15px]"
+              disabled={submitting || receipts.length === 0 || description.trim().length < 10}
+              onClick={() => save(true)}
+            >
+              {submitting ? <Loader2 size={17} className="yg-spin" aria-hidden /> : <Send size={17} aria-hidden />}
+              Submit for endorsement
+            </Button>
+            <Button tone="ghost" className="w-full" disabled={submitting} onClick={() => save(false)}>
+              Save as draft
+            </Button>
+            {receipts.length === 0 && (
+              <p className="text-center text-[11.5px] text-text-muted">
+                A claim needs at least one receipt before it can be submitted. Saving a draft is fine.
+              </p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReceiptList({
+  receipts, onAdd, uploading,
+}: {
+  receipts: Receipt[]; onAdd: (f: FileList | null) => void; uploading: boolean;
+}) {
+  return (
+    <div
+      className="flex items-center gap-3 rounded-[var(--r-card)] p-3"
+      style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+    >
+      <span
+        className="flex h-[68px] w-14 shrink-0 items-center justify-center rounded-xl text-text-muted"
+        style={{ background: "var(--yg-surface-2)" }}
+        aria-hidden
+      >
+        <ReceiptIcon size={22} />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-[12.5px]">{receipts[0].name}</span>
+        <span className="text-[11.5px]" style={{ color: "var(--state-done-fg)" }}>
+          Uploaded{receipts.length > 1 ? ` · ${receipts.length} pages` : ""}
+        </span>
+      </span>
+      <label className="tap cursor-pointer" style={{ color: "var(--yg-pink)" }}>
+        <Plus size={18} aria-hidden />
+        <span className="sr-only">Add another page</span>
+        <input
+          type="file"
+          className="sr-only"
+          multiple
+          capture="environment"
+          accept="image/jpeg,image/png,image/heic,image/webp,application/pdf"
+          onChange={(e) => onAdd(e.target.files)}
+          disabled={uploading || receipts.length >= 5}
+        />
+      </label>
+    </div>
+  );
+}
+
+function Row({ label, children, last }: { label: string; children: React.ReactNode; last?: boolean }) {
+  return (
+    <div
+      className="flex items-center justify-between gap-3 py-3"
+      style={last ? undefined : { borderBottom: "1px solid var(--yg-surface-2)" }}
+    >
+      <span className="shrink-0 text-[12.5px] text-text-muted">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function Prefilled({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <Row label={label}>
+      <span className={`text-[13px] ${mono ? "tnum" : ""}`}>{value}</span>
+    </Row>
   );
 }
 

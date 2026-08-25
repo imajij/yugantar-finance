@@ -14,6 +14,10 @@ export const dynamic = "force-dynamic";
  *
  * A layout rather than a page so switching channels does not re-fetch the list —
  * and so the unread counts on the left stay live while you read on the right.
+ *
+ * It no longer sets its own height with `calc(100vh - 2rem)`, which was a guess at
+ * what the app shell had left over and was wrong whenever the mobile header
+ * appeared. The shell's `main` is `min-h-0 flex-1`, so this just fills it.
  */
 export default async function ChatLayout({
   children, params,
@@ -36,10 +40,13 @@ export default async function ChatLayout({
   const active = (await params)?.id;
 
   return (
-    <div className="flex min-h-0 flex-1" style={{ height: "calc(100vh - 2rem)" }}>
+    <div
+      className="flex min-h-0 flex-1 overflow-hidden rounded-[var(--r-shell)]"
+      style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
+    >
       <aside
-        className="hidden w-64 shrink-0 md:block"
-        style={{ borderRight: "1px solid var(--yg-surface-2)" }}
+        className="hidden w-[262px] shrink-0 overflow-y-auto md:block"
+        style={{ background: "var(--yg-surface)", borderRight: "1px solid var(--yg-surface-2)" }}
       >
         <ChannelSidebar
           channels={channels.map((c) => ({

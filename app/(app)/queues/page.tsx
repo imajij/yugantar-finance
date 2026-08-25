@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { ClipboardList } from "lucide-react";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { departments, lineItems, reimbursementRequests, users } from "@/db/schema";
@@ -40,7 +41,10 @@ export default async function QueuesPage() {
     return (
       <>
         <PageTitle>Queues</PageTitle>
-        <Empty>Nothing waits on you. Queues appear here when your role owns a decision.</Empty>
+        <Empty icon={<ClipboardList size={24} aria-hidden />} title="Nothing waits on you">
+          A queue appears here when your role owns a decision — endorsing your department&rsquo;s
+          claims, approving them, or recording the payment. Yours owns none of those.
+        </Empty>
         <StalledNotice stages={stalled} canFix={canFix} />
       </>
     );

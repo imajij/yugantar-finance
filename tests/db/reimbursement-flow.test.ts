@@ -4,7 +4,7 @@
  * cases and the flags that fire along the way.
  */
 import { afterAll, beforeEach, expect, test } from "vitest";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import type { Actor } from "@/lib/authz";
 import { rupeesToPaise as R } from "@/lib/money";
@@ -14,6 +14,8 @@ import {
 } from "@/lib/services/reimbursements";
 import { departmentTotals, lineItemTotals } from "@/lib/queries/budget";
 import { stalledStages } from "@/lib/queries/stalled";
+import { resendInvitation } from "@/lib/services/admin";
+import { auditEvents } from "@/db/schema";
 import { dropFests } from "@/lib/test-support";
 
 let festId: string, techId: string, financeDeptId: string, coreId: string, expenseTypeId: string, lineItemId: string;
@@ -330,4 +332,34 @@ test("nothing waiting means nothing stalled, however empty the seats are", async
   await db.execute(sql`update users set status = 'INVITED' where id = ${mgmt.id}`);
   expect(await stalledStages(finance)).toHaveLength(0);
   await db.execute(sql`update users set status = 'ACTIVE' where id = ${mgmt.id}`);
+});
+
+test("an invitation can be sent again without losing the account", async () => {
+  // The unblock for the stall above. Re-inviting by deleting and re-creating would
+  // lose the id every audit row already points at, so this keeps the row.
+  await db.execute(sql`update users set status = 'INVITED' where id = ${mgmt.id}`);
+
+  const result = await resendInvitation(finance, mgmt.id);
+  expect(result.id).toBe(mgmt.id);
+
+  const [row] = await db.select().from(auditEvents).where(and(
+    eq(auditEvents.festId, festId),
+    eq(auditEvents.entityId, mgmt.id),
+    eq(auditEvents.action, "user.invite.resend"),
+  ));
+  // Recorded even if the mail provider then refuses: somebody tried, and that is
+  // the fact you want when nobody can get in.
+  expect(row.actorId).toBe(finance.id);
+
+  await db.execute(sql`update users set status = 'ACTIVE' where id = ${mgmt.id}`);
+});
+
+test("a deactivated account is reactivated, not re-invited", async () => {
+  await db.execute(sql`update users set status = 'DISABLED' where id = ${mgmt.id}`);
+  await expect(resendInvitation(finance, mgmt.id)).rejects.toThrow(/deactivated/i);
+  await db.execute(sql`update users set status = 'ACTIVE' where id = ${mgmt.id}`);
+});
+
+test("only somebody who manages users can send one", async () => {
+  await expect(resendInvitation(member, mgmt.id)).rejects.toThrow(/not permitted/i);
 });

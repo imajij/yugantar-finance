@@ -15,15 +15,17 @@ import type { StalledStage } from "@/lib/queries/stalled";
  *
  * So this says it where the figure is.
  */
-export function StalledNotice({ stages, canFix }: { stages: StalledStage[]; canFix: boolean }) {
+export function StalledNotice({
+  stages, canFix, className = "",
+}: { stages: StalledStage[]; canFix: boolean; className?: string }) {
   if (stages.length === 0) return null;
 
   return (
-    <div className="mt-4 space-y-2">
+    <div className={`space-y-2.5 ${className}`}>
       {stages.map((s) => (
         <div
           key={s.needs}
-          className="flex flex-wrap items-start gap-2 rounded-lg px-3 py-2.5 text-sm"
+          className="flex flex-wrap items-start gap-3 rounded-[var(--r-card)] p-4 text-[13.5px]"
           style={{ background: "var(--flag-high-bg)", color: "var(--flag-high-fg)" }}
         >
           <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
@@ -41,7 +43,9 @@ export function StalledNotice({ stages, canFix }: { stages: StalledStage[]; canF
             </p>
             {canFix && (
               <Link href="/admin" className="mt-1.5 inline-block text-xs underline underline-offset-2">
-                Invite or re-send from Admin →
+                {s.invitedNotActive > 0
+                  ? "Resend their invitation from Admin →"
+                  : "Give somebody that role in Admin →"}
               </Link>
             )}
           </div>

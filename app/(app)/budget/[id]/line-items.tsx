@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Pencil, Plus, RotateCcw, X } from "lucide-react";
 import { formatPaise } from "@/lib/money";
+import { Button, IconButton } from "@/components/ui";
+import { ConfirmWithReason } from "@/components/confirm";
 
 /**
  * Creating, editing and closing line items, from the department budget table.
@@ -17,7 +19,7 @@ import { formatPaise } from "@/lib/money";
  */
 
 const FIELD =
-  "w-full rounded-lg px-2.5 py-1.5 text-sm bg-[var(--yg-bg-app)] "
+  "w-full rounded-[var(--r-control)] px-3.5 py-2.5 text-[13.5px] bg-[var(--yg-bg-app)] "
   + "border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 
 export interface ExpenseTypeOption { id: string; name: string }
@@ -106,23 +108,14 @@ function Form({
       {error && <p className="text-[11px]" style={{ color: "var(--flag-high-fg)" }}>{error}</p>}
 
       <div className="flex gap-2">
-        <button
-          type="button"
+        <Button
+          tone="primary"
           disabled={busy || f.name.trim().length < 2 || paise === null}
           onClick={() => onSubmit(f)}
-          className="rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
         >
           {busy ? "Saving…" : submitLabel}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-full px-3 py-1 text-xs"
-          style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-        >
-          Cancel
-        </button>
+        </Button>
+        <Button tone="ghost" onClick={onCancel}>Cancel</Button>
       </div>
     </div>
   );
@@ -167,14 +160,9 @@ export function NewLineItem({
 
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium"
-        style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
-      >
-        <Plus size={14} aria-hidden /> Add a line item
-      </button>
+      <Button tone="primary" onClick={() => setOpen(true)}>
+        <Plus size={16} aria-hidden /> New line item
+      </Button>
     );
   }
 
@@ -209,6 +197,7 @@ export function LineItemActions({
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
+  const [confirming, setConfirming] = useState<"CLOSE" | "REOPEN" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -234,25 +223,20 @@ export function LineItemActions({
     router.refresh();
   }
 
-  async function transition(action: "CLOSE" | "REOPEN") {
-    const reason = window.prompt(
-      action === "CLOSE"
-        ? "Closing releases the unspent balance back to the department. Why is it closing?"
-        : "Why is this reopening?",
-    );
-    if (!reason?.trim()) return;
-
+  async function transition(reason: string) {
     setBusy(true);
+    setError(null);
     const res = await fetch(`/api/v1/line-items/${item.id}/transitions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action, reason: reason.trim() }),
+      body: JSON.stringify({ action: confirming, reason }),
     });
     setBusy(false);
     if (!res.ok) {
       setError(errorFrom(await res.json().catch(() => null)));
       return;
     }
+    setConfirming(null);
     router.refresh();
   }
 
@@ -275,30 +259,45 @@ export function LineItemActions({
     );
   }
 
+  const closing = item.status !== "CLOSED";
+
   return (
-    <div className="flex items-center justify-end gap-1">
-      {error && (
+    <div className="flex items-center justify-end gap-1.5">
+      {error && !confirming && (
         <span className="mr-1 text-[11px]" style={{ color: "var(--flag-high-fg)" }}>{error}</span>
       )}
-      <button
-        type="button"
-        onClick={() => setEditing(true)}
-        title="Edit this line item"
-        aria-label={`Edit ${item.name}`}
-        className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2 hover:text-text"
-      >
-        <Pencil size={14} aria-hidden />
-      </button>
-      <button
-        type="button"
+      <IconButton label={`Edit ${item.name}`} onClick={() => setEditing(true)}>
+        <Pencil size={16} aria-hidden />
+      </IconButton>
+      <IconButton
+        label={closing ? `Close ${item.name}` : `Reopen ${item.name}`}
         disabled={busy}
-        onClick={() => transition(item.status === "CLOSED" ? "REOPEN" : "CLOSE")}
-        title={item.status === "CLOSED" ? "Reopen this line item" : "Close it — no new requests can attach"}
-        aria-label={`${item.status === "CLOSED" ? "Reopen" : "Close"} ${item.name}`}
-        className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2 hover:text-text disabled:opacity-40"
+        onClick={() => setConfirming(closing ? "CLOSE" : "REOPEN")}
       >
-        {item.status === "CLOSED" ? <RotateCcw size={14} aria-hidden /> : <X size={14} aria-hidden />}
-      </button>
+        {closing ? <X size={16} aria-hidden /> : <RotateCcw size={16} aria-hidden />}
+      </IconButton>
+
+      <ConfirmWithReason
+        open={confirming !== null}
+        title={closing ? `Close “${item.name}”?` : `Reopen “${item.name}”?`}
+        consequence={
+          closing
+            ? <>No new request can attach to it, and its unspent balance returns to the
+                department&rsquo;s unplanned buffer. Anything already approved against it stays.</>
+            : <>Requests can attach to it again, and its planned amount comes back out of the
+                department&rsquo;s buffer.</>
+        }
+        confirmLabel={closing ? "Close it" : "Reopen it"}
+        cancelLabel="Leave it as it is"
+        reason={{
+          label: closing ? "Why it is closing" : "Why it is reopening",
+          placeholder: closing ? "Sound is fully delivered and paid." : "One more hire came up.",
+        }}
+        busy={busy}
+        error={error}
+        onConfirm={transition}
+        onCancel={() => { setConfirming(null); setError(null); }}
+      />
     </div>
   );
 }

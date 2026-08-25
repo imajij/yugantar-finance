@@ -8,6 +8,7 @@ import { departments, expenseTypes, fests, users } from "@/db/schema";
 import { ApiError, conflict, notFound } from "@/lib/api";
 import { assertCan, type Actor } from "@/lib/authz";
 import { requestSignInLink, revokeAllSessions } from "@/lib/auth";
+import { enforce } from "@/lib/rate-limit";
 import { clerkConfigured, emailDomainAllowed, revokeClerkSessions, sendClerkInvitation } from "@/lib/clerk";
 import type { Role } from "@/lib/state-machines/types";
 import { recordAudit, snapshot } from "./audit";
@@ -111,6 +112,56 @@ export async function inviteUser(actor: Actor, input: UserInput) {
     : await requestSignInLink({ email: row.email }).then(() => true, () => false);
 
   return { ...row, invitation_sent: invited };
+}
+
+/**
+ * Sending somebody's invitation again.
+ *
+ * The one that actually needed building: a segregated workflow deadlocks on an
+ * empty seat (see `lib/queries/stalled.ts`), and the commonest reason a seat is
+ * empty is an invitation that went to spam. Until now the only way out was to
+ * delete the account and invite it again, which loses the id every audit row
+ * already points at.
+ *
+ * It is the same message `inviteUser` sends, not a different one — Clerk's own
+ * invitation where Clerk is configured, otherwise the one-time sign-in link. An
+ * ACTIVE account can be sent one too: "I cannot get in" is the same problem from
+ * the other side, and it is a link to *their* address, so it grants nobody
+ * anything they did not already have.
+ */
+export async function resendInvitation(actor: Actor, id: string) {
+  assertCan(actor, "user.manage", { festId: actor.festId });
+
+  const [target] = await db.select({
+    id: users.id, name: users.name, email: users.email, status: users.status,
+  }).from(users)
+    .where(and(eq(users.id, id), eq(users.festId, actor.festId))).limit(1);
+  // Existence in *this* fest first: answering anything else to somebody holding
+  // another fest's user id would describe our fest to an outsider.
+  if (!target) throw notFound("User");
+
+  if (target.status === "DISABLED") {
+    throw new ApiError("VALIDATION_ERROR", "That account is deactivated. Reactivate it first.");
+  }
+
+  // Invitations send real email from our domain, so they share the invite ceiling.
+  await enforce("invite", actor.id);
+
+  // Outside any transaction, and audited before the send: a mail provider failing
+  // must not roll back the record that somebody tried.
+  await db.transaction(async (tx) => {
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "USER", entityId: id, actorId: actor.id,
+      action: "user.invite.resend",
+      after: { email: target.email, status: target.status },
+    });
+  });
+
+  const sent = clerkConfigured()
+    ? await sendClerkInvitation(target.email)
+    : await requestSignInLink({ email: target.email }).then(() => true, () => false);
+
+  return { id: target.id, email: target.email, invitation_sent: sent };
 }
 
 export async function updateUser(

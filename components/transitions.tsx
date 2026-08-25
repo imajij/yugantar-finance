@@ -2,6 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Button } from "@/components/ui";
+import { ConfirmWithReason, Spinner } from "@/components/confirm";
+import { ErrorNote } from "@/components/feedback";
 
 export interface TransitionAction { action: string; requires: string[] }
 
@@ -34,6 +37,34 @@ const PRIMARY = new Set([
   "SUBMIT", "RESUBMIT", "ENDORSE", "APPROVE", "RECORD_PAYMENT",
   "ACCEPT", "START", "MARK_DONE", "CONFIRM", "RECORD_ADVANCE", "RELEASE_BALANCE", "CONFIRM_DELIVERY",
 ]);
+
+/**
+ * What an action will do, in the words of the thing about to happen.
+ *
+ * Anything here that needs exactly one written reason opens the confirm dialog
+ * instead of an inline field, so the consequence is stated *before* the reason is
+ * asked for. "Are you sure?" was never the question — "this releases the amount
+ * back to the department and notifies the person who claimed it" is.
+ */
+const CONSEQUENCE: Record<string, string> = {
+  DECLINE: "The amount is released back to the department's available balance and whoever claimed it is notified. They read your reason, so it is worth saying what was wrong.",
+  SEND_BACK: "It goes back to the submitter to correct and resubmit. Nothing is lost and the amount stays counted as pending until they do.",
+  REJECT: "The department that asked is told this will not be done. The ticket closes; raising it again means raising a new one.",
+  WITHDRAW: "The claim is taken out of the queue and stops counting against your department's available balance. You cannot undo this.",
+  HOLD: "Payment stops until Finance resolves it. The amount stays committed, so it is still counted against the department.",
+  BLOCK: "The ticket stays assigned to you and stops counting as in progress. Whoever raised it is told why.",
+  CANCEL: "The ticket closes and the department it was asked of stops seeing it. Anything already spent against it stays on the record.",
+  REOPEN: "It goes back to whoever was working on it, and out of their done column.",
+  ASK_INFO: "The ticket pauses and returns to whoever raised it. It comes back to this state once they answer.",
+  CLOSE: "No new request can attach to it, and its unspent balance returns to the department's buffer.",
+  ESCALATE: "Management and the target department's head are told. The ticket does not change state — this is a mark on it.",
+};
+
+/** Actions where the confirming button should read as consequential. */
+const DESTRUCTIVE = new Set(["DECLINE", "REJECT", "WITHDRAW", "CANCEL", "HOLD", "BLOCK", "SEND_BACK"]);
+
+/** The single free-text fields the dialog can collect on its own. */
+const SINGLE_REASON = new Set(["reason", "note", "question", "answer"]);
 
 const PROMPT: Record<string, string> = {
   reason: "Reason (the other party will see this)",
@@ -69,6 +100,16 @@ export function TransitionActions({ endpoint, actions, extraFields = {}, options
     ...(extraFields[action] ?? []),
   ];
 
+  /**
+   * One free-text field and nothing else → the dialog. Anything with a reference,
+   * a date or an amount stays an inline form: those are data entry, not a decision
+   * that needs its consequence spelled out.
+   */
+  const dialogField = (action: string): string | null => {
+    const fields = fieldsFor(action);
+    return fields.length === 1 && SINGLE_REASON.has(fields[0]) ? fields[0] : null;
+  };
+
   async function run(action: string, raw: Record<string, string> = {}) {
     setBusy(true);
     setError(null);
@@ -96,42 +137,62 @@ export function TransitionActions({ endpoint, actions, extraFields = {}, options
 
   if (actions.length === 0) return null;
 
+  const dialog = open && dialogField(open) ? open : null;
+  const inlineOpen = open && !dialog ? open : null;
+
   return (
-    <div className="mt-3">
-      <div className="flex flex-wrap gap-2">
+    <div className={`mt-4 ${busy ? "is-pending" : ""}`}>
+      <div className="flex flex-wrap gap-2.5">
         {actions.map(({ action }) => (
-          <button
+          <Button
             key={action}
+            tone={PRIMARY.has(action) ? "hero" : DESTRUCTIVE.has(action) ? "ghost" : "ghost"}
             disabled={busy}
             onClick={() => (fieldsFor(action).length > 0 ? setOpen(open === action ? null : action) : run(action))}
-            className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
             style={
-              PRIMARY.has(action)
-                ? { background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }
-                : { border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }
+              DESTRUCTIVE.has(action) && !PRIMARY.has(action)
+                ? { border: "1px solid var(--flag-high-bg)", color: "var(--flag-high-fg)" }
+                : undefined
             }
           >
+            {busy && open === action && <Spinner />}
             {LABEL[action] ?? action}
-          </button>
+          </Button>
         ))}
       </div>
 
-      {open && (
+      {dialog && (
+        <ConfirmWithReason
+          open
+          title={`${LABEL[dialog] ?? dialog}?`}
+          consequence={CONSEQUENCE[dialog] ?? "This is recorded against your name and cannot be undone."}
+          confirmLabel={LABEL[dialog] ?? dialog}
+          cancelLabel="Leave it as it is"
+          tone={DESTRUCTIVE.has(dialog) ? "destructive" : "default"}
+          reason={{ label: PROMPT[dialogField(dialog)!] ?? "Reason" }}
+          busy={busy}
+          error={error}
+          onConfirm={(text) => run(dialog, { [dialogField(dialog)!]: text })}
+          onCancel={() => { setOpen(null); setError(null); }}
+        />
+      )}
+
+      {inlineOpen && (
         <form
           className="mt-4 space-y-3"
           onSubmit={(e) => {
             e.preventDefault();
             const data = new FormData(e.currentTarget);
-            run(open, Object.fromEntries([...data.entries()].map(([k, v]) => [k, String(v)])));
+            run(inlineOpen, Object.fromEntries([...data.entries()].map(([k, v]) => [k, String(v)])));
           }}
         >
-          {fieldsFor(open).map((f) => (
+          {fieldsFor(inlineOpen).map((f) => (
             <div key={f}>
-              <label htmlFor={f} className="text-sm text-text-soft">{PROMPT[f] ?? f}</label>
+              <label htmlFor={f} className="text-[13px] text-text-soft">{PROMPT[f] ?? f}</label>
               {options[f] ? (
                 <select
                   id={f} name={f} required
-                  className="mt-1 w-full rounded-lg px-3 py-2.5 text-sm"
+                  className="mt-1.5 w-full rounded-[var(--r-control)] px-3.5 py-3 text-[14px]"
                   style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)", color: "var(--yg-text)" }}
                 >
                   {options[f].map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -142,27 +203,20 @@ export function TransitionActions({ endpoint, actions, extraFields = {}, options
                   type={f.endsWith("_at") || f.endsWith("_on") ? "date" : RUPEE_FIELDS.has(f) ? "number" : "text"}
                   step={RUPEE_FIELDS.has(f) ? "0.01" : undefined}
                   min={RUPEE_FIELDS.has(f) ? "0" : undefined}
-                  className="mt-1 w-full rounded-lg px-3 py-2.5 text-sm"
+                  className="mt-1.5 w-full rounded-[var(--r-control)] px-3.5 py-3 text-[14px]"
                   style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)", color: "var(--yg-text)" }}
                 />
               )}
             </div>
           ))}
-          <button
-            type="submit" disabled={busy}
-            className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
-            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
-          >
-            {busy ? "Working…" : `Confirm ${LABEL[open] ?? open}`}
-          </button>
+          <Button type="submit" tone="primary" disabled={busy}>
+            {busy && <Spinner />}
+            {busy ? "Working…" : `Confirm ${LABEL[inlineOpen] ?? inlineOpen}`}
+          </Button>
         </form>
       )}
 
-      {error && (
-        <p className="mt-3 rounded-lg px-3 py-2 text-sm" style={{ background: "var(--flag-high-bg)", color: "var(--flag-high-fg)" }}>
-          {error}
-        </p>
-      )}
+      {error && !dialog && <ErrorNote className="mt-3">{error}</ErrorNote>}
     </div>
   );
 }

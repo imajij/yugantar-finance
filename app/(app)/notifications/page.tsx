@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Bell } from "lucide-react";
 import { getSession } from "@/lib/session";
 import { inbox } from "@/lib/services/notifications";
 import { Card, Empty, PageTitle } from "@/components/ui";
@@ -26,7 +27,10 @@ export default async function NotificationsPage() {
       <PageTitle action={unread.length > 0 ? <MarkAllRead /> : undefined}>Notifications</PageTitle>
 
       {items.length === 0 ? (
-        <Empty>Nothing yet. You will hear about things waiting on you.</Empty>
+        <Empty icon={<Bell size={24} aria-hidden />} title="Nothing yet">
+          You hear about things waiting on your decision, anything mentioning you by name, and
+          money moving in a department you run. Nothing else.
+        </Empty>
       ) : (
         <div className="space-y-2">
           {items.map((n) => {

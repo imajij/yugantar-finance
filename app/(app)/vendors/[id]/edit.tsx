@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui";
+import { ConfirmWithReason } from "@/components/confirm";
 
 /**
  * Editing a vendor's details, and retiring one.
@@ -20,7 +22,7 @@ import { Pencil, Trash2 } from "lucide-react";
  */
 
 const FIELD =
-  "w-full rounded-lg px-2.5 py-1.5 text-sm bg-[var(--yg-bg-app)] "
+  "w-full rounded-[var(--r-control)] px-3.5 py-2.5 text-[13.5px] bg-[var(--yg-bg-app)] "
   + "border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 
 export interface VendorFields {
@@ -161,90 +163,55 @@ export function VendorAdmin({
         )}
         {error && <p className="text-[11px]" style={{ color: "var(--flag-high-fg)" }}>{error}</p>}
 
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={busy || f.name.trim().length < 2}
-            onClick={save}
-            className="rounded-full px-3.5 py-1.5 text-xs font-medium disabled:opacity-40"
-            style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
-          >
+        <div className="flex gap-2.5">
+          <Button tone="primary" disabled={busy || f.name.trim().length < 2} onClick={save}>
             {busy ? "Saving…" : "Save"}
-          </button>
-          <button
-            type="button"
-            onClick={() => { setEditing(false); setF(vendor); setError(null); }}
-            className="rounded-full px-3.5 py-1.5 text-xs"
-            style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-          >
+          </Button>
+          <Button tone="ghost" onClick={() => { setEditing(false); setF(vendor); setError(null); }}>
             Cancel
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (confirming) {
-    return (
-      <div
-        className="mt-4 space-y-2 rounded-xl p-4"
-        style={{ background: "var(--flag-high-bg)", border: "1px solid var(--flag-high-fg)" }}
-      >
-        <p className="text-sm" style={{ color: "var(--flag-high-fg)" }}>
-          Retire {vendor.name}? It disappears from the vendor list and from new requests.
-          Everything already raised against it keeps working and keeps naming it — nothing is
-          erased.
-        </p>
-        {error && <p className="text-xs" style={{ color: "var(--flag-high-fg)" }}>{error}</p>}
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              const reason = window.prompt("Why is this vendor being retired?");
-              if (reason?.trim()) remove(reason.trim());
-            }}
-            className="rounded-full px-3.5 py-1.5 text-xs font-medium disabled:opacity-40"
-            style={{ background: "var(--flag-high-fg)", color: "var(--yg-on-accent)" }}
-          >
-            {busy ? "Retiring…" : "Retire it"}
-          </button>
-          <button
-            type="button"
-            onClick={() => { setConfirming(false); setError(null); }}
-            className="rounded-full px-3.5 py-1.5 text-xs"
-            style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-          >
-            Keep it
-          </button>
+          </Button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2">
+    <div className="mt-4 flex flex-wrap items-center gap-2.5">
       {canEdit && (
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs"
-          style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
-        >
-          <Pencil size={13} aria-hidden /> Edit details
-        </button>
+        <Button tone="ghost" onClick={() => setEditing(true)}>
+          <Pencil size={16} aria-hidden /> Edit details
+        </Button>
       )}
       {canDelete && (
-        <button
-          type="button"
+        <Button
+          tone="ghost"
           onClick={() => setConfirming(true)}
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs"
-          style={{ border: "1px solid var(--yg-surface-2)", color: "var(--flag-high-fg)" }}
+          style={{ border: "1px solid var(--flag-high-bg)", color: "var(--flag-high-fg)" }}
         >
-          <Trash2 size={13} aria-hidden /> Retire vendor
-        </button>
+          <Trash2 size={16} aria-hidden /> Retire vendor
+        </Button>
       )}
-      {error && <span className="text-[11px]" style={{ color: "var(--flag-high-fg)" }}>{error}</span>}
+      {error && !confirming && (
+        <span className="text-[12px]" style={{ color: "var(--flag-high-fg)" }}>{error}</span>
+      )}
+
+      <ConfirmWithReason
+        open={confirming}
+        title={`Retire ${vendor.name}?`}
+        consequence={
+          <>They disappear from the vendor list and from new requests. Everything already raised
+            against them keeps working and keeps naming them — nothing is erased. This is refused
+            while any request against them is still live.</>
+        }
+        confirmLabel="Retire it"
+        cancelLabel="Keep it"
+        tone="destructive"
+        reason={{ label: "Why they are being retired", placeholder: "Not using them again after the sound shortfall." }}
+        busy={busy}
+        error={error}
+        onConfirm={remove}
+        onCancel={() => { setConfirming(false); setError(null); }}
+      />
     </div>
   );
 }

@@ -4,7 +4,6 @@ import { db } from "@/db";
 import { expenseTypes, fests, lineItems } from "@/db/schema";
 import { getSession } from "@/lib/session";
 import { lineItemTotalsForDepartment } from "@/lib/queries/budget";
-import { PageTitle } from "@/components/ui";
 import { NewRequestForm } from "./form";
 
 /** PRD 9 — mobile-first, camera capture, showing Available per line item so nobody overspends. */
@@ -26,19 +25,31 @@ export default async function NewRequestPage() {
 
   const totals = new Map((await lineItemTotalsForDepartment(user.departmentId)).map((t) => [t.lineItemId, t]));
 
+  // No PageTitle: the form carries its own header with the step counter, because on
+  // a phone the page title and the step indicator competing for the top of the
+  // screen costs the camera its space.
   return (
-    <div className="max-w-xl">
-      <PageTitle>New reimbursement</PageTitle>
-      <NewRequestForm
-        lineItems={items.map((i) => ({
-          id: i.id, name: i.name,
-          availablePaise: totals.get(i.id)?.availablePaise ?? i.plannedPaise,
+    <NewRequestForm
+      lineItems={items.map((i) => {
+        const t = totals.get(i.id);
+        return {
+          id: i.id,
+          name: i.name,
+          plannedPaise: i.plannedPaise,
+          availablePaise: t?.availablePaise ?? i.plannedPaise,
+          pendingPaise: t?.pendingPaise ?? 0,
+          committedPaise: t?.committedPaise ?? 0,
+          spentPaise: t?.spentPaise ?? 0,
           defaultExpenseTypeId: i.defaultExpenseTypeId,
-        }))}
-        expenseTypes={types.map((t) => ({ id: t.id, name: t.name }))}
-        defaults={{ payeeName: user.name, payeeUpiId: user.upiId ?? "" }}
-        receiptWindow={{ start: fest.start, end: fest.end }}
-      />
-    </div>
+        };
+      })}
+      expenseTypes={types.map((t) => ({ id: t.id, name: t.name }))}
+      defaults={{
+        payeeName: user.name,
+        payeeUpiId: user.upiId ?? "",
+        department: user.departmentName,
+      }}
+      receiptWindow={{ start: fest.start, end: fest.end }}
+    />
   );
 }

@@ -42,6 +42,32 @@
   --flag-high-fg:      #ee9090;  --flag-high-bg:      #4d1f1f;
   --flag-medium-fg:    #f5c542;  --flag-medium-bg:    #3d2f0a;
   --flag-low-fg:       #a0a0b0;  --flag-low-bg:       #2a2b3d;
+
+  /*
+   * The redesign's structural scale. The colour tokens above are unchanged —
+   * what the redesign changes is structure: one typographic scale, one density
+   * scale, three levels of emphasis, and real air inside containers.
+   */
+
+  /* Type. Body is 15px, not 14: the design target is a phone at night. */
+  --text-title:   32px;   /* page title, Reem Kufi */
+  --text-heading: 20px;   /* section heading, Reem Kufi */
+  --text-body:    15px;   /* the default */
+  --text-support: 13px;   /* supporting text and table cells */
+  --text-meta:    11px;   /* uppercase metadata label, Reem Kufi, 0.16em */
+
+  /* Density. Rows 44, sections 24 apart, cards 28 inside. */
+  --row-h:        44px;   /* also the tap-target floor — never smaller */
+  --pad-card:     28px;
+  --gap-section:  24px;
+
+  /* Radii, largest container to smallest control. */
+  --r-shell:     20px;
+  --r-card:      16px;
+  --r-control:   14px;
+
+  /* The dashed remainder on a five-numbers bar: allocated but not yet claimed. */
+  --yg-outline:  #4a4b63;
 }
 
 @theme inline {
@@ -57,6 +83,7 @@
   --color-violet: var(--yg-violet);
   --color-crimson: var(--yg-crimson);
 
+  --color-outline: var(--yg-outline);
   --color-text: var(--yg-text);
   --color-text-soft: var(--yg-text-soft);
   --color-text-muted: var(--yg-text-muted);
@@ -72,6 +99,50 @@ body {
   background: var(--yg-bg-app);
   color: var(--yg-text);
   font-family: var(--font-sans);
+  /* 15px base, per the redesign's scale. Tailwind's text-* utilities still win. */
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+
+/*
+ * The uppercase metadata label — above one of the five numbers, over a column, at
+ * the head of a nav group. Reem Kufi, wide tracking, muted.
+ */
+.meta-label {
+  font-family: var(--font-display);
+  font-size: var(--text-meta);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--yg-text-muted);
+}
+
+/*
+ * The tap-target floor (44px) around a 16px glyph. Fest week happens on phones,
+ * one-handed, at night; a 28px icon button is a miss waiting to happen.
+ */
+.tap {
+  min-width: var(--row-h);
+  min-height: var(--row-h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-control);
+}
+
+/* A row waiting on a server round-trip. The button holds the spinner; the row dims. */
+.is-pending {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+@keyframes yg-spin { to { transform: rotate(360deg); } }
+
+.yg-spin {
+  animation: yg-spin 0.7s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yg-spin { animation: none; }
 }
 
 /* Amounts, UTRs, ticket IDs, table dates: tabular and right-aligned (9.1 rule 4). */

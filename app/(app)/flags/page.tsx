@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound as nf, redirect } from "next/navigation";
+import { Flag } from "lucide-react";
 import { getSession } from "@/lib/session";
 import { can } from "@/lib/authz";
 import { listFlags, openFlagCounts } from "@/lib/services/flags";
@@ -147,10 +148,13 @@ export default async function FlagsPage({
 
       {flags.length === 0 ? (
         <div className="mt-4">
-          <Empty>
+          <Empty
+            icon={<Flag size={24} aria-hidden />}
+            title={status === "OPEN" ? "Nothing is flagged" : `No ${status.toLowerCase()} flags`}
+          >
             {status === "OPEN"
-              ? "Nothing is flagged. Rules re-run on every write, so this stays current on its own."
-              : `No ${status.toLowerCase()} flags.`}
+              ? "The rules re-run on every write, so this stays current on its own. Anyone running a department can also raise a concern by hand from the record itself."
+              : "Nothing has been resolved this way yet."}
           </Empty>
         </div>
       ) : (

@@ -1,15 +1,32 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
+import { Camera, CheckCheck, Clock, Receipt, Shield, Wallet } from "lucide-react";
 import { db } from "@/db";
 import { departments } from "@/db/schema";
-import { getSession } from "@/lib/session";
+import { getSession, type SessionUser } from "@/lib/session";
 import { can } from "@/lib/authz";
 import { departmentTotals, departmentTotalsForFest, festTotals } from "@/lib/queries/budget";
-import { utilizationPct } from "@/lib/money";
-import { Amount, Card, Empty, PageTitle, StatCard, UtilizationBar } from "@/components/ui";
+import { approvalQueue, endorsementQueue, paymentQueue, type QueueItem } from "@/lib/queries/queues";
+import { openFlagCounts, listFlags } from "@/lib/services/flags";
+import { readAuditLog } from "@/lib/services/audit";
+import { stalledStages } from "@/lib/queries/stalled";
+import { formatPaise } from "@/lib/money";
+import {
+  Amount, buttonClass, buttonStyle, Card, Empty, PageTitle, SectionHeading,
+} from "@/components/ui";
+import { AvailableCard, AvailableHero, availableTone } from "@/components/five-numbers";
+import { StalledNotice } from "@/components/stalled";
 
-/** PRD 9 — Finance and Management get the fest overview; HODs and Members their department. */
+/**
+ * PRD 9 — Finance and Management get the fest overview; HODs and Members their own.
+ *
+ * The redesign's change here is hierarchy. It was a wall of eight equal StatCards
+ * followed by a table, which told nobody where to look. Now the page opens with the
+ * one sentence that matters — what is waiting on *you* — and the single figure the
+ * whole product is about, with the queue that produced it beside them. Everything
+ * else is supporting and is drawn that way.
+ */
 export default async function DashboardPage() {
   const user = await getSession();
   if (!user) redirect("/sign-in");
@@ -17,108 +34,351 @@ export default async function DashboardPage() {
   const scope = { festId: user.festId, departmentId: user.departmentId };
   const festWide = can(user, "income.view", scope); // Finance HOD and Management (5.1)
 
-  return festWide ? <FestOverview festId={user.festId} /> : <DepartmentOverview departmentId={user.departmentId} name={user.departmentName} />;
+  return festWide
+    ? <FestOverview user={user} />
+    : <DepartmentOverview user={user} />;
 }
 
-async function FestOverview({ festId }: { festId: string }) {
-  const totals = await festTotals(festId);
-  if (!totals) return <Empty>No fest data yet. Run the seed.</Empty>;
+/** "Nine things are waiting on you" — the queue this person actually owns. */
+async function myQueue(user: SessionUser): Promise<{ items: QueueItem[]; verb: string; href: string }> {
+  const scope = { festId: user.festId, departmentId: user.departmentId };
+  if (can(user, "reimbursement.recordPayment", { ...scope, submitterId: "x" })) {
+    return { items: await paymentQueue(user), verb: "pay", href: "/queues" };
+  }
+  if (can(user, "reimbursement.approve", { ...scope, submitterId: "x" })) {
+    return { items: await approvalQueue(user), verb: "approve", href: "/queues" };
+  }
+  if (user.role === "DEPT_HOD") {
+    return { items: await endorsementQueue(user), verb: "endorse", href: "/queues" };
+  }
+  return { items: [], verb: "", href: "/queues" };
+}
 
-  const rows = await db
-    .select({ id: departments.id, name: departments.name, kind: departments.kind })
-    .from(departments)
-    .where(and(eq(departments.festId, festId), eq(departments.isActive, true)))
-    .orderBy(asc(departments.name));
-  const byDept = new Map((await departmentTotalsForFest(festId)).map((t) => [t.departmentId, t]));
+const HOURS = (since: Date) => (Date.now() - new Date(since).getTime()) / 3_600_000;
+
+async function FestOverview({ user }: { user: SessionUser }) {
+  const [totals, rows, deptTotals, queue, flagCounts, flags, activity, stalled] = await Promise.all([
+    festTotals(user.festId),
+    db.select({ id: departments.id, name: departments.name, kind: departments.kind })
+      .from(departments)
+      .where(and(eq(departments.festId, user.festId), eq(departments.isActive, true)))
+      .orderBy(asc(departments.name)),
+    departmentTotalsForFest(user.festId),
+    myQueue(user),
+    openFlagCounts(user),
+    listFlags(user, { status: "OPEN", limit: 4 }),
+    readAuditLog(user, { limit: 5 }).catch(() => []),
+    stalledStages(user),
+  ]);
+
+  if (!totals) {
+    return (
+      <Empty icon={<Wallet size={24} aria-hidden />} title="This fest has no budget yet">
+        Set the total from Admin, then create departments and allocate to them. Every number on
+        every screen is derived from what happens after that.
+      </Empty>
+    );
+  }
+
+  const byDept = new Map(deptTotals.map((t) => [t.departmentId, t]));
+  const fest = {
+    allocatedPaise: totals.allocatedPaise,
+    pendingPaise: deptTotals.reduce((n, t) => n + t.pendingPaise, 0),
+    committedPaise: deptTotals.reduce((n, t) => n + t.committedPaise, 0),
+    spentPaise: deptTotals.reduce((n, t) => n + t.spentPaise, 0),
+    availablePaise: deptTotals.reduce((n, t) => n + t.availablePaise, 0),
+  };
+
+  const waiting = queue.items.length;
+  const stale = queue.items.filter((q) => HOURS(q.waiting_since) > 36).length;
+
+  // Closest to their cap first — the ones an HOD is about to ask you about.
+  const nearCap = [...deptTotals]
+    .filter((t) => t.allocatedPaise > 0)
+    .sort((a, b) => a.availablePaise / a.allocatedPaise - b.availablePaise / b.allocatedPaise)
+    .slice(0, 4)
+    .map((t) => ({ ...t, name: rows.find((r) => r.id === t.departmentId)?.name ?? "—" }));
 
   return (
     <>
-      <PageTitle>Fest overview</PageTitle>
+      <PageTitle
+        subtitle={
+          waiting > 0
+            ? `${waiting} ${waiting === 1 ? "thing is" : "things are"} waiting on you. Everything else is on track.`
+            : "Nothing is waiting on you."
+        }
+        action={
+          waiting > 0 && (
+            <Link href={queue.href} className={buttonClass("hero")} style={buttonStyle("hero")}>
+              <CheckCheck size={17} aria-hidden />
+              {queue.verb === "pay" ? `Pay ${waiting}` : `Approve ${waiting}`}
+            </Link>
+          )
+        }
+      >
+        Fest overview
+      </PageTitle>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total budget" paise={totals.totalBudgetPaise} />
-        <StatCard label="Allocated" paise={totals.allocatedPaise} hint="Across all departments" />
-        <StatCard label="Reserve" paise={totals.reservePaise} />
-        <StatCard label="Spent" paise={totals.spentPaise} tone="done" />
+      <StalledNotice
+        stages={stalled}
+        canFix={can(user, "user.manage", { festId: user.festId })}
+        className="mb-[var(--gap-section)]"
+      />
+
+      <div className="grid gap-5 lg:grid-cols-[1.35fr_1fr]">
+        <AvailableHero
+          label="Fest available"
+          totals={fest}
+          caption={`of ${formatPaise(totals.allocatedPaise)} allocated · ${formatPaise(totals.reservePaise)} still in Reserve`}
+        />
+
+        <Card>
+          <SectionHeading
+            aside={
+              waiting > 0 ? (
+                <span
+                  className="tnum rounded-full px-2.5 py-1 text-[12px]"
+                  style={{ background: "var(--flag-medium-bg)", color: "var(--flag-medium-fg)" }}
+                >
+                  {waiting}
+                </span>
+              ) : null
+            }
+          >
+            {queue.verb === "pay" ? "Your payment queue" : "Your approval queue"}
+          </SectionHeading>
+
+          {queue.items.length === 0 ? (
+            <p className="mt-4 text-[13px] text-text-muted">
+              Nothing is waiting on your decision.
+            </p>
+          ) : (
+            <ul className="mt-4 flex flex-col gap-2.5">
+              {queue.items.slice(0, 4).map((q) => (
+                <li key={q.id}>
+                  <Link
+                    href={q.kind === "REIMBURSEMENT" ? `/requests/${q.id}` : `/vendors/requests/${q.id}`}
+                    className="flex items-center gap-3 rounded-[var(--r-control)] p-[11px_14px] hover:border-lime"
+                    style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
+                  >
+                    <span
+                      className="flex size-[34px] shrink-0 items-center justify-center rounded-full text-[11.5px] font-bold"
+                      style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+                      aria-hidden
+                    >
+                      {q.submitter.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("")}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-[13px]">{q.line_item ?? q.title}</span>
+                      <span className="text-[11px] text-text-muted">
+                        {q.submitter} · {q.department} · {Math.round(HOURS(q.waiting_since))}h
+                      </span>
+                    </span>
+                    <span className="tnum shrink-0 text-[13.5px]">{formatPaise(q.amount_paise)}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {stale > 0 && (
+            <p
+              className="mt-4 flex items-center gap-2 rounded-[12px] px-3.5 py-2.5 text-[12.5px]"
+              style={{ background: "var(--flag-medium-bg)", color: "var(--flag-medium-fg)" }}
+            >
+              <Clock size={15} className="shrink-0" aria-hidden />
+              {stale === 1 ? "One has" : `${stale} have`} been waiting more than 36 hours
+            </p>
+          )}
+        </Card>
       </div>
 
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Pending" paise={totals.pendingPaise} tone="waiting" hint="Awaiting a decision" />
-        <StatCard label="Committed" paise={totals.committedPaise} tone="decided" hint="Approved, not yet paid" />
-        <StatCard
-          label="Cash position"
-          paise={totals.cashPositionPaise}
-          hint="Income received − spent"
-        />
-        <StatCard
-          label="Projected close"
-          paise={totals.projectedClosePaise}
-          hint="Expected − spent − committed − pending"
-        />
-      </div>
+      <div className="mt-5 grid gap-5 lg:grid-cols-3">
+        <Card>
+          <p className="meta-label">Departments closest to their cap</p>
+          <ul className="mt-4 flex flex-col gap-3.5">
+            {nearCap.map((t) => (
+              <li key={t.departmentId} className="flex flex-col gap-1.5">
+                <div className="flex justify-between gap-3">
+                  <Link href={`/budget/${t.departmentId}`} className="text-[13px] hover:text-lime">
+                    {t.name}
+                  </Link>
+                  <span className="tnum text-[12.5px]" style={{ color: availableTone(t) }}>
+                    {formatPaise(t.availablePaise)}
+                  </span>
+                </div>
+                <span className="h-1.5 overflow-hidden rounded-full" style={{ background: "var(--yg-surface-2)" }}>
+                  <span
+                    className="block h-full rounded-full"
+                    style={{
+                      width: `${Math.min(100, 100 - (t.availablePaise / Math.max(t.allocatedPaise, 1)) * 100)}%`,
+                      background: availableTone(t),
+                    }}
+                  />
+                </span>
+              </li>
+            ))}
+            {nearCap.length === 0 && <li className="text-[13px] text-text-muted">No department has an allocation yet.</li>}
+          </ul>
+        </Card>
 
-      <h2 className="font-display mt-10 mb-3 text-lg">Departments</h2>
-      <Card className="overflow-x-auto p-0">
-        <table className="w-full min-w-[46rem] text-sm">
-          <thead>
-            <tr className="text-left text-xs text-text-muted" style={{ borderBottom: "1px solid var(--yg-surface-2)" }}>
-              <th className="px-4 py-3 font-medium">Department</th>
-              <th className="px-4 py-3 text-right font-medium">Allocated</th>
-              <th className="px-4 py-3 text-right font-medium">Pending</th>
-              <th className="px-4 py-3 text-right font-medium">Committed</th>
-              <th className="px-4 py-3 text-right font-medium">Spent</th>
-              <th className="px-4 py-3 text-right font-medium">Available</th>
-              <th className="px-4 py-3 font-medium">Utilization</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((d) => {
-              const t = byDept.get(d.id);
-              if (!t) return null;
+        <Card>
+          <p className="meta-label">
+            Flags needing a decision
+            {flagCounts.total > 0 && <span className="tnum ml-2 normal-case">{flagCounts.total}</span>}
+          </p>
+          <ul className="mt-4 flex flex-col gap-3">
+            {flags.length === 0 && (
+              <li className="text-[13px] text-text-muted">
+                Nothing is flagged. The rules re-run on every write, so this stays current on its own.
+              </li>
+            )}
+            {flags.map((f) => {
+              const row = f as Record<string, string>;
               return (
-                <tr key={d.id} style={{ borderBottom: "1px solid var(--yg-surface-2)" }}>
-                  <td className="px-4 py-3">
-                    <Link href={`/budget/${d.id}`} className="hover:text-lime">{d.name}</Link>
-                    {d.kind !== "BUDGET" && <span className="ml-2 text-xs text-text-muted">{d.kind.toLowerCase()}</span>}
-                  </td>
-                  <td className="px-4 py-3 text-right"><Amount paise={t.allocatedPaise} /></td>
-                  <td className="px-4 py-3 text-right" style={{ color: "var(--state-waiting-fg)" }}><Amount paise={t.pendingPaise} /></td>
-                  <td className="px-4 py-3 text-right" style={{ color: "var(--state-decided-fg)" }}><Amount paise={t.committedPaise} /></td>
-                  <td className="px-4 py-3 text-right" style={{ color: "var(--state-done-fg)" }}><Amount paise={t.spentPaise} /></td>
-                  <td className="px-4 py-3 text-right"><Amount paise={t.availablePaise} /></td>
-                  <td className="px-4 py-3">
-                    <UtilizationBar pct={utilizationPct(t.committedPaise, t.spentPaise, t.allocatedPaise)} />
-                  </td>
-                </tr>
+                <li key={row.id} className="flex gap-3 pb-3" style={{ borderBottom: "1px solid var(--yg-surface-2)" }}>
+                  <span
+                    className="mt-1.5 size-2 shrink-0 rounded-full"
+                    style={{ background: `var(--flag-${row.severity.toLowerCase()}-fg)` }}
+                    aria-hidden
+                  />
+                  <span className="flex flex-col gap-0.5">
+                    <span className="text-[12.5px] leading-snug">{row.explanation}</span>
+                    <span className="tnum text-[10.5px] text-text-muted">{row.rule}</span>
+                  </span>
+                </li>
               );
             })}
-          </tbody>
-        </table>
-      </Card>
+          </ul>
+          {flags.length > 0 && (
+            <Link href="/flags" className="mt-3 inline-block text-[12.5px]" style={{ color: "var(--yg-pink)" }}>
+              All flags →
+            </Link>
+          )}
+        </Card>
+
+        <Card>
+          <p className="meta-label">On the record today</p>
+          <ul className="mt-4 flex flex-col gap-2.5">
+            {activity.length === 0 && (
+              <li className="text-[13px] text-text-muted">Nothing has happened yet today.</li>
+            )}
+            {activity.map((a) => (
+              <li key={String(a.id)} className="flex items-baseline gap-3">
+                <span className="tnum w-10 shrink-0 text-[11px] text-text-muted">
+                  {new Date(a.created_at as string | Date).toLocaleTimeString("en-IN", {
+                    hour: "2-digit", minute: "2-digit", hour12: false,
+                  })}
+                </span>
+                <span className="text-[12.5px] leading-snug text-text-soft">
+                  {String(a.actor ?? "Somebody")} · {String(a.action).replaceAll(".", " ").replaceAll("_", " ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {can(user, "audit.view", { festId: user.festId }) && (
+            <p className="mt-3 flex items-center gap-2 text-[12px]" style={{ color: "var(--yg-sky)" }}>
+              <Shield size={14} aria-hidden />
+              You see the full log as an administrator
+            </p>
+          )}
+        </Card>
+      </div>
+
+      <div className="mt-8">
+        <SectionHeading aside={<Link href="/budget" className="text-[12.5px]" style={{ color: "var(--yg-pink)" }}>All departments →</Link>}>
+          Departments
+        </SectionHeading>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {rows.filter((d) => d.kind === "BUDGET").map((d) => {
+            const t = byDept.get(d.id);
+            if (!t) return null;
+            return (
+              <AvailableCard
+                key={d.id}
+                href={`/budget/${d.id}`}
+                label={d.name}
+                totals={t}
+                caption={
+                  <>
+                    of <Amount paise={t.allocatedPaise} />
+                    {t.pendingPaise > 0 && <> · <Amount paise={t.pendingPaise} /> held back</>}
+                  </>
+                }
+              />
+            );
+          })}
+        </div>
+      </div>
     </>
   );
 }
 
-async function DepartmentOverview({ departmentId, name }: { departmentId: string; name: string }) {
-  const t = await departmentTotals(departmentId);
-  if (!t) return <Empty>This department has no budget yet.</Empty>;
+async function DepartmentOverview({ user }: { user: SessionUser }) {
+  const [t, queue] = await Promise.all([
+    departmentTotals(user.departmentId),
+    myQueue(user),
+  ]);
+
+  if (!t) {
+    return (
+      <Empty icon={<Wallet size={24} aria-hidden />} title="No budget yet">
+        {user.departmentName} has not been allocated anything. Once Finance does, this is where
+        you will see what is left of it.
+      </Empty>
+    );
+  }
+
+  const waiting = queue.items.length;
 
   return (
     <>
-      <PageTitle>{name}</PageTitle>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <StatCard label="Allocated" paise={t.allocatedPaise} />
-        <StatCard label="Pending" paise={t.pendingPaise} tone="waiting" />
-        <StatCard label="Committed" paise={t.committedPaise} tone="decided" />
-        <StatCard label="Spent" paise={t.spentPaise} tone="done" />
-        <StatCard label="Available" paise={t.availablePaise} hint="Allocated − pending − committed − spent" />
+      <PageTitle
+        subtitle={
+          waiting > 0
+            ? `${waiting} ${waiting === 1 ? "request is" : "requests are"} waiting on you to endorse.`
+            : `What ${user.departmentName} has left, and what it is committed to.`
+        }
+        action={
+          <Link href="/requests/new" className={buttonClass("hero")} style={buttonStyle("hero")}>
+            <Camera size={17} aria-hidden />
+            Claim a receipt
+          </Link>
+        }
+      >
+        {user.departmentName}
+      </PageTitle>
+
+      <AvailableHero
+        label={`${user.departmentName} · available`}
+        totals={t}
+        caption={
+          t.pendingPaise > 0
+            ? `${formatPaise(t.pendingPaise)} is held back for requests awaiting a decision`
+            : `of ${formatPaise(t.allocatedPaise)} allocated`
+        }
+      />
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <Link
+          href={`/budget/${user.departmentId}`}
+          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-lime"
+          style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+        >
+          <Wallet size={18} style={{ color: "var(--yg-lime)" }} aria-hidden />
+          <span className="text-[13.5px]">Line items — what is left in each pot</span>
+        </Link>
+        <Link
+          href="/requests"
+          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-lime"
+          style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+        >
+          <Receipt size={18} style={{ color: "var(--yg-lime)" }} aria-hidden />
+          <span className="text-[13.5px]">
+            {waiting > 0 ? `${waiting} to endorse` : "Your reimbursements"}
+          </span>
+        </Link>
       </div>
-      <p className="mt-4 text-sm text-text-muted">
-        Pending is subtracted from Available, so money already in the approval queue cannot be spent twice.
-      </p>
-      <Link href={`/budget/${departmentId}`} className="mt-6 inline-block text-sm" style={{ color: "var(--yg-pink)" }}>
-        See line items →
-      </Link>
     </>
   );
 }

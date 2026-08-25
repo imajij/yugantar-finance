@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Camera, Receipt } from "lucide-react";
 import { redirect } from "next/navigation";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { Plus } from "lucide-react";
@@ -6,7 +7,7 @@ import { db } from "@/db";
 import { departments, lineItems, reimbursementRequests, users } from "@/db/schema";
 import { getSession } from "@/lib/session";
 import { canFestWide } from "@/lib/authz";
-import { Amount, Card, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
+import { Amount, buttonClass, buttonStyle, Card, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
 import { waitingOn } from "@/lib/services/reimbursements";
 
 export default async function RequestsPage() {
@@ -68,7 +69,19 @@ export default async function RequestsPage() {
       </PageTitle>
 
       {rows.length === 0 ? (
-        <Empty>Nothing here yet. Spent your own money on the fest? Raise a request.</Empty>
+        <Empty
+          icon={<Receipt size={24} aria-hidden />}
+          title="No reimbursements yet"
+          action={
+            <Link href="/requests/new" className={buttonClass("primary")} style={buttonStyle("primary")}>
+              <Camera size={16} aria-hidden /> Photograph a receipt
+            </Link>
+          }
+        >
+          When you pay for something out of pocket, photograph the receipt here and your HOD
+          sees it within minutes. Nothing is spent from your department&rsquo;s budget until
+          Finance approves it.
+        </Empty>
       ) : (
         <Card className="overflow-x-auto p-0">
           <table className="w-full min-w-[52rem] text-sm">

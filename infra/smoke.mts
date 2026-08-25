@@ -240,6 +240,13 @@ await hit("PATCH", `/api/v1/expense-types/${expenseTypeId}`, {
 });
 await hit("GET", "/api/v1/users", { as: finance });
 
+section("Invitations");
+// The unblock for a workflow stalled on an empty seat: the same message the
+// original invitation sent, without losing the account every audit row points at.
+await hit("POST", `/api/v1/users/${mgmtId}/invite`, {
+  as: finance, label: "/api/v1/users/{id}/invite (resend)",
+});
+
 section("Departments and budget");
 const dept = await hit("POST", "/api/v1/departments", {
   as: finance, body: { name: "Tech", slug: `tech-${randomBytes(3).toString("hex")}`, allocated_paise: 0 },
@@ -797,6 +804,10 @@ for (const [path, must, label] of [
   ["/tickets?scope=all", ["Triage", "Backlog", "Todo", "In Progress"], "board columns"],
   ["/tickets/planning", ["Labels", "Projects", "Cycles"], "planning panels"],
   ["/budget", ["Reserve", "Allocated"], "budget totals"],
+  // The redesign's load-bearing sentence: Available is derived, and Pending is a
+  // deduction. If this disappears the five numbers are five boxes again.
+  ["/budget", ["Pending is held back from Available"], "the derivation, explained"],
+  ["/dashboard", ["Money", "Work", "Oversight"], "grouped navigation"],
   // The sentence everyone in a channel is meant to see, not only the administrator.
   // Aimed at a real channel: /chat itself only redirects to one.
   [`/chat/${techChannel}`, ["Administrators can read this channel"], "the disclosure"],
