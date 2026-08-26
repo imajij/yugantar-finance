@@ -207,6 +207,16 @@ const REACHES: Reach[] = [
     options: (o) => ({ params: { id: o.lineItemId } }),
   },
   {
+    name: "edit another fest's ticket template",
+    path: "ticket-templates/[id]", method: "PATCH",
+    options: (o) => ({ params: { id: o.lineItemId }, body: { name: "Taken over" } }),
+  },
+  {
+    name: "unlink another fest's ticket relation",
+    path: "tickets/[id]/links/[linkId]", method: "DELETE",
+    options: (o) => ({ params: { id: o.ticketId, linkId: o.lineItemId } }),
+  },
+  {
     name: "read another fest's channel",
     path: "channels/[id]", method: "GET",
     options: (o) => ({ params: { id: o.lineItemId } }),
@@ -275,6 +285,7 @@ describe("and nothing leaks through a listing", () => {
       ["audit", (j: Record<string, unknown>) => j.data],
       ["allocation-requests", (j: Record<string, unknown>) => j.data],
       ["ticket-labels", (j: Record<string, unknown>) => j.data],
+      ["ticket-templates", (j: Record<string, unknown>) => j.data],
       ["projects", (j: Record<string, unknown>) => j.data],
       ["cycles", (j: Record<string, unknown>) => j.data],
       ["channels", (j: Record<string, unknown>) => j.data],

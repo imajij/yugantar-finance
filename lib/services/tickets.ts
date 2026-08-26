@@ -235,6 +235,10 @@ export async function transitionTicket(
       reason: body.reason ?? body.question ?? body.answer ?? null,
     });
     await notifyTransition(tx, actor, after, action);
+    // Only when it actually settles. A blocker that merely starts is still blocking.
+    if (["DONE", "CLOSED", "REJECTED", "CANCELLED"].includes(after.status)) {
+      await notifyUnblocked(tx, actor, after);
+    }
     return after;
   });
 }
@@ -421,7 +425,8 @@ export async function getTicketDetail(actor: Actor, id: string) {
       .orderBy(tickets.createdAt),
   ]);
   const names = (meta as unknown as TicketNames[])[0];
-  return { ...row, ...names, comments: thread, timeline, watchers, labels, children };
+  const relations = await ticketRelations(actor.festId, id);
+  return { ...row, ...names, comments: thread, timeline, watchers, labels, children, relations };
 }
 
 /**
@@ -499,6 +504,8 @@ export interface TicketRow {
   parent_human_id: string | null;
   child_count: number;
   child_done_count: number;
+  /** Open tickets that say they block this one — a warning on the card, not a gate. */
+  blocked_by: number;
   board_rank: number | null;
 }
 
@@ -542,6 +549,11 @@ export async function listTickets(actor: Actor, opts: TicketFilters = { view: "i
            (select count(*) from tickets ch
              where ch.parent_id = t.id and ch.deleted_at is null
                and ch.status in ('DONE','CLOSED')) as child_done_count,
+           (select count(*) from entity_links el
+             join tickets b on b.id = el.from_id and b.deleted_at is null
+            where el.relation = 'BLOCKS' and el.from_type = 'TICKET'
+              and el.to_type = 'TICKET' and el.to_id = t.id
+              and b.status not in ('DONE','CLOSED','REJECTED','CANCELLED')) as blocked_by,
            coalesce((
              select json_agg(json_build_object('id', tl.id, 'name', tl.name, 'color', tl.color)
                              order by tl.name)
@@ -622,6 +634,7 @@ export async function listTickets(actor: Actor, opts: TicketFilters = { view: "i
     parent_human_id: (r.parent_human_id as string) ?? null,
     child_count: Number(r.child_count),
     child_done_count: Number(r.child_done_count),
+    blocked_by: Number(r.blocked_by),
     board_rank: r.board_rank === null ? null : Number(r.board_rank),
   }));
 }
@@ -876,15 +889,63 @@ export async function setWatcher(actor: SessionUser, ticketId: string, userId: s
 export type LinkableType = "REIMBURSEMENT" | "VENDOR_REQUEST" | "TICKET";
 
 /**
- * PRD 20.9 — relate a ticket to the money it caused, or to a sibling ticket.
+ * The relations a ticket can have, in Linear's vocabulary.
+ *
+ * Each is stored once, from one end, and drawn from both. "RQ-4 blocks RQ-9" is a
+ * single row; RQ-9's page renders "blocked by RQ-4" by reading it backwards. The
+ * alternative — a row per direction — is two facts that can disagree, and every
+ * write has to remember to keep them in step.
+ *
+ * `MENTIONED_IN` is the chat layer's, not a relation anybody sets by hand, and is
+ * deliberately absent here.
+ */
+export const RELATIONS = ["RELATED", "BLOCKS", "DUPLICATES"] as const;
+export type Relation = (typeof RELATIONS)[number];
+
+/** How each relation reads from the far end. */
+export const INVERSE: Record<Relation, string> = {
+  RELATED: "RELATED",
+  BLOCKS: "BLOCKED_BY",
+  DUPLICATES: "DUPLICATED_BY",
+};
+
+export const RELATION_LABEL: Record<string, string> = {
+  RELATED: "relates to",
+  BLOCKS: "blocks",
+  BLOCKED_BY: "blocked by",
+  DUPLICATES: "duplicates",
+  DUPLICATED_BY: "duplicated by",
+};
+
+/**
+ * PRD 20.9 — relate a ticket to the money it caused, or to another ticket.
  * "Stage needs a generator" and the ₹40,000 vendor request for one are the same
  * fact; linking them is how the close-out report reconciles.
+ *
+ * **A block is a statement, not a gate.** Nothing here stops a blocked ticket
+ * being started or closed, and that is deliberate on two counts. 18.2 rule 2 says
+ * status moves through the state machine and handlers never branch on it — least
+ * of all on some *other* ticket’s status. And a fest is four days long: the person
+ * who knows whether the generator really has to arrive first is the one holding
+ * the ticket, not a constraint written a week earlier. So a blocker is shown, and
+ * when it finishes the people waiting on it are told (`notifyUnblocked`). The one
+ * thing refused is a cycle, because "A blocks B blocks A" is not a statement about
+ * the work — it is two tickets that can never be honestly described.
  */
-export async function linkTicket(actor: SessionUser, ticketId: string, toType: LinkableType, toId: string) {
+export async function linkTicket(
+  actor: SessionUser, ticketId: string, toType: LinkableType, toId: string,
+  relation: Relation = "RELATED",
+) {
   return db.transaction(async (tx) => {
     await load(tx, actor, ticketId);
     if (toType === "TICKET" && toId === ticketId) {
       throw new ApiError("VALIDATION_ERROR", "A ticket cannot be linked to itself");
+    }
+    if (relation !== "RELATED" && toType !== "TICKET") {
+      throw new ApiError(
+        "VALIDATION_ERROR",
+        `Only another ticket can be ${relation === "BLOCKS" ? "blocked" : "a duplicate"}`,
+      );
     }
 
     // The target has to exist in this fest and be something the caller can see.
@@ -896,21 +957,185 @@ export async function linkTicket(actor: SessionUser, ticketId: string, toType: L
       throw new ApiError("FORBIDDEN", "You cannot see the record you are linking to");
     }
 
+    // The same pair, the other way round, is the same relation said backwards —
+    // and for BLOCKS it is a two-ticket deadlock. Refused before the write so the
+    // message can name the direction that already exists.
+    if (toType === "TICKET") {
+      const [mirror] = await tx.select({ relation: entityLinks.relation }).from(entityLinks)
+        .where(and(
+          eq(entityLinks.festId, actor.festId),
+          eq(entityLinks.fromType, "TICKET"), eq(entityLinks.fromId, toId),
+          eq(entityLinks.toType, "TICKET"), eq(entityLinks.toId, ticketId),
+        )).limit(1);
+      if (mirror) {
+        throw conflict(
+          `Those two are already linked the other way round — ${RELATION_LABEL[mirror.relation] ?? "related"}`,
+        );
+      }
+      if (relation === "BLOCKS") await assertNoBlockCycle(tx, actor.festId, ticketId, toId);
+    }
+
     const [row] = await tx.insert(entityLinks).values({
       festId: actor.festId,
       fromType: "TICKET", fromId: ticketId,
       toType, toId,
+      relation,
       createdBy: actor.id,
     }).onConflictDoNothing().returning();
 
     if (row) {
       await recordAudit(tx, {
         festId: actor.festId, entityType: "TICKET", entityId: ticketId, actorId: actor.id,
-        action: "ticket.link", after: { to_type: toType, to_id: toId },
+        action: "ticket.link", after: { to_type: toType, to_id: toId, relation },
       });
     }
     return row ?? { already_linked: true };
   });
+}
+
+/**
+ * Refuses a link that would close a blocking loop.
+ *
+ * Walks forward from the ticket about to be blocked: if it already blocks — at any
+ * depth — the ticket that wants to block it, the new edge closes a cycle and every
+ * ticket on it waits on itself. Reachability rather than a depth limit, because a
+ * three-hop loop is exactly as stuck as a one-hop one and much harder to spot.
+ */
+async function assertNoBlockCycle(tx: Tx, festId: string, fromId: string, toId: string) {
+  const [reached] = (await tx.execute(sql`
+    with recursive downstream(id) as (
+      select ${toId}::uuid
+      union
+      select l.to_id
+        from entity_links l
+        join downstream d on l.from_id = d.id
+       where l.fest_id = ${festId} and l.relation = 'BLOCKS'
+         and l.from_type = 'TICKET' and l.to_type = 'TICKET'
+    )
+    select 1 as hit from downstream where id = ${fromId}::uuid limit 1
+  `)) as unknown as { hit: number }[];
+
+  if (reached) {
+    throw new ApiError(
+      "VALIDATION_ERROR",
+      "That would make the two wait on each other. Something already downstream of this one blocks it.",
+    );
+  }
+}
+
+/**
+ * Removing a relation. Either end may do it — a link is a claim about two tickets,
+ * and the department on the receiving end of "you are blocking us" has as much
+ * standing to disagree as the one that said it.
+ */
+export async function unlinkTicket(actor: SessionUser, ticketId: string, linkId: string) {
+  return db.transaction(async (tx) => {
+    await load(tx, actor, ticketId);
+
+    const [link] = await tx.select().from(entityLinks)
+      .where(and(eq(entityLinks.id, linkId), eq(entityLinks.festId, actor.festId))).limit(1);
+    // A UUID is not a secret (18.2 rule 10): the link has to be in this fest *and*
+    // touch the ticket the caller has already been allowed to open.
+    if (!link) throw notFound("Link");
+    const touches = (link.fromType === "TICKET" && link.fromId === ticketId)
+      || (link.toType === "TICKET" && link.toId === ticketId);
+    if (!touches) throw notFound("Link");
+
+    await tx.delete(entityLinks).where(eq(entityLinks.id, linkId));
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "TICKET", entityId: ticketId, actorId: actor.id,
+      action: "ticket.unlink",
+      before: { to_type: link.toType, to_id: link.toId, relation: link.relation },
+    });
+    return { ok: true };
+  });
+}
+
+export interface TicketRelation {
+  link_id: string;
+  relation: string;
+  id: string;
+  human_id: string;
+  title: string;
+  status: string;
+  /** Set for the far end of a BLOCKS row, which is the half worth acting on. */
+  is_open: boolean;
+}
+
+/**
+ * Both ends at once. Rows where this ticket is the `from` read forwards; rows
+ * where it is the `to` read through `INVERSE`, which is the whole reason one row
+ * is enough.
+ */
+async function ticketRelations(festId: string, id: string): Promise<TicketRelation[]> {
+  return (await db.execute(sql`
+    select l.id as link_id, 'BLOCKED_BY' as relation, t.id, t.human_id, t.title,
+           t.status::text as status,
+           (t.status not in ('DONE','CLOSED','REJECTED','CANCELLED')) as is_open
+      from entity_links l
+      join tickets t on t.id = l.from_id and t.deleted_at is null
+     where l.fest_id = ${festId} and l.to_type = 'TICKET' and l.to_id = ${id}
+       and l.from_type = 'TICKET' and l.relation = 'BLOCKS'
+    union all
+    select l.id, case l.relation when 'DUPLICATES' then 'DUPLICATED_BY' else 'RELATED' end,
+           t.id, t.human_id, t.title, t.status::text,
+           (t.status not in ('DONE','CLOSED','REJECTED','CANCELLED'))
+      from entity_links l
+      join tickets t on t.id = l.from_id and t.deleted_at is null
+     where l.fest_id = ${festId} and l.to_type = 'TICKET' and l.to_id = ${id}
+       and l.from_type = 'TICKET' and l.relation in ('RELATED','DUPLICATES')
+    union all
+    select l.id, l.relation, t.id, t.human_id, t.title, t.status::text,
+           (t.status not in ('DONE','CLOSED','REJECTED','CANCELLED'))
+      from entity_links l
+      join tickets t on t.id = l.to_id and t.deleted_at is null
+     where l.fest_id = ${festId} and l.from_type = 'TICKET' and l.from_id = ${id}
+       and l.to_type = 'TICKET' and l.relation in ('RELATED','BLOCKS','DUPLICATES')
+     order by 2, 4
+  `)) as unknown as TicketRelation[];
+}
+
+/**
+ * Tells whoever is waiting that the thing they were waiting on has finished.
+ *
+ * This is the useful half of a relation nobody has to enforce: the block never
+ * stopped anyone, but knowing the generator arrived is worth an interruption. Only
+ * fired when the blocker actually settles — a blocker that merely moves from OPEN
+ * to IN_PROGRESS is still blocking.
+ */
+async function notifyUnblocked(
+  tx: Tx, actor: SessionUser,
+  blocker: { id: string; festId: string; humanId: string; title: string; status: string },
+) {
+  const waiting = (await tx.execute(sql`
+    select t.id, t.human_id, t.title, t.requester_id, t.assignee_id
+      from entity_links l
+      join tickets t on t.id = l.to_id and t.deleted_at is null
+     where l.fest_id = ${blocker.festId} and l.relation = 'BLOCKS'
+       and l.from_type = 'TICKET' and l.from_id = ${blocker.id} and l.to_type = 'TICKET'
+       and t.status not in ('DONE','CLOSED','REJECTED','CANCELLED')
+  `)) as unknown as {
+    id: string; human_id: string; title: string; requester_id: string; assignee_id: string | null;
+  }[];
+
+  for (const t of waiting) {
+    const recipients = new Set([t.requester_id, ...(t.assignee_id ? [t.assignee_id] : [])]);
+    recipients.delete(actor.id);
+    if (recipients.size === 0) continue;
+    await notify(tx, {
+      festId: blocker.festId,
+      type: "ticket.unblocked",
+      entityType: "TICKET",
+      entityId: t.id,
+      title: `${t.human_id}: ${t.title}`,
+      body: `${blocker.humanId} is ${blocker.status === "DONE" ? "done" : blocker.status.toLowerCase()} — this is no longer waiting on it`,
+      toUsers: [...recipients],
+      // In the app, not in an inbox. "The generator arrived" is worth a badge on a
+      // board somebody is already looking at; it is not worth an email at 2am
+      // during the four days when everything else is also urgent.
+      inAppOnly: true,
+    });
+  }
 }
 
 /**

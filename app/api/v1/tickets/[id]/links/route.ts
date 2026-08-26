@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { parseBody, route } from "@/lib/api";
-import { linkTicket } from "@/lib/services/tickets";
+import { linkTicket, RELATIONS } from "@/lib/services/tickets";
 
 const schema = z.object({
   to_type: z.enum(["REIMBURSEMENT", "VENDOR_REQUEST", "TICKET"]),
   to_id: z.uuid(),
+  /** Ticket-to-ticket only for anything other than RELATED; the service refuses the rest. */
+  relation: z.enum(RELATIONS).optional(),
 });
 
 /**
@@ -13,5 +15,5 @@ const schema = z.object({
  */
 export const POST = route<{ id: string }>(async ({ user, params, request }) => {
   const b = await parseBody(request, schema);
-  return linkTicket(user, params.id, b.to_type, b.to_id);
+  return linkTicket(user, params.id, b.to_type, b.to_id, b.relation);
 });

@@ -2,12 +2,12 @@ import Link from "next/link";
 import { notFound as nf, redirect } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { departments, users } from "@/db/schema";
 import { getSession } from "@/lib/session";
 import { can } from "@/lib/authz";
-import { listCycles, listLabels, listProjects } from "@/lib/services/planning";
+import { listCycles, listLabels, listProjects, listTemplates } from "@/lib/services/planning";
 import { PageTitle } from "@/components/ui";
-import { Cycles, Labels, Projects } from "./panels";
+import { Cycles, Labels, Projects, Templates, type TemplateRow } from "./panels";
 
 export const dynamic = "force-dynamic";
 
@@ -17,14 +17,25 @@ export default async function PlanningPage() {
   if (!user) redirect("/sign-in");
   if (!can(user, "ticket.plan", { festId: user.festId, departmentId: user.departmentId })) nf();
 
-  const [labels, projects, cycles, members] = await Promise.all([
+  const [labels, projects, cycles, members, templates, depts] = await Promise.all([
     listLabels(user),
     listProjects(user),
     listCycles(user),
     db.select({ id: users.id, name: users.name }).from(users)
       .where(and(eq(users.festId, user.festId), eq(users.status, "ACTIVE")))
       .orderBy(asc(users.name)),
+    // Retired ones included: this is the page that manages them, so it is the one
+    // place they have to stay visible.
+    listTemplates(user, { all: true }),
+    db.select({ id: departments.id, name: departments.name }).from(departments)
+      .where(and(eq(departments.festId, user.festId), eq(departments.isActive, true)))
+      .orderBy(asc(departments.name)),
   ]);
+
+  const simple = {
+    projects: projects.map((p) => ({ id: String(p.id), name: String(p.name) })),
+    cycles: cycles.map((c) => ({ id: String(c.id), name: String(c.name) })),
+  };
 
   return (
     <div className="max-w-3xl">
@@ -39,7 +50,7 @@ export default async function PlanningPage() {
           </Link>
         }
       >
-        Labels &amp; projects
+        Labels, templates &amp; projects
       </PageTitle>
 
       <p className="mb-6 text-sm text-text-muted">
@@ -49,6 +60,13 @@ export default async function PlanningPage() {
 
       <div className="space-y-10">
         <Labels labels={labels} />
+        <Templates
+          templates={templates as unknown as TemplateRow[]}
+          departments={depts}
+          labels={labels}
+          projects={simple.projects}
+          cycles={simple.cycles}
+        />
         <Projects
           projects={projects.map((p) => ({
             id: String(p.id),

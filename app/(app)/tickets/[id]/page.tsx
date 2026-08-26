@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound as nf, redirect } from "next/navigation";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, ne, notInArray, or } from "drizzle-orm";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { tickets, users } from "@/db/schema";
 import { getSession } from "@/lib/session";
 import { getTicketDetail } from "@/lib/services/tickets";
 import { can, satisfiesActorConstraints } from "@/lib/authz";
@@ -12,6 +12,7 @@ import { Amount, Card, PageTitle, StateChip } from "@/components/ui";
 import { TransitionActions } from "@/components/transitions";
 import { Timeline } from "@/components/timeline";
 import { CommentThread } from "@/components/comments";
+import { Relations } from "./relations";
 
 export default async function TicketDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -54,6 +55,30 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
           eq(users.status, "ACTIVE"),
         ))
     : [];
+
+  /*
+   * What this could be linked to: live tickets either of this caller's departments
+   * is party to. The same visibility the service enforces, asked once here so the
+   * picker cannot offer something the API would then refuse.
+   */
+  const candidates = await db
+    .select({ id: tickets.id, humanId: tickets.humanId, title: tickets.title })
+    .from(tickets)
+    .where(and(
+      eq(tickets.festId, user.festId),
+      isNull(tickets.deletedAt),
+      ne(tickets.id, t.id),
+      notInArray(tickets.status, ["CLOSED", "REJECTED", "CANCELLED"]),
+      or(
+        eq(tickets.requestingDepartmentId, user.departmentId),
+        eq(tickets.targetDepartmentId, user.departmentId),
+        eq(tickets.requesterId, user.id),
+      ),
+    ))
+    .orderBy(tickets.humanId)
+    .limit(200);
+
+  const blockers = t.relations.filter((r) => r.relation === "BLOCKED_BY" && r.is_open);
 
   const overdue = new Date(t.dueAt) < new Date()
     && !["CLOSED", "REJECTED", "CANCELLED"].includes(t.status);
@@ -108,6 +133,16 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
           </div>
         )}
 
+        {blockers.length > 0 && (
+          <p
+            className="mt-4 rounded-lg px-3 py-2 text-sm"
+            style={{ background: "var(--flag-med-bg)", color: "var(--flag-med-fg)" }}
+          >
+            Waiting on {blockers.map((b) => b.human_id).join(", ")}. Nothing stops this being worked
+            on — whoever holds it decides that — but the people on it are told when the blocker lands.
+          </p>
+        )}
+
         {t.infoRequest && (
           <p className="mt-4 rounded-lg px-3 py-2 text-sm" style={{ background: "var(--flag-med-bg)", color: "var(--flag-med-fg)" }}>
             Waiting on an answer: {t.infoRequest}
@@ -140,6 +175,20 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
           />
         </Card>
       )}
+
+      <Card className="mt-4">
+        <h2 className="font-display text-sm">Relations</h2>
+        <p className="mt-1 mb-3 text-xs text-text-muted">
+          A statement about two tickets, not a gate on either. A block is shown and notified;
+          it never decides what anybody may do.
+        </p>
+        <Relations
+          ticketId={t.id}
+          relations={t.relations}
+          candidates={candidates}
+          canEdit
+        />
+      </Card>
 
       {t.children.length > 0 && (
         <Card className="mt-4">

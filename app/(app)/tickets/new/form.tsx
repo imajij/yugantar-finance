@@ -8,6 +8,30 @@ const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "URGENT"] as const;
 export interface Option { id: string; name: string }
 export interface LabelOption extends Option { color: string }
 
+/** A half-written ticket. Everything on it is a suggestion the person can overwrite. */
+export interface TemplateOption {
+  id: string;
+  name: string;
+  summary: string | null;
+  target_department_id: string | null;
+  title: string | null;
+  body: string | null;
+  priority: string;
+  location: string | null;
+  due_in_hours: number | null;
+  project_id: string | null;
+  cycle_id: string | null;
+  label_ids: string[];
+}
+
+/** `datetime-local` wants a local wall-clock string, not an ISO instant. */
+function localDateTime(hoursFromNow: number): string {
+  const t = new Date(Date.now() + hoursFromNow * 3_600_000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`
+    + `T${pad(t.getHours())}:${pad(t.getMinutes())}`;
+}
+
 /**
  * PRD 9.5 — one screen, one ask. Title, who, what by when.
  *
@@ -17,7 +41,7 @@ export interface LabelOption extends Option { color: string }
  * than the filing is worth. Anything skipped here can be set from the board later.
  */
 export function TicketForm({
-  departments, labels, projects, cycles, parents, fixedTarget = false,
+  departments, labels, projects, cycles, parents, templates = [], fixedTarget = false,
 }: {
   departments: Option[];
   /** A member raises with their own head — one destination, so it is stated, not picked. */
@@ -27,12 +51,29 @@ export function TicketForm({
   cycles: Option[];
   /** Tickets that could be this one's parent — top-level, still open. */
   parents: { id: string; humanId: string; title: string }[];
+  /** Already filtered to what this caller may raise; see `listTemplates`. */
+  templates?: TemplateOption[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
   const [chosenLabels, setChosenLabels] = useState<string[]>([]);
+  const [tpl, setTpl] = useState<TemplateOption | null>(null);
+
+  /*
+   * Picking a template re-mounts the form (`key` below) so every field takes its
+   * new default. An effect that reached in and set each input would fight whatever
+   * the person had already typed; throwing the form away and rebuilding it says
+   * plainly that starting from a template starts over.
+   */
+  function choose(id: string) {
+    const next = templates.find((t) => t.id === id) ?? null;
+    setTpl(next);
+    setChosenLabels(next?.label_ids ?? []);
+    setError(null);
+    if (next && (next.project_id || next.cycle_id || next.label_ids.length > 0)) setPlanning(true);
+  }
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -78,20 +119,38 @@ export function TicketForm({
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
+    <>
+      {templates.length > 0 && (
+        <div className="mb-5">
+          <span className="text-sm text-text-soft">Start from a template</span>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <TemplateChip on={tpl === null} onClick={() => choose("")}>Blank</TemplateChip>
+            {templates.map((t) => (
+              <TemplateChip key={t.id} on={tpl?.id === t.id} onClick={() => choose(t.id)} title={t.summary ?? undefined}>
+                {t.name}
+              </TemplateChip>
+            ))}
+          </div>
+          {tpl?.summary && <p className="mt-2 text-xs text-text-muted">{tpl.summary}</p>}
+        </div>
+      )}
+
+    <form key={tpl?.id ?? "blank"} onSubmit={submit} className="space-y-4">
       <Field label="What do you need?" hint="Short and specific — 80 characters.">
-        <input name="title" required minLength={5} maxLength={80} className={INPUT} />
+        <input name="title" required minLength={5} maxLength={80} defaultValue={tpl?.title ?? ""} className={INPUT} />
       </Field>
 
       <Field label="Details">
-        <textarea name="description" required minLength={5} maxLength={2000} rows={4} className={INPUT} />
+        <textarea name="description" required minLength={5} maxLength={2000} rows={4}
+          defaultValue={tpl?.body ?? ""} className={INPUT} />
       </Field>
 
       {fixedTarget ? (
         <input type="hidden" name="target_department_id" value={departments[0]?.id ?? ""} />
       ) : (
         <Field label="Which department?">
-          <select name="target_department_id" required className={INPUT} defaultValue="">
+          <select name="target_department_id" required className={INPUT}
+            defaultValue={tpl?.target_department_id ?? ""}>
             <option value="" disabled>Choose a department</option>
             {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
@@ -99,11 +158,12 @@ export function TicketForm({
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Needed by">
-          <input name="due_at" type="datetime-local" required className={INPUT} />
+        <Field label="Needed by" hint={tpl?.due_in_hours ? `The template suggests ${tpl.due_in_hours}h` : undefined}>
+          <input name="due_at" type="datetime-local" required className={INPUT}
+            defaultValue={tpl?.due_in_hours ? localDateTime(tpl.due_in_hours) : ""} />
         </Field>
         <Field label="Priority">
-          <select name="priority" defaultValue="MEDIUM" className={INPUT}>
+          <select name="priority" defaultValue={tpl?.priority ?? "MEDIUM"} className={INPUT}>
             {PRIORITIES.map((p) => <option key={p} value={p}>{p.toLowerCase()}</option>)}
           </select>
         </Field>
@@ -111,7 +171,7 @@ export function TicketForm({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Where" hint="Optional">
-          <input name="location" maxLength={200} className={INPUT} />
+          <input name="location" maxLength={200} defaultValue={tpl?.location ?? ""} className={INPUT} />
         </Field>
         <Field label="Estimated cost (₹)" hint="Optional — for visibility, not a budget hold">
           <input name="estimated_cost" type="number" step="0.01" min="0" className={INPUT} />
@@ -158,13 +218,13 @@ export function TicketForm({
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Project" hint="Optional">
-                <select name="project_id" defaultValue="" className={INPUT}>
+                <select name="project_id" defaultValue={tpl?.project_id ?? ""} className={INPUT}>
                   <option value="">No project</option>
                   {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </Field>
               <Field label="Cycle" hint="Optional">
-                <select name="cycle_id" defaultValue="" className={INPUT}>
+                <select name="cycle_id" defaultValue={tpl?.cycle_id ?? ""} className={INPUT}>
                   <option value="">No cycle</option>
                   {cycles.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
@@ -197,6 +257,25 @@ export function TicketForm({
         </p>
       )}
     </form>
+    </>
+  );
+}
+
+function TemplateChip({
+  on, onClick, title, children,
+}: {
+  on: boolean; onClick: () => void; title?: string; children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button" aria-pressed={on} onClick={onClick} title={title}
+      className="rounded-full px-3 py-1.5 text-xs"
+      style={on
+        ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)", border: "1px solid var(--yg-lime)" }
+        : { border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+    >
+      {children}
+    </button>
   );
 }
 
