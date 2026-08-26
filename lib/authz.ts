@@ -52,7 +52,7 @@ export type Action =
   // reads
   | "fest.view" | "fest.settings.view"
   | "department.view" | "department.budget.view"
-  | "lineItem.view" | "budgetReview.view"
+  | "lineItem.view" | "lineItem.spendAgainst" | "budgetReview.view"
   | "reimbursement.view" | "vendor.view" | "vendorRequest.view"
   | "vendor.bankDetails.view"
   | "income.view" | "ticket.view" | "flag.view" | "audit.view" | "export.run"
@@ -104,6 +104,7 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
   const finance = isFinance(actor);
   const management = isManagement(actor);
   const hod = isHod(actor);
+  const member = actor.role === "MEMBER";
   const superAdmin = isSuperAdmin(actor);
   const own = ownsDepartment(actor, resource);
 
@@ -117,10 +118,30 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
     case "department.view":
     case "department.budget.view":
     case "lineItem.view":
-      // An administrator reads every department's numbers, not just their own. That
-      // is the point of the flag: oversight of the whole fest, whatever role they
-      // happen to hold.
-      return finance || management || superAdmin || own;
+      // Reading what a department has and what is left of it.
+      //
+      // A Member is deliberately not on this list. They spend out of a budget
+      // without being shown it: what a department was allocated, what it has
+      // committed, and how close it is to its cap are the head's business and
+      // Finance's, and a Member who can see the balance is a Member who starts
+      // deciding whether to claim based on it.
+      //
+      // An administrator reads every department's numbers, not just their own —
+      // that is the point of the flag: oversight of the whole fest, whatever role
+      // they happen to hold.
+      return finance || management || superAdmin || (own && !member);
+
+    case "lineItem.spendAgainst":
+      // Choosing which pot a receipt is charged to, which is not the same question
+      // as reading that pot's balance. A Member may file against their own
+      // department and nobody else's — that is what stops their claim landing on
+      // Logistics' budget, and it has to live here because `lineItem.view` no
+      // longer holds for them.
+      //
+      // Finance and Management are fest-wide because their own departments hold no
+      // budget: every role may claim money they personally spent (5.1), and if
+      // this were own-department only they could never claim at all.
+      return finance || management || own;
 
     case "budgetReview.view":
       return finance;

@@ -813,6 +813,43 @@ if (dm.json?.id) {
   }
 }
 
+section("What a member may not see");
+/*
+ * A member spends out of a budget without being shown it (5.1), and raises work
+ * with their own head rather than across departments. Both are refusals, so both
+ * are worth a call rather than a screenshot.
+ */
+await hit("GET", `/api/v1/departments/${techId}/summary`, {
+  as: techMember, expect: 403, label: "/api/v1/departments/{own}/summary (member refused)",
+});
+await hit("GET", `/api/v1/departments/${techId}/line-items`, {
+  as: techMember, expect: 403, label: "/api/v1/departments/{own}/line-items (member refused)",
+});
+await hit("GET", `/api/v1/line-items/${lineItemId}`, {
+  as: techMember, expect: 403, label: "/api/v1/line-items/{id} (member refused)",
+});
+await hit("GET", "/budget", { as: techMember, expect: 404, label: "/budget (member refused)" });
+
+// The half they keep: filing against their own department's line item.
+await hit("POST", "/api/v1/tickets", {
+  as: techMember, expect: [400, 422],
+  body: {
+    title: "Asking Logistics directly for a van",
+    description: "Which is their head's call to make, not mine.",
+    target_department_id: coreDeptId, due_at: "2026-11-27T16:00:00+05:30",
+  },
+  label: "/api/v1/tickets (member cannot address another department)",
+});
+await hit("POST", "/api/v1/tickets", {
+  as: techMember,
+  body: {
+    title: "Spare XLR cables for the acoustic set",
+    description: "Two of ours have gone missing since the sound check.",
+    target_department_id: techId, due_at: "2026-11-27T16:00:00+05:30",
+  },
+  label: "/api/v1/tickets (member raises with their own head)",
+});
+
 section("Comments, flags, audit, notifications");
 await hit("POST", "/api/v1/comments", {
   as: finance, body: { entity_type: "REIMBURSEMENT", entity_id: claimId, body: "Checked against the quote." },

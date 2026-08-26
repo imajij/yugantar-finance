@@ -123,7 +123,10 @@ const CASES: Case[] = [
     load: () => import("@/app/api/v1/departments/[id]/summary/route") as Promise<Record<string, Handler>>,
     method: "GET",
     options: (f) => ({ params: { id: f.departments.logistics } }),
-    allow: ["otherMember", "otherHod", "finance", "management", "superAdmin"],
+    // A Member is refused their *own* department's figures too, so being in
+    // Logistics does not get `otherMember` in. Budgets belong to whoever answers
+    // for them.
+    allow: ["otherHod", "finance", "management", "superAdmin"],
   },
 
   /* ------------------------------------------------------------- 20.5 line items */
@@ -272,7 +275,7 @@ const CASES: Case[] = [
     load: () => import("@/app/api/v1/dashboard/department/[id]/route") as Promise<Record<string, Handler>>,
     method: "GET",
     options: (f) => ({ params: { id: f.departments.logistics } }),
-    allow: ["otherMember", "otherHod", "finance", "management", "superAdmin"],
+    allow: ["otherHod", "finance", "management", "superAdmin"],
   },
   {
     name: "GET /queues/endorsements",

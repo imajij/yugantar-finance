@@ -400,7 +400,6 @@ export const tickets = pgTable("tickets", {
 }, (t) => [
   unique("tickets_fest_human_id").on(t.festId, t.humanId),
   check("tickets_title_len", sql`char_length(${t.title}) <= 80`),
-  check("tickets_cross_department", sql`${t.requestingDepartmentId} <> ${t.targetDepartmentId}`),
   index("tickets_inbox_idx").on(t.targetDepartmentId, t.status, t.priority, t.dueAt),
   index("tickets_outgoing_idx").on(t.requestingDepartmentId, t.status),
   index("tickets_assignee_idx").on(t.assigneeId, t.status),

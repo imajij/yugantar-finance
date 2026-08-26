@@ -63,7 +63,7 @@ beforeEach(async () => {
 });
 
 test("the happy path: accept, start, done, confirmed by the requester", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   expect(t.status).toBe("OPEN");
   expect(t.humanId).toMatch(/^YUG-\d+$/);
 
@@ -79,12 +79,12 @@ test("the happy path: accept, start, done, confirmed by the requester", async ()
 
   // Only the requester closes it — the doer saying "done" is not the same as done.
   await expect(transitionTicket(logiHod, t.id, "CONFIRM")).rejects.toMatchObject({ code: "FORBIDDEN" });
-  await transitionTicket(techMember, t.id, "CONFIRM");
+  await transitionTicket(techHod, t.id, "CONFIRM");
   expect((await getTicketDetail(techMember, t.id)).status).toBe("CLOSED");
 });
 
 test("NEEDS_INFO returns the ticket to wherever it was asked from", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await transitionTicket(logiHod, t.id, "ACCEPT");
   await transitionTicket(logiHod, t.id, "START");
 
@@ -93,21 +93,21 @@ test("NEEDS_INFO returns the ticket to wherever it was asked from", async () => 
   expect(detail.status).toBe("NEEDS_INFO");
   expect(detail.infoRequest).toBe("Which entrance?");
 
-  await transitionTicket(techMember, t.id, "REPLY_INFO", { answer: "The back one" });
+  await transitionTicket(techHod, t.id, "REPLY_INFO", { answer: "The back one" });
   detail = await getTicketDetail(techMember, t.id);
   expect(detail.status).toBe("IN_PROGRESS");        // not OPEN — back where it was
   expect(detail.infoRequest).toBeNull();
 });
 
 test("escalation marks the ticket without moving it", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   const after = await transitionTicket(techHod, t.id, "ESCALATE");
   expect(after.status).toBe("OPEN");
   expect(after.escalatedAt).not.toBeNull();
 });
 
 test("only the target department triages, and only its own people take the work", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
 
   // The requesting department's own HOD has the role but not the standing to accept.
   await expect(transitionTicket(techHod, t.id, "ACCEPT")).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -121,7 +121,7 @@ test("only the target department triages, and only its own people take the work"
 });
 
 test("blocking needs a reason and unblocking clears it", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await transitionTicket(logiHod, t.id, "ACCEPT");
   await transitionTicket(logiHod, t.id, "START");
 
@@ -136,23 +136,25 @@ test("blocking needs a reason and unblocking clears it", async () => {
   expect(unblocked.blockedReason).toBeNull();
 });
 
-test("a ticket cannot be raised against your own department", async () => {
-  await expect(createTicket(techMember, ask({ targetDepartmentId: techId })))
+test("an HOD's ticket cannot be raised against their own department", async () => {
+  // Their own department's work is their own board. Addressing it to themselves
+  // would make a ticket a note. A member's is the opposite case — see below.
+  await expect(createTicket(techHod, ask({ targetDepartmentId: techId })))
     .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
 });
 
 test("reopening a done ticket puts it back in progress", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await transitionTicket(logiHod, t.id, "ACCEPT");
   await transitionTicket(logiHod, t.id, "MARK_DONE");
 
-  const reopened = await transitionTicket(techMember, t.id, "REOPEN", { reason: "only 20 chairs arrived" });
+  const reopened = await transitionTicket(techHod, t.id, "REOPEN", { reason: "only 20 chairs arrived" });
   expect(reopened.status).toBe("IN_PROGRESS");
   expect(reopened.doneAt).toBeNull();
 });
 
 test("the boards separate inbox, outgoing and mine", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await transitionTicket(logiHod, t.id, "ACCEPT");
   await transitionTicket(logiHod, t.id, "REASSIGN", { assignee_id: logiMember.id });
 
@@ -167,7 +169,7 @@ test("the boards separate inbox, outgoing and mine", async () => {
 });
 
 test("outsiders cannot see a ticket between two other departments", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   const outsider = { ...techMember, id: (await one<{ id: string }>(sql`
     insert into users (fest_id, email, name, role, department_id, status)
     values (${festId}, 'nosy@t.test', 'Nosy', 'MEMBER', ${financeDeptId}, 'ACTIVE') returning id`)).id,
@@ -179,11 +181,50 @@ test("outsiders cannot see a ticket between two other departments", async () => 
 });
 
 test("every transition is audited with its reason", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await transitionTicket(logiHod, t.id, "REJECT", { reason: "no chairs left, ask Hospitality" });
 
   const detail = await getTicketDetail(techMember, t.id);
   const reject = detail.timeline.find((e) => e.action === "ticket.transition.REJECT");
   expect(reject?.reason).toBe("no chairs left, ask Hospitality");
   expect(reject?.actor).toBe("logi.hod@t.test");
+});
+
+/* ------------------------------------------------- who a ticket may be addressed to */
+
+/**
+ * A member raises work with their own department's head and nobody else.
+ *
+ * They do not negotiate across departments — that is what having a head is for — and
+ * a member who could address Logistics directly would be committing another
+ * department's people without its head knowing. Everybody else is the opposite: a
+ * ticket from an HOD, Finance or Management is one department asking another.
+ */
+test("a member raises with their own head, and cannot address another department", async () => {
+  await expect(createTicket(techMember, ask({ targetDepartmentId: logiId })))
+    .rejects.toThrow(/own department's head/i);
+
+  const own = await createTicket(techMember, ask({ targetDepartmentId: techId }));
+  expect(own.targetDepartmentId).toBe(techId);
+  expect(own.requestingDepartmentId).toBe(techId);
+});
+
+test("their own head triages it, and another department's head cannot", async () => {
+  const t = await createTicket(techMember, ask({ targetDepartmentId: techId }));
+
+  await expect(transitionTicket(logiHod, t.id, "ACCEPT")).rejects.toThrow(/not found|not permitted|may not/i);
+  expect((await transitionTicket(techHod, t.id, "ACCEPT")).status).toBe("ACCEPTED");
+});
+
+test("an HOD still asks another department, and may not ask themselves", async () => {
+  await expect(createTicket(techHod, ask({ targetDepartmentId: techId })))
+    .rejects.toThrow(/asks another department/i);
+  await expect(createTicket(techHod, ask({ targetDepartmentId: logiId }))).resolves.toBeTruthy();
+});
+
+test("a member's ticket is visible to their own department and not another", async () => {
+  const t = await createTicket(techMember, ask({ targetDepartmentId: techId }));
+
+  await expect(getTicketDetail(techHod, t.id)).resolves.toBeTruthy();
+  await expect(getTicketDetail(logiMember, t.id)).rejects.toThrow(/not permitted|not found/i);
 });

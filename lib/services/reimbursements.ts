@@ -357,8 +357,9 @@ async function loadOpenLineItem(tx: Tx, actor: Actor, lineItemId: string) {
   if (item.status === "CLOSED") {
     throw new ApiError("VALIDATION_ERROR", `${item.name} is closed; no new requests can attach to it`);
   }
-  // A Member may only spend against their own department (5.1).
-  if (!can(actor, "lineItem.view", { festId: actor.festId, departmentId: item.departmentId })) {
+  // Filing against it, not reading its balance — a Member may do the first and not
+  // the second, so this cannot be `lineItem.view` (see `lineItem.spendAgainst`).
+  if (!can(actor, "lineItem.spendAgainst", { festId: actor.festId, departmentId: item.departmentId })) {
     throw new ApiError("FORBIDDEN", "That line item belongs to another department");
   }
   return item;
