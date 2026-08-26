@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  doublePrecision,
   char,
   check,
   customType,
@@ -375,6 +376,12 @@ export const tickets = pgTable("tickets", {
   lineItemId: uuid("line_item_id").references(() => lineItems.id),
   status: ticketStatus("status").notNull().default("OPEN"),
   previousStatus: ticketStatus("previous_status"),
+  /**
+   * Where it sits in its board column. A float so dropping a card between two
+   * others is one UPDATE at the midpoint rather than renumbering the column; null
+   * means "never dragged", and those fall back to priority-then-due order.
+   */
+  boardRank: doublePrecision("board_rank"),
   /** Linear's planning axes: a parent ticket, a project, a cycle. All optional. */
   parentId: uuid("parent_id"),
   projectId: uuid("project_id"),
@@ -407,6 +414,7 @@ export const tickets = pgTable("tickets", {
   index("tickets_parent_idx").on(t.parentId).where(sql`deleted_at is null`),
   index("tickets_project_idx").on(t.projectId).where(sql`deleted_at is null`),
   index("tickets_cycle_idx").on(t.cycleId).where(sql`deleted_at is null`),
+  index("tickets_rank_idx").on(t.status, t.boardRank).where(sql`deleted_at is null`),
 ]);
 
 export const ticketWatchers = pgTable("ticket_watchers", {

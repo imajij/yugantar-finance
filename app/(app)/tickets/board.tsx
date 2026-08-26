@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle, Check, ChevronDown, Columns3, Filter, Keyboard, List, Plus, Search, X,
+  AlertTriangle, Check, ChevronDown, Columns3, Command, Filter, Keyboard, List, Plus,
+  Search, SquareCheckBig, X,
 } from "lucide-react";
 import { formatPaise } from "@/lib/money";
 import { chipStyle, stateLabel } from "@/lib/state-chip";
@@ -12,6 +13,9 @@ import {
   CATEGORY_ENTRY_ACTIONS, CATEGORY_LABEL, TICKET_CATEGORIES,
   type TicketCategory,
 } from "@/lib/state-machines/ticket";
+import { useBoard, useSelection } from "./use-board";
+import { CommandPalette, type Command as PaletteCommand } from "./palette";
+import { Peek } from "./peek";
 
 /**
  * The ticket board.
@@ -31,6 +35,12 @@ import {
  * transition into that column and refused, out loud, when there is none. That is
  * the honest version of the interaction: the board can express anything the rules
  * allow and nothing they don't.
+ *
+ * The interaction layer around all that is in three files beside this one, because
+ * each is a whole idea: `use-board` holds what has changed but not yet come back
+ * from the server, `palette` is Cmd+K, and `peek` is reading a card without losing
+ * your place. Dragging *within* a column is ordering rather than a decision, so it
+ * goes to its own endpoint and never through a transition.
  */
 
 /* ------------------------------------------------------------------- types */
@@ -64,6 +74,8 @@ export interface BoardTicket {
   parent_human_id: string | null;
   child_count: number;
   child_done_count: number;
+  /** Where it sits in its column once somebody has dragged it. */
+  board_rank: number | null;
 }
 
 export interface Option { id: string; name: string }
@@ -208,14 +220,18 @@ export function Board(props: BoardProps) {
   const query = params.get("q") ?? "";
 
   const [search, setSearch] = useState(query);
-  const [selected, setSelected] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ kind: string; ticket: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [peeking, setPeeking] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [dropBefore, setDropBefore] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // What has changed but not yet come back from the server, plus the errors from
+  // anything that failed on the way. See `use-board`.
+  const { view, apply, reorder, errors, dismiss, pending } = useBoard(tickets);
 
   /** Every control writes to the URL, so a board is always a link. */
   const setParam = useCallback((patch: Record<string, string | null>) => {
@@ -234,84 +250,91 @@ export function Board(props: BoardProps) {
   }, [params, setParam]);
 
   const groups = useMemo(
-    () => group(tickets, groupBy, { members, labels, projects, cycles }),
-    [tickets, groupBy, members, labels, projects, cycles],
+    () => group(view, groupBy, { members, labels, projects, cycles }),
+    [view, groupBy, members, labels, projects, cycles],
   );
 
   const ordered = useMemo(() => groups.flatMap((g) => g.tickets), [groups]);
-  const byId = useMemo(() => new Map(tickets.map((t) => [t.id, t])), [tickets]);
+  const byId = useMemo(() => new Map(view.map((t) => [t.id, t])), [view]);
+
+  // The row the keyboard is on, and the rows a bulk action would touch. They are
+  // different things: you move focus with J/K and take rows with X.
+  const [focused, setFocused] = useState<string | null>(null);
+  const { selected, click, toggle, clear } = useSelection(ordered);
+
+  // What a command would act on: the taken rows if there are any, otherwise the one
+  // under the keyboard. Memoised because the palette is rebuilt from it.
+  const acting = useMemo(
+    () => (selected.size > 0 ? [...selected] : focused ? [focused] : []),
+    [selected, focused],
+  );
 
   /* ------------------------------------------------------------ mutations */
 
-  const call = useCallback(async (url: string, body: unknown, method = "PATCH") => {
-    setBusy(true);
-    setError(null);
-    const res = await fetch(url, {
-      method, headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  /**
+   * A field change on one or many tickets. It lands on screen at once and the
+   * request follows; a failure reverts that field and says which ticket.
+   */
+  const patch = useCallback((ids: string[], body: Record<string, unknown>, optimistic: Partial<BoardTicket>, what: string) => {
+    if (ids.length === 0) return;
+    apply(ids, {
+      label: ids.length === 1 ? `${byId.get(ids[0])?.human_id ?? "That ticket"} — ${what}` : `${ids.length} tickets — ${what}`,
+      optimistic,
+      send: async () => {
+        // One request per ticket: the API takes one at a time, and a partial
+        // failure should leave the ones that worked alone.
+        const results = await Promise.all(ids.map((id) => fetch(`/api/v1/tickets/${id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        })));
+        return results.find((r) => !r.ok) ?? results[0];
+      },
     });
-    setBusy(false);
-    if (!res.ok) {
-      const payload = await res.json().catch(() => null);
-      setError((payload as { error?: { message?: string } })?.error?.message ?? "That did not work");
-      return false;
-    }
-    setMenu(null);
-    router.refresh();
-    return true;
-  }, [router]);
-
-  const patch = useCallback(
-    (id: string, body: Record<string, unknown>) => call(`/api/v1/tickets/${id}`, body),
-    [call],
-  );
+  }, [apply, byId]);
 
   /**
    * A drop resolves to a transition. `CATEGORY_ENTRY_ACTIONS` lists the ways into
    * each column in preference order; the first the server accepts wins, and if the
    * ticket is already there we do nothing rather than firing something spurious.
+   *
+   * Deliberately *not* optimistic. Everything else on this board is a field the
+   * caller owns, but a status is the state machine's and it is allowed to say no —
+   * showing the card in its new column before the server agrees would be the
+   * interface making a promise it does not get to keep.
    */
-  const moveTo = useCallback(async (id: string, category: TicketCategory) => {
-    const ticket = byId.get(id);
-    if (!ticket || ticket.category === category) return;
-
+  const moveTo = useCallback(async (ids: string[], category: TicketCategory) => {
     const candidates = CATEGORY_ENTRY_ACTIONS[category];
-    if (candidates.length === 0) {
-      setError(`Nothing moves back into ${CATEGORY_LABEL[category]}.`);
-      return;
-    }
+    if (candidates.length === 0) return;
 
-    setBusy(true);
-    setError(null);
-    for (const action of candidates) {
-      const res = await fetch(`/api/v1/tickets/${id}/transitions`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action }),
+    for (const id of ids) {
+      const ticket = byId.get(id);
+      if (!ticket || ticket.category === category) continue;
+
+      await apply([id], {
+        label: `${ticket.human_id} cannot move to ${CATEGORY_LABEL[category]}`,
+        optimistic: {},
+        send: async () => {
+          let last: Response | null = null;
+          for (const action of candidates) {
+            const res = await fetch(`/api/v1/tickets/${id}/transitions`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ action }),
+            });
+            if (res.ok) return res;
+            // A transition that needs a reason, or that this person may not fire,
+            // is not a reason to give up on the column — the next candidate may
+            // still work.
+            const body = await res.clone().json().catch(() => null);
+            last = res;
+            if ((body as { error?: { code?: string } })?.error?.code !== "INVALID_TRANSITION") break;
+          }
+          return last!;
+        },
       });
-      if (res.ok) {
-        setBusy(false);
-        router.refresh();
-        return;
-      }
-      // A transition that needs a reason, or that this person may not fire, is not
-      // a reason to give up on the column — the next candidate may still work.
-      const payload = await res.json().catch(() => null);
-      const code = (payload as { error?: { code?: string } })?.error?.code;
-      if (code !== "INVALID_TRANSITION") {
-        setBusy(false);
-        setError(
-          (payload as { error?: { message?: string } })?.error?.message
-          ?? `${stateLabel(ticket.status)} cannot move to ${CATEGORY_LABEL[category]} here — open the ticket.`,
-        );
-        return;
-      }
     }
-    setBusy(false);
-    setError(
-      `${ticket.human_id} cannot go from ${stateLabel(ticket.status)} to ${CATEGORY_LABEL[category]}. `
-      + "Open it to see what it can do next.",
-    );
-  }, [byId, router]);
+  }, [apply, byId]);
 
   /* ------------------------------------------------------------- keyboard */
 
@@ -320,10 +343,19 @@ export function Board(props: BoardProps) {
       const el = e.target as HTMLElement | null;
       const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 
+      // Cmd+K is the one shortcut that works from anywhere, including a field.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+
       if (e.key === "Escape") {
         if (menu) setMenu(null);
+        else if (peeking) setPeeking(null);
         else if (typing) (el as HTMLInputElement).blur();
-        else setSelected(null);
+        else if (selected.size > 0) clear();
+        else setFocused(null);
         return;
       }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -336,27 +368,114 @@ export function Board(props: BoardProps) {
         e.preventDefault();
         if (ordered.length === 0) return;
         const step = e.key === "j" || e.key === "ArrowDown" ? 1 : -1;
-        const at = selected ? ordered.findIndex((t) => t.id === selected) : -1;
+        const at = focused ? ordered.findIndex((t) => t.id === focused) : -1;
         const next = at === -1 ? (step === 1 ? 0 : ordered.length - 1)
           : Math.min(ordered.length - 1, Math.max(0, at + step));
-        setSelected(ordered[next].id);
+        setFocused(ordered[next].id);
         document.getElementById(`ticket-${ordered[next].id}`)?.scrollIntoView({ block: "nearest" });
         return;
       }
 
-      if (!selected) return;
-      if (e.key === "Enter") { e.preventDefault(); router.push(`/tickets/${selected}`); return; }
+      if (!focused) return;
+
+      // X takes a row without opening it — the keyboard half of multi-select.
+      if (e.key === "x") { e.preventDefault(); toggle(focused); return; }
+      if (e.key === " ") { e.preventDefault(); setPeeking((p) => (p === focused ? null : focused)); return; }
+      if (e.key === "Enter") { e.preventDefault(); router.push(`/tickets/${focused}`); return; }
 
       const opens: Record<string, string> = { s: "status", a: "assignee", p: "priority", l: "label" };
       if (opens[e.key]) {
         e.preventDefault();
-        setMenu({ kind: opens[e.key], ticket: selected });
+        setMenu({ kind: opens[e.key], ticket: focused });
       }
     }
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [ordered, selected, menu, router]);
+  }, [ordered, focused, selected, menu, peeking, router, clear, toggle]);
+
+  /* -------------------------------------------------------------- palette */
+
+  /**
+   * Built from what is available right now: with rows taken it offers actions on
+   * them, with none it offers navigation and filters. A palette that offers you
+   * things you cannot do is a menu.
+   */
+  const commands = useMemo<PaletteCommand[]>(() => {
+    const list: PaletteCommand[] = [];
+    const count = acting.length;
+    const on = count === 1 ? byId.get(acting[0])?.human_id ?? "" : `${count} tickets`;
+
+    if (count > 0) {
+      for (const c of TICKET_CATEGORIES.filter((x) => CATEGORY_ENTRY_ACTIONS[x].length > 0)) {
+        list.push({
+          id: `move-${c}`, group: `Move ${on}`, label: `to ${CATEGORY_LABEL[c]}`,
+          icon: <span className="size-2 rounded-full" style={{ background: CATEGORY_TONE[c] }} />,
+          run: () => moveTo(acting, c),
+        });
+      }
+      for (const p of PRIORITIES) {
+        list.push({
+          id: `prio-${p}`, group: `Set priority on ${on}`, label: p[0] + p.slice(1).toLowerCase(),
+          icon: <span className="size-2 rounded-full" style={{ background: PRIORITY_TONE[p] }} />,
+          run: () => patch(acting, { priority: p }, { priority: p }, "priority"),
+        });
+      }
+      const shared = acting.length === 1 ? byId.get(acting[0])?.target_department_id : null;
+      for (const m of members.filter((x) => !shared || x.departmentId === shared)) {
+        list.push({
+          id: `assign-${m.id}`, group: `Assign ${on}`, label: m.name,
+          hint: m.id === me.id ? "you" : undefined,
+          run: () => patch(acting, { assignee_id: m.id }, { assignee: m.name, assignee_id: m.id }, "assignee"),
+        });
+      }
+      list.push({
+        id: "unassign", group: `Assign ${on}`, label: "Nobody",
+        run: () => patch(acting, { assignee_id: null }, { assignee: null, assignee_id: null }, "assignee"),
+      });
+      for (const p of projects) {
+        list.push({
+          id: `proj-${p.id}`, group: `File ${on}`, label: `in ${p.name}`,
+          run: () => patch(acting, { project_id: p.id }, { project: p.name, project_id: p.id }, "project"),
+        });
+      }
+      for (const c of cycles) {
+        list.push({
+          id: `cyc-${c.id}`, group: `File ${on}`, label: `in ${c.name}`,
+          run: () => patch(acting, { cycle_id: c.id }, { cycle: c.name, cycle_id: c.id }, "cycle"),
+        });
+      }
+    }
+
+    for (const sc of SCOPES) {
+      list.push({ id: `scope-${sc.key}`, group: "Go to", label: sc.label, hint: sc.hint, run: () => setParam({ scope: sc.key }) });
+    }
+    list.push({ id: "layout-board", group: "View", label: "Board", run: () => setParam({ layout: "board" }) });
+    list.push({ id: "layout-list", group: "View", label: "List", run: () => setParam({ layout: "list" }) });
+    for (const g of GROUPS) {
+      list.push({ id: `group-${g.key}`, group: "Group by", label: g.label, run: () => setParam({ group: g.key }) });
+    }
+    for (const p of PRIORITIES) {
+      list.push({ id: `filter-${p}`, group: "Filter", label: `Priority is ${p.toLowerCase()}`, run: () => setParam({ priority: p }) });
+    }
+    for (const l of labels) {
+      list.push({
+        id: `filter-label-${l.id}`, group: "Filter", label: `Labelled ${l.name}`,
+        icon: <span className="size-2 rounded-full" style={{ background: l.color }} />,
+        run: () => toggleInList("labels", l.id),
+      });
+    }
+    list.push({ id: "filter-overdue", group: "Filter", label: "Overdue only", run: () => setParam({ overdue: "1" }) });
+    list.push({ id: "filter-unassigned", group: "Filter", label: "Unassigned only", run: () => setParam({ unassigned: "1" }) });
+    list.push({
+      id: "filter-clear", group: "Filter", label: "Clear every filter",
+      run: () => setParam({ priority: null, labels: null, project: null, cycle: null, department: null, overdue: null, unassigned: null }),
+    });
+    list.push({ id: "new", group: "Create", label: "New ticket", hint: "C", run: () => router.push("/tickets/new") });
+    list.push({ id: "plan", group: "Create", label: "Labels & projects", run: () => router.push("/tickets/planning") });
+
+    return list;
+  }, [acting, byId, members, projects, cycles, labels, me.id, moveTo, patch, setParam, toggleInList, router]);
 
   /* --------------------------------------------------------------- render */
 
@@ -538,6 +657,15 @@ export function Board(props: BoardProps) {
           </button>
           <button
             type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="flex h-[var(--row-h)] items-center gap-1.5 rounded-full px-3.5 text-[12.5px]"
+            style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-muted)" }}
+            aria-label="Command palette"
+          >
+            <Command size={13} aria-hidden />K
+          </button>
+          <button
+            type="button"
             onClick={() => setShowKeys((v) => !v)}
             aria-label="Keyboard shortcuts"
             className="tap text-text-muted"
@@ -549,19 +677,21 @@ export function Board(props: BoardProps) {
 
       {showKeys && <Shortcuts onClose={() => setShowKeys(false)} />}
 
-      {error && (
+      {/* One per failed change: a revert without a reason is worse than a wait. */}
+      {errors.map((e, i) => (
         <div
-          className="mb-3 flex items-start gap-2 rounded-lg px-3 py-2 text-sm"
+          key={`${e}-${i}`}
+          className="mb-2.5 flex items-start gap-2.5 rounded-[var(--r-card)] px-4 py-3 text-[13.5px]"
           style={{ background: "var(--flag-high-bg)", color: "var(--flag-high-fg)" }}
           role="status"
         >
-          <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
-          <span className="flex-1">{error}</span>
-          <button type="button" onClick={() => setError(null)} aria-label="Dismiss"><X size={14} aria-hidden /></button>
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden />
+          <span className="flex-1">{e}</span>
+          <button type="button" onClick={() => dismiss(i)} aria-label="Dismiss"><X size={15} aria-hidden /></button>
         </div>
-      )}
+      ))}
 
-      {tickets.length === 0 ? (
+      {view.length === 0 ? (
         <div
           className="rounded-xl px-4 py-10 text-center text-sm text-text-muted"
           style={{ border: "1px dashed var(--yg-surface-2)" }}
@@ -589,7 +719,21 @@ export function Board(props: BoardProps) {
               onDrop={(e) => {
                 e.preventDefault();
                 setDropTarget(null);
-                if (g.category && dragging) moveTo(dragging, g.category);
+                setDropBefore(null);
+                if (!dragging) return;
+                const from = byId.get(dragging);
+                // Same column is ordering; a different one is a status decision, and
+                // they go to different places on purpose.
+                if (from && g.category && from.category === g.category) {
+                  const list = g.tickets.filter((x) => x.id !== dragging);
+                  const at = dropBefore ? list.findIndex((x) => x.id === dropBefore) : list.length;
+                  const before = at >= 0 && at < list.length ? list[at] : null;
+                  const after = at > 0 ? list[at - 1] : null;
+                  reorder(dragging, after?.id ?? null, before?.id ?? null,
+                    ((after?.board_rank ?? -1024) + (before?.board_rank ?? (after?.board_rank ?? 0) + 2048)) / 2);
+                } else if (g.category) {
+                  moveTo([dragging], g.category);
+                }
                 setDragging(null);
               }}
             >
@@ -610,17 +754,21 @@ export function Board(props: BoardProps) {
                     key={t.id}
                     ticket={t}
                     card
-                    selected={selected === t.id}
-                    onSelect={() => setSelected(t.id)}
+                    focused={focused === t.id}
+                    taken={selected.has(t.id)}
+                    pending={pending.has(t.id)}
+                    onFocus={(mods) => { setFocused(t.id); click(t.id, mods); }}
+                    onPeek={() => setPeeking(t.id)}
                     onDragStart={() => setDragging(t.id)}
-                    onDragEnd={() => { setDragging(null); setDropTarget(null); }}
+                    onDragEnd={() => { setDragging(null); setDropTarget(null); setDropBefore(null); }}
+                    onDragOverCard={() => { if (dragging && dragging !== t.id) setDropBefore(t.id); }}
+                    dropMarker={dropBefore === t.id}
                     openMenu={menu?.ticket === t.id ? menu.kind : null}
                     setMenu={(kind) => setMenu(kind ? { kind, ticket: t.id } : null)}
                     labels={labels}
                     members={members}
                     projects={projects}
                     cycles={cycles}
-                    busy={busy}
                     patch={patch}
                     moveTo={moveTo}
                     me={me}
@@ -651,15 +799,17 @@ export function Board(props: BoardProps) {
                   <Row
                     key={t.id}
                     ticket={t}
-                    selected={selected === t.id}
-                    onSelect={() => setSelected(t.id)}
+                    focused={focused === t.id}
+                    taken={selected.has(t.id)}
+                    pending={pending.has(t.id)}
+                    onFocus={(mods) => { setFocused(t.id); click(t.id, mods); }}
+                    onPeek={() => setPeeking(t.id)}
                     openMenu={menu?.ticket === t.id ? menu.kind : null}
                     setMenu={(kind) => setMenu(kind ? { kind, ticket: t.id } : null)}
                     labels={labels}
                     members={members}
                     projects={projects}
                     cycles={cycles}
-                    busy={busy}
                     patch={patch}
                     moveTo={moveTo}
                     me={me}
@@ -670,31 +820,132 @@ export function Board(props: BoardProps) {
           ))}
         </div>
       )}
+
+      <CommandPalette
+        open={paletteOpen}
+        commands={commands}
+        onClose={() => setPaletteOpen(false)}
+        placeholder={
+          acting.length > 0
+            ? `${acting.length} ticket${acting.length === 1 ? "" : "s"} — what should happen?`
+            : "Search commands, filters and views…"
+        }
+      />
+
+      <Peek ticket={peeking ? byId.get(peeking) ?? null : null} onClose={() => setPeeking(null)} />
+
+      {/*
+        The bulk bar. It appears only when rows are taken, says how many, and every
+        control on it does to all of them what the row menus do to one.
+      */}
+      {selected.size > 0 && (
+        <div
+          className="fixed inset-x-0 bottom-24 z-30 mx-auto flex w-fit max-w-[calc(100vw-2rem)] flex-wrap items-center gap-2 rounded-full px-3 py-2 md:bottom-6"
+          style={{
+            background: "var(--yg-surface)",
+            border: "1px solid var(--yg-surface-2)",
+            boxShadow: "0 16px 40px rgba(0,0,0,0.45)",
+          }}
+          role="toolbar"
+          aria-label={`${selected.size} tickets selected`}
+        >
+          <span className="flex items-center gap-2 px-2 text-[13px]">
+            <SquareCheckBig size={15} style={{ color: "var(--yg-sky)" }} aria-hidden />
+            <span className="tnum">{selected.size}</span> selected
+          </span>
+
+          <Dropdown label="Move to">
+            {TICKET_CATEGORIES.filter((c) => CATEGORY_ENTRY_ACTIONS[c].length > 0).map((c) => (
+              <MenuItem key={c} onSelect={() => moveTo([...selected], c)}>{CATEGORY_LABEL[c]}</MenuItem>
+            ))}
+          </Dropdown>
+
+          <Dropdown label="Priority">
+            {PRIORITIES.map((p) => (
+              <MenuItem
+                key={p}
+                onSelect={() => patch([...selected], { priority: p }, { priority: p }, "priority")}
+              >
+                <span style={{ color: PRIORITY_TONE[p] }}>{p[0] + p.slice(1).toLowerCase()}</span>
+              </MenuItem>
+            ))}
+          </Dropdown>
+
+          <Dropdown label="Assign">
+            <MenuItem onSelect={() => patch([...selected], { assignee_id: null }, { assignee: null, assignee_id: null }, "assignee")}>
+              Unassigned
+            </MenuItem>
+            {members.map((m) => (
+              <MenuItem
+                key={m.id}
+                onSelect={() => patch([...selected], { assignee_id: m.id }, { assignee: m.name, assignee_id: m.id }, "assignee")}
+              >
+                {m.name}{m.id === me.id ? " (you)" : ""}
+              </MenuItem>
+            ))}
+          </Dropdown>
+
+          {projects.length > 0 && (
+            <Dropdown label="Project">
+              <MenuItem onSelect={() => patch([...selected], { project_id: null }, { project: null, project_id: null }, "project")}>
+                No project
+              </MenuItem>
+              {projects.map((p) => (
+                <MenuItem
+                  key={p.id}
+                  onSelect={() => patch([...selected], { project_id: p.id }, { project: p.name, project_id: p.id }, "project")}
+                >
+                  {p.name}
+                </MenuItem>
+              ))}
+            </Dropdown>
+          )}
+
+          <button
+            type="button"
+            onClick={clear}
+            className="tap text-text-muted hover:text-text"
+            aria-label="Clear the selection"
+          >
+            <X size={16} aria-hidden />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 /* --------------------------------------------------------------- one ticket */
 
+interface RowMods { meta?: boolean; shift?: boolean }
+
 function Row({
-  ticket: t, card, selected, onSelect, onDragStart, onDragEnd,
-  openMenu, setMenu, labels, members, projects, cycles, busy, patch, moveTo, me,
+  ticket: t, card, focused, taken, pending, onFocus, onPeek,
+  onDragStart, onDragEnd, onDragOverCard, dropMarker,
+  openMenu, setMenu, labels, members, projects, cycles, patch, moveTo, me,
 }: {
   ticket: BoardTicket;
   card?: boolean;
-  selected: boolean;
-  onSelect: () => void;
+  /** Where the keyboard is. */
+  focused: boolean;
+  /** Taken by multi-select — a different thing from focus, and drawn differently. */
+  taken: boolean;
+  /** A change on this row has not come back from the server yet. */
+  pending: boolean;
+  onFocus: (mods: RowMods) => void;
+  onPeek: () => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
+  onDragOverCard?: () => void;
+  dropMarker?: boolean;
   openMenu: string | null;
   setMenu: (kind: string | null) => void;
   labels: LabelOption[];
   members: MemberOption[];
   projects: Option[];
   cycles: Option[];
-  busy: boolean;
-  patch: (id: string, body: Record<string, unknown>) => Promise<boolean>;
-  moveTo: (id: string, category: TicketCategory) => Promise<void>;
+  patch: (ids: string[], body: Record<string, unknown>, optimistic: Partial<BoardTicket>, what: string) => void;
+  moveTo: (ids: string[], category: TicketCategory) => Promise<void>;
   me: { id: string; departmentId: string };
 }) {
   // The assignee has to be somebody in the department doing the work — the service
@@ -705,17 +956,21 @@ function Row({
     day: "numeric", month: "short", hour: "numeric", minute: "2-digit",
   });
 
-  const frame = card
-    ? "rounded-[var(--r-card)] p-[15px]"
-    : "px-4 py-3";
+  // Focus is a ring, selection is a fill. Conflating them is why multi-select in
+  // most tools is confusing: you cannot tell what Enter will act on.
+  const edge = taken ? "var(--yg-sky)" : focused ? "var(--yg-lime)" : "var(--yg-surface-2)";
+  const frame = card ? "rounded-[var(--r-card)] p-[15px]" : "px-4 py-3";
   const style = card
     ? {
-        background: "var(--yg-bg-app)",
-        border: `1px solid ${selected ? "var(--yg-lime)" : "var(--yg-surface-2)"}`,
+        background: taken ? "var(--yg-surface-2)" : "var(--yg-bg-app)",
+        border: `1px solid ${edge}`,
+        opacity: pending ? 0.55 : 1,
       }
     : {
-        background: selected ? "var(--yg-surface-2)" : "var(--yg-surface)",
+        background: taken ? "var(--yg-surface-2)" : focused ? "var(--yg-surface-2)" : "var(--yg-surface)",
         borderBottom: "1px solid var(--yg-surface-2)",
+        boxShadow: focused && !taken ? "inset 2px 0 0 var(--yg-lime)" : undefined,
+        opacity: pending ? 0.55 : 1,
       };
 
   return (
@@ -726,8 +981,17 @@ function Row({
       draggable={Boolean(onDragStart)}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      onClick={onSelect}
+      onDragOver={onDragOverCard ? (e) => { e.preventDefault(); onDragOverCard(); } : undefined}
+      onClick={(e) => onFocus({ meta: e.metaKey || e.ctrlKey, shift: e.shiftKey })}
+      onDoubleClick={(e) => { e.preventDefault(); onPeek(); }}
     >
+      {dropMarker && (
+        <span
+          className="absolute -top-[5px] right-0 left-0 h-0.5 rounded-full"
+          style={{ background: "var(--yg-lime)" }}
+          aria-hidden
+        />
+      )}
       <div className={card ? "" : "flex flex-wrap items-center gap-x-3 gap-y-1"}>
         <div className={card ? "flex flex-wrap items-center gap-1.5" : "flex items-center gap-2"}>
           <span className="tnum text-xs text-text-muted">{t.human_id}</span>
@@ -754,7 +1018,7 @@ function Row({
               <MenuItem
                 key={c}
                 selected={t.category === c}
-                onSelect={() => { setMenu(null); moveTo(t.id, c); }}
+                onSelect={() => { setMenu(null); moveTo([t.id], c); }}
               >
                 {CATEGORY_LABEL[c]}
               </MenuItem>
@@ -781,8 +1045,7 @@ function Row({
               <MenuItem
                 key={p}
                 selected={t.priority === p}
-                disabled={busy}
-                onSelect={() => patch(t.id, { priority: p })}
+                onSelect={() => patch([t.id], { priority: p }, { priority: p }, "priority")}
               >
                 <span style={{ color: PRIORITY_TONE[p] }}>{p[0] + p.slice(1).toLowerCase()}</span>
               </MenuItem>
@@ -838,12 +1101,10 @@ function Row({
                 <MenuItem
                   key={l.id}
                   selected={on}
-                  disabled={busy}
-                  onSelect={() => patch(t.id, {
-                    label_ids: on
-                      ? t.labels.filter((x) => x.id !== l.id).map((x) => x.id)
-                      : [...t.labels.map((x) => x.id), l.id],
-                  })}
+                  onSelect={() => {
+                    const next = on ? t.labels.filter((x) => x.id !== l.id) : [...t.labels, l];
+                    patch([t.id], { label_ids: next.map((x) => x.id) }, { labels: next }, "labels");
+                  }}
                 >
                   <span className="inline-flex items-center gap-1.5">
                     <span className="size-2 rounded-full" style={{ background: l.color }} aria-hidden />
@@ -865,15 +1126,14 @@ function Row({
               </span>
             }
           >
-            <MenuItem disabled={busy} onSelect={() => patch(t.id, { assignee_id: null })}>
+            <MenuItem onSelect={() => patch([t.id], { assignee_id: null }, { assignee: null, assignee_id: null }, "assignee")}>
               Unassigned
             </MenuItem>
             {assignable.map((m) => (
               <MenuItem
                 key={m.id}
                 selected={t.assignee_id === m.id}
-                disabled={busy}
-                onSelect={() => patch(t.id, { assignee_id: m.id })}
+                onSelect={() => patch([t.id], { assignee_id: m.id }, { assignee: m.name, assignee_id: m.id }, "assignee")}
               >
                 {m.name}{m.id === me.id ? " (you)" : ""}
               </MenuItem>
@@ -908,15 +1168,14 @@ function Row({
           onToggle={(v) => setMenu(v ? "project" : null)}
           trigger={<span className="text-[11px]">{t.project ?? "no project"}</span>}
         >
-          <MenuItem disabled={busy} onSelect={() => patch(t.id, { project_id: null })}>
+          <MenuItem onSelect={() => patch([t.id], { project_id: null }, { project: null, project_id: null }, "project")}>
             No project
           </MenuItem>
           {projects.map((p) => (
             <MenuItem
               key={p.id}
               selected={t.project_id === p.id}
-              disabled={busy}
-              onSelect={() => patch(t.id, { project_id: p.id })}
+              onSelect={() => patch([t.id], { project_id: p.id }, { project: p.name, project_id: p.id }, "project")}
             >
               {p.name}
             </MenuItem>
@@ -929,15 +1188,14 @@ function Row({
           onToggle={(v) => setMenu(v ? "cycle" : null)}
           trigger={<span className="text-[11px]">{t.cycle ?? "no cycle"}</span>}
         >
-          <MenuItem disabled={busy} onSelect={() => patch(t.id, { cycle_id: null })}>
+          <MenuItem onSelect={() => patch([t.id], { cycle_id: null }, { cycle: null, cycle_id: null }, "cycle")}>
             No cycle
           </MenuItem>
           {cycles.map((c) => (
             <MenuItem
               key={c.id}
               selected={t.cycle_id === c.id}
-              disabled={busy}
-              onSelect={() => patch(t.id, { cycle_id: c.id })}
+              onSelect={() => patch([t.id], { cycle_id: c.id }, { cycle: c.name, cycle_id: c.id }, "cycle")}
             >
               {c.name}
             </MenuItem>
@@ -1047,15 +1305,18 @@ function MenuLabel({ children }: { children: React.ReactNode }) {
 }
 
 const KEYS: [string, string][] = [
+  ["\u2318K", "Everything, by name"],
   ["C", "New ticket"],
   ["/", "Search"],
   ["J / K", "Move down / up"],
-  ["Enter", "Open the selected ticket"],
+  ["X", "Take this row — again for more"],
+  ["Space", "Peek without leaving the board"],
+  ["Enter", "Open it properly"],
   ["S", "Status"],
   ["A", "Assignee"],
   ["P", "Priority"],
   ["L", "Labels"],
-  ["Esc", "Close a menu, then clear the selection"],
+  ["Esc", "Close, then drop the selection"],
   ["?", "This list"],
 ];
 

@@ -711,6 +711,17 @@ await hit("POST", "/api/v1/ticket-labels", {
 });
 await hit("DELETE", `/api/v1/cycles/${cycleId}`, { as: finance, label: "/api/v1/cycles/{id}" });
 await hit("DELETE", `/api/v1/projects/${projectId}`, { as: finance, label: "/api/v1/projects/{id}" });
+// Ordering within a column is tidying, not a decision — its own endpoint, and it
+// never touches a status.
+await hit("POST", `/api/v1/tickets/${filedId}/rank`, {
+  as: finance, body: { after_id: null, before_id: null },
+  label: "/api/v1/tickets/{id}/rank",
+});
+await hit("POST", `/api/v1/tickets/${ticketId}/rank`, {
+  as: finance, body: { after_id: filedId, before_id: null },
+  label: "/api/v1/tickets/{id}/rank (between two cards)",
+});
+
 await hit("DELETE", `/api/v1/ticket-labels/${labelId}`, { as: finance, label: "/api/v1/ticket-labels/{id}" });
 
 section("Channels");

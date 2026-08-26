@@ -499,6 +499,7 @@ export interface TicketRow {
   parent_human_id: string | null;
   child_count: number;
   child_done_count: number;
+  board_rank: number | null;
 }
 
 /** The board views of 9 and 20.9, all from one query shape. */
@@ -528,7 +529,7 @@ export async function listTickets(actor: Actor, opts: TicketFilters = { view: "i
     select t.id, t.human_id, t.title, t.status::text as status, t.priority::text as priority,
            t.due_at, t.escalated_at, t.estimated_cost_paise, t.location,
            t.requesting_department_id, t.target_department_id, t.requester_id, t.assignee_id,
-           t.parent_id, t.project_id, t.cycle_id,
+           t.parent_id, t.project_id, t.cycle_id, t.board_rank,
            rq.name as requesting_department, tg.name as target_department,
            ru.name as requester, au.name as assignee,
            pj.name as project, cy.name as cycle, pt.human_id as parent_human_id,
@@ -582,6 +583,9 @@ export async function listTickets(actor: Actor, opts: TicketFilters = { view: "i
                     or t.description ilike ${`%${opts.q}%`})`
          : sql``}
      order by
+       -- A dragged column keeps the order somebody gave it; one nobody has touched
+       -- falls back to urgent-and-soonest, so a fest that never drags sees no change.
+       t.board_rank asc nulls last,
        case t.priority when 'URGENT' then 0 when 'HIGH' then 1 when 'MEDIUM' then 2 else 3 end,
        t.due_at asc
      limit ${opts.limit ?? 300}
@@ -618,7 +622,52 @@ export async function listTickets(actor: Actor, opts: TicketFilters = { view: "i
     parent_human_id: (r.parent_human_id as string) ?? null,
     child_count: Number(r.child_count),
     child_done_count: Number(r.child_done_count),
+    board_rank: r.board_rank === null ? null : Number(r.board_rank),
   }));
+}
+
+/**
+ * Dropping a card between two others.
+ *
+ * The caller sends the ids it wants this ticket to sit between, which is what the
+ * board already knows and the server would otherwise have to re-derive. The new
+ * rank is their midpoint — one UPDATE, no renumbering, and two people dragging in
+ * different columns never touch the same rows.
+ *
+ * Ranks are not a permission: anybody who can see the board can tidy it, the same
+ * way anybody can move a sticky note. What a card *is* — its status, its assignee —
+ * still moves only through the paths that check.
+ */
+export async function reorderTicket(
+  actor: SessionUser, id: string, between: { afterId?: string | null; beforeId?: string | null },
+) {
+  return db.transaction(async (tx) => {
+    // `load` is the visibility check: you cannot reorder a board you cannot read.
+    await load(tx, actor, id);
+
+    const neighbour = async (neighbourId: string | null | undefined) => {
+      if (!neighbourId) return null;
+      const [row] = await tx.select({ rank: tickets.boardRank }).from(tickets)
+        .where(and(eq(tickets.id, neighbourId), eq(tickets.festId, actor.festId))).limit(1);
+      return row?.rank ?? null;
+    };
+
+    const above = await neighbour(between.afterId);
+    const below = await neighbour(between.beforeId);
+
+    // The gaps at either end are wide enough that dropping at the top or bottom a
+    // few hundred times never needs a renumber.
+    const rank =
+      above !== null && below !== null ? (above + below) / 2
+      : above !== null ? above + 1024
+      : below !== null ? below - 1024
+      : 0;
+
+    const [after] = await tx.update(tickets)
+      .set({ boardRank: rank, updatedAt: new Date() })
+      .where(eq(tickets.id, id)).returning({ id: tickets.id, boardRank: tickets.boardRank });
+    return after;
+  });
 }
 
 /** Board counts for the tab bar, one round trip. */
