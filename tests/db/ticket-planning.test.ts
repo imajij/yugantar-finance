@@ -77,44 +77,44 @@ beforeEach(async () => {
  * it intends to do — and the inbox count stops meaning anything either way.
  */
 test("the target HOD can backlog a ticket instead of accepting or rejecting it", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   const after = await transitionTicket(logiHod, t.id, "BACKLOG");
   expect(after.status).toBe("BACKLOG");
 });
 
 test("backlogging is a triage decision, so only the target department may do it", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await expect(transitionTicket(techHod, t.id, "BACKLOG")).rejects.toThrow(/may not BACKLOG|not permitted/i);
   await expect(transitionTicket(logiMember, t.id, "BACKLOG")).rejects.toThrow(/BACKLOG|not permitted/i);
 });
 
 test("a backlogged ticket schedules into Todo, and can go back", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await transitionTicket(logiHod, t.id, "BACKLOG");
   expect((await transitionTicket(logiHod, t.id, "SCHEDULE")).status).toBe("ACCEPTED");
   expect((await transitionTicket(logiHod, t.id, "BACKLOG")).status).toBe("BACKLOG");
 });
 
 test("a backlogged ticket cannot be started without being scheduled first", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await transitionTicket(logiHod, t.id, "BACKLOG");
   await expect(transitionTicket(logiHod, t.id, "START"))
     .rejects.toThrow(/not allowed from BACKLOG/i);
 });
 
 test("the requester can still cancel from the backlog", async () => {
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await transitionTicket(logiHod, t.id, "BACKLOG");
-  expect((await transitionTicket(techMember, t.id, "CANCEL")).status).toBe("CANCELLED");
+  expect((await transitionTicket(techHod, t.id, "CANCEL")).status).toBe("CANCELLED");
 });
 
 /* -------------------------------------------------------------------- labels */
 
 test("labels are fest-wide and shared between departments", async () => {
   const label = await createLabel(logiHod, { name: "Needs a van", color: "#d2fc3c" });
-  const t = await createTicket(techMember, ask({ labelIds: [label.id] }));
+  const t = await createTicket(techHod, ask({ labelIds: [label.id] }));
 
-  const detail = await getTicketDetail(techMember, t.id);
+  const detail = await getTicketDetail(techHod, t.id);
   expect(detail.labels.map((l) => l.name)).toEqual(["Needs a van"]);
 
   // And a different department can use it on their own work.
@@ -128,22 +128,22 @@ test("a Member cannot invent labels, which is what keeps the vocabulary shared",
 test("labels are set as a whole set, so removing one is just a shorter list", async () => {
   const a = await createLabel(finance, { name: "Urgent hire" });
   const b = await createLabel(finance, { name: "Outdoors" });
-  const t = await createTicket(techMember, ask({ labelIds: [a.id, b.id] }));
+  const t = await createTicket(techHod, ask({ labelIds: [a.id, b.id] }));
 
-  await updateTicket(techMember, t.id, { labelIds: [b.id] });
-  expect((await getTicketDetail(techMember, t.id)).labels.map((l) => l.name)).toEqual(["Outdoors"]);
+  await updateTicket(techHod, t.id, { labelIds: [b.id] });
+  expect((await getTicketDetail(techHod, t.id)).labels.map((l) => l.name)).toEqual(["Outdoors"]);
 
-  await updateTicket(techMember, t.id, { labelIds: [] });
-  expect((await getTicketDetail(techMember, t.id)).labels).toHaveLength(0);
+  await updateTicket(techHod, t.id, { labelIds: [] });
+  expect((await getTicketDetail(techHod, t.id)).labels).toHaveLength(0);
 });
 
 test("deleting a label takes it off its tickets and leaves them otherwise alone", async () => {
   const label = await createLabel(finance, { name: "Temporary" });
-  const t = await createTicket(techMember, ask({ labelIds: [label.id] }));
+  const t = await createTicket(techHod, ask({ labelIds: [label.id] }));
 
   await deleteLabel(finance, label.id);
 
-  const detail = await getTicketDetail(techMember, t.id);
+  const detail = await getTicketDetail(techHod, t.id);
   expect(detail.labels).toHaveLength(0);
   expect(detail.status).toBe("OPEN");
 });
@@ -157,7 +157,7 @@ test("a duplicate label name is refused however it is cased", async () => {
 
 test("retiring a project leaves its tickets on their boards, unfiled", async () => {
   const project = await createProject(finance, { name: "Main stage build" });
-  const t = await createTicket(techMember, ask({ projectId: project.id }));
+  const t = await createTicket(techHod, ask({ projectId: project.id }));
 
   await deleteProject(finance, project.id);
 
@@ -171,8 +171,8 @@ test("a cycle groups work by a window, and filters to it", async () => {
   const cycle = await createCycle(finance, {
     name: "Setup week", startsOn: "2026-11-20", endsOn: "2026-11-26",
   });
-  const inCycle = await createTicket(techMember, ask({ cycleId: cycle.id }));
-  await createTicket(techMember, ask({ title: "Something else entirely, please" }));
+  const inCycle = await createTicket(techHod, ask({ cycleId: cycle.id }));
+  await createTicket(techHod, ask({ title: "Something else entirely, please" }));
 
   const filtered = await listTickets(logiHod, { view: "inbox", cycleId: cycle.id });
   expect(filtered.map((r) => r.id)).toEqual([inCycle.id]);
@@ -188,8 +188,8 @@ test("a cycle groups work by a window, and filters to it", async () => {
 test("list filters that take several values actually run", async () => {
   const label = await createLabel(finance, { name: "Needs a van" });
   const project = await createProject(finance, { name: "Main stage build" });
-  const tagged = await createTicket(techMember, ask({ labelIds: [label.id], projectId: project.id }));
-  const plain = await createTicket(techMember, ask({ title: "Something else entirely, please" }));
+  const tagged = await createTicket(techHod, ask({ labelIds: [label.id], projectId: project.id }));
+  const plain = await createTicket(techHod, ask({ title: "Something else entirely, please" }));
   await transitionTicket(logiHod, plain.id, "BACKLOG");
 
   expect((await listTickets(logiHod, { view: "inbox", labelIds: [label.id] })).map((r) => r.id))
@@ -208,7 +208,7 @@ test("list filters that take several values actually run", async () => {
 test("a listed ticket's due date is a real Date, not a string wearing the type", async () => {
   // The board serialises it across the client boundary with `.toISOString()`, and a
   // raw `db.execute` can hand back either — so the coercion is the contract.
-  await createTicket(techMember, ask());
+  await createTicket(techHod, ask());
   const [row] = await listTickets(logiHod, { view: "inbox" });
   expect(row.due_at).toBeInstanceOf(Date);
   expect(() => row.due_at.toISOString()).not.toThrow();
@@ -222,13 +222,13 @@ test("a cycle cannot end before it starts", async () => {
 /* ---------------------------------------------------------------- sub-tickets */
 
 test("a sub-ticket rolls up to its parent", async () => {
-  const parent = await createTicket(techMember, ask({ title: "Set up the main stage properly" }));
-  const child = await createTicket(techMember, ask({ title: "Chairs for the main stage", parentId: parent.id }));
+  const parent = await createTicket(techHod, ask({ title: "Set up the main stage properly" }));
+  const child = await createTicket(techHod, ask({ title: "Chairs for the main stage", parentId: parent.id }));
 
-  const detail = await getTicketDetail(techMember, parent.id);
+  const detail = await getTicketDetail(techHod, parent.id);
   expect(detail.children.map((c) => c.id)).toEqual([child.id]);
 
-  const [row] = (await listTickets(techMember, { view: "created" })).filter((r) => r.id === parent.id);
+  const [row] = (await listTickets(techHod, { view: "created" })).filter((r) => r.id === parent.id);
   expect(row.child_count).toBe(1);
   expect(row.child_done_count).toBe(0);
 });
@@ -238,25 +238,25 @@ test("a sub-ticket rolls up to its parent", async () => {
  * that; nesting deeper mainly produces boards nobody can read.
  */
 test("sub-tickets go one level deep", async () => {
-  const parent = await createTicket(techMember, ask({ title: "Set up the main stage properly" }));
-  const child = await createTicket(techMember, ask({ title: "Chairs for the main stage", parentId: parent.id }));
+  const parent = await createTicket(techHod, ask({ title: "Set up the main stage properly" }));
+  const child = await createTicket(techHod, ask({ title: "Chairs for the main stage", parentId: parent.id }));
 
-  await expect(createTicket(techMember, ask({ title: "A grandchild ticket here", parentId: child.id })))
+  await expect(createTicket(techHod, ask({ title: "A grandchild ticket here", parentId: child.id })))
     .rejects.toThrow(/one level deep/i);
 });
 
 test("a ticket with children cannot itself become a sub-ticket", async () => {
-  const parent = await createTicket(techMember, ask({ title: "Set up the main stage properly" }));
-  await createTicket(techMember, ask({ title: "Chairs for the main stage", parentId: parent.id }));
-  const other = await createTicket(techMember, ask({ title: "An unrelated request here" }));
+  const parent = await createTicket(techHod, ask({ title: "Set up the main stage properly" }));
+  await createTicket(techHod, ask({ title: "Chairs for the main stage", parentId: parent.id }));
+  const other = await createTicket(techHod, ask({ title: "An unrelated request here" }));
 
-  await expect(updateTicket(techMember, parent.id, { parentId: other.id }))
+  await expect(updateTicket(techHod, parent.id, { parentId: other.id }))
     .rejects.toThrow(/sub-tickets of its own/i);
 });
 
 test("a ticket cannot be its own parent", async () => {
-  const t = await createTicket(techMember, ask());
-  await expect(updateTicket(techMember, t.id, { parentId: t.id })).rejects.toThrow(/own parent/i);
+  const t = await createTicket(techHod, ask());
+  await expect(updateTicket(techHod, t.id, { parentId: t.id })).rejects.toThrow(/own parent/i);
 });
 
 /* ------------------------------------------------------- who may file a ticket */
@@ -269,19 +269,19 @@ test("a ticket cannot be its own parent", async () => {
  */
 test("the requester can file their own ticket even after it is accepted", async () => {
   const project = await createProject(finance, { name: "Main stage build" });
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   await transitionTicket(logiHod, t.id, "ACCEPT");
 
   // Rewording is closed off at this point…
-  await expect(updateTicket(techMember, t.id, { title: "Something different now" }))
+  await expect(updateTicket(techHod, t.id, { title: "Something different now" }))
     .rejects.toThrow(/before it is accepted/i);
   // …but filing is not.
-  await expect(updateTicket(techMember, t.id, { projectId: project.id })).resolves.toBeTruthy();
+  await expect(updateTicket(techHod, t.id, { projectId: project.id })).resolves.toBeTruthy();
 });
 
 test("somebody with no part in a ticket cannot file it", async () => {
   const project = await createProject(finance, { name: "Main stage build" });
-  const t = await createTicket(techMember, ask());
+  const t = await createTicket(techHod, ask());
   // Finance can see every ticket, and still has no business filing this one.
   await expect(updateTicket(finance, t.id, { projectId: project.id }))
     .rejects.toThrow(/somebody on this ticket/i);
@@ -305,6 +305,6 @@ test("a project from another fest is not found", async () => {
     returning id`)).id;
 
   // `ticket.plan` says nothing about *which* project, so `can()` cannot catch this.
-  await expect(createTicket(techMember, ask({ projectId: foreign })))
+  await expect(createTicket(techHod, ask({ projectId: foreign })))
     .rejects.toThrow(/project/i);
 });

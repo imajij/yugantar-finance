@@ -44,6 +44,15 @@ interface Props {
   expenseTypes: { id: string; name: string }[];
   defaults: { payeeName: string; payeeUpiId: string; department: string };
   receiptWindow: { start: string; end: string };
+  /**
+   * Whether this person may see what is in the pot they are charging.
+   *
+   * A Member may not (5.1), so for them the line item is a choice by name and the
+   * page carries no balance, no bar and no "what will be left" — those are the
+   * head's business. Passed in rather than inferred, because the server has already
+   * decided it and the amounts were never fetched.
+   */
+  showsBudget: boolean;
 }
 
 interface Receipt { id: string; name: string }
@@ -54,7 +63,9 @@ const FIELD =
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-export function NewRequestForm({ lineItems, expenseTypes, defaults, receiptWindow }: Props) {
+export function NewRequestForm({
+  lineItems, expenseTypes, defaults, receiptWindow, showsBudget,
+}: Props) {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
@@ -258,7 +269,7 @@ export function NewRequestForm({ lineItems, expenseTypes, defaults, receiptWindo
                 </span>
               </button>
 
-              {selected && !pickingLineItem && (
+              {selected && !pickingLineItem && showsBudget && (
                 <>
                   <AvailableInline totals={{ ...selected, allocatedPaise: selected.plannedPaise }} />
                   <p className="text-[12px] text-text-soft">
@@ -280,7 +291,9 @@ export function NewRequestForm({ lineItems, expenseTypes, defaults, receiptWindo
                         className="flex w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2.5 text-left hover:bg-surface-2"
                       >
                         <span className="text-[13.5px]">{i.name}</span>
-                        <span className="tnum text-[12.5px] text-text-muted">{formatPaise(i.availablePaise)}</span>
+                        {showsBudget && (
+                          <span className="tnum text-[12.5px] text-text-muted">{formatPaise(i.availablePaise)}</span>
+                        )}
                       </button>
                     </li>
                   ))}
@@ -400,12 +413,19 @@ export function NewRequestForm({ lineItems, expenseTypes, defaults, receiptWindo
             deducted will otherwise watch their Available drop and wonder who spent it.
           */}
           {selected && amountPaise !== null && (
-            <InfoNote>
-              <span className="tnum">{formatPaise(amountPaise)}</span> shows as{" "}
-              <strong>pending</strong> against {defaults.department} until it is endorsed —{" "}
-              {selected.name} drops to <span className="tnum">{formatPaise(selected.availablePaise - amountPaise)}</span>{" "}
-              available in the meantime.
-            </InfoNote>
+            showsBudget ? (
+              <InfoNote>
+                <span className="tnum">{formatPaise(amountPaise)}</span> shows as{" "}
+                <strong>pending</strong> against {defaults.department} until it is endorsed —{" "}
+                {selected.name} drops to <span className="tnum">{formatPaise(selected.availablePaise - amountPaise)}</span>{" "}
+                available in the meantime.
+              </InfoNote>
+            ) : (
+              <InfoNote>
+                This goes to {defaults.department}&rsquo;s head to endorse, then to Finance to
+                approve. You will be told at each step.
+              </InfoNote>
+            )
           )}
 
           <div

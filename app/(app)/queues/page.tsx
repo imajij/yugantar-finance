@@ -7,9 +7,10 @@ import { departments, lineItems, reimbursementRequests, users } from "@/db/schem
 import { getSession } from "@/lib/session";
 import { can } from "@/lib/authz";
 import { lineItemTotalsForDepartment } from "@/lib/queries/budget";
-import { Amount, Card, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
+import { Amount, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
 import { stalledStages } from "@/lib/queries/stalled";
 import { StalledNotice } from "@/components/stalled";
+import { RecordPayment } from "./record-payment";
 
 /**
  * PRD 20.11 — one screen, three queues, whichever the caller owns:
@@ -21,7 +22,11 @@ export default async function QueuesPage() {
   if (!user) redirect("/sign-in");
 
   const scope = { festId: user.festId, departmentId: user.departmentId };
-  const queues: { title: string; hint: string; statuses: string[]; departmentScoped: boolean }[] = [];
+  const queues: {
+    title: string; hint: string; statuses: string[]; departmentScoped: boolean;
+    /** Only the payment queue carries the action that moves money out. */
+    pays?: boolean;
+  }[] = [];
 
   if (user.role === "DEPT_HOD") {
     queues.push({ title: "To endorse", hint: "Submitted by your department, waiting on you", statuses: ["SUBMITTED"], departmentScoped: true });
@@ -30,7 +35,10 @@ export default async function QueuesPage() {
     queues.push({ title: "To approve", hint: "Endorsed and waiting on Finance", statuses: ["HOD_ENDORSED"], departmentScoped: false });
   }
   if (can(user, "reimbursement.recordPayment", { ...scope, submitterId: "x" })) {
-    queues.push({ title: "To pay", hint: "Approved and waiting on a transfer", statuses: ["APPROVED"], departmentScoped: false });
+    queues.push({
+      title: "To pay", hint: "Approved and waiting on a transfer. Record each one as it leaves the bank.",
+      statuses: ["APPROVED"], departmentScoped: false, pays: true,
+    });
     queues.push({ title: "On hold", hint: "Paused, waiting on Finance to resolve", statuses: ["ON_HOLD"], departmentScoped: false });
   }
 
@@ -64,10 +72,10 @@ export default async function QueuesPage() {
 }
 
 async function Queue({
-  user, title, hint, statuses, departmentScoped,
+  user, title, hint, statuses, departmentScoped, pays,
 }: {
   user: NonNullable<Awaited<ReturnType<typeof getSession>>>;
-  title: string; hint: string; statuses: string[]; departmentScoped: boolean;
+  title: string; hint: string; statuses: string[]; departmentScoped: boolean; pays?: boolean;
 }) {
   const rows = await db
     .select({
@@ -120,58 +128,77 @@ async function Queue({
       <p className="mb-3 text-xs text-text-muted">{hint}</p>
 
       {rows.length === 0 ? (
-        <Empty>Clear.</Empty>
+        <Empty>Nothing is waiting on you here.</Empty>
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="w-full min-w-[50rem] text-sm">
-            <thead>
-              <tr className="text-left text-xs text-text-muted" style={{ borderBottom: "1px solid var(--yg-surface-2)" }}>
-                <th className="px-4 py-3 font-medium">ID</th>
-                <th className="px-4 py-3 font-medium">What for</th>
-                <th className="px-4 py-3 font-medium">Payee</th>
-                <th className="px-4 py-3 text-right font-medium">Amount</th>
-                <th className="px-4 py-3 text-right font-medium">Available after</th>
-                <th className="px-4 py-3 font-medium">Flags</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const available = availability.get(r.lineItemId) ?? 0;
-                // Pending and committed already count this request, so Available is the after figure.
-                const short = available < 0;
-                return (
-                  <tr key={r.id} style={{ borderBottom: "1px solid var(--yg-surface-2)" }}>
-                    <td className="tnum px-4 py-3">
-                      <Link href={`/requests/${r.id}`} className="hover:text-lime">{r.humanId}</Link>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="block">{r.description}</span>
-                      <span className="block text-xs text-text-muted">
-                        {r.submitter} · {r.department} · {r.lineItem}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="block">{r.payeeName}</span>
-                      <span className="tnum block text-xs text-text-muted">{r.payeeUpiId}</span>
-                    </td>
-                    <td className="px-4 py-3 text-right"><Amount paise={r.amountPaise} /></td>
-                    <td className="px-4 py-3 text-right" style={{ color: short ? "var(--flag-high-fg)" : undefined }}>
-                      <Amount paise={available} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {r.flagCount > 0
-                          ? <FlagChip severity={r.highFlags > 0 ? "HIGH" : "MEDIUM"}>{r.flagCount}</FlagChip>
-                          : <span className="text-xs text-text-muted">—</span>}
-                        <StateChip state={r.status} />
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
+        /*
+         * Rows, not a table: this is the screen somebody works down while paying
+         * eleven people from a banking app, and on a phone a 50rem table is not
+         * something you can work down at all.
+         */
+        <div className="flex flex-col gap-2.5">
+          {rows.map((r) => {
+            const available = availability.get(r.lineItemId) ?? 0;
+            // Pending and committed already count this request, so Available is the after figure.
+            const short = available < 0;
+            return (
+              <div
+                key={r.id}
+                className="flex flex-col gap-3 rounded-[var(--r-card)] p-4"
+                style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+                  <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link href={`/requests/${r.id}`} className="tnum text-[11.5px] text-text-muted hover:text-lime">
+                        {r.humanId}
+                      </Link>
+                      <StateChip state={r.status} />
+                      {r.flagCount > 0 && (
+                        <FlagChip severity={r.highFlags > 0 ? "HIGH" : "MEDIUM"}>
+                          {r.flagCount} flag{r.flagCount === 1 ? "" : "s"}
+                        </FlagChip>
+                      )}
+                    </div>
+                    <Link href={`/requests/${r.id}`} className="text-[14px] hover:text-lime">
+                      {r.description}
+                    </Link>
+                    <span className="text-[12px] text-text-muted">
+                      {r.submitter} · {r.department} · {r.lineItem}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1.5 sm:shrink-0 sm:flex-col sm:items-end">
+                    <span className="tnum text-[16px]"><Amount paise={r.amountPaise} /></span>
+                    <span className="text-[12px] text-text-muted">
+                      to {r.payeeName}
+                      {r.payeeUpiId && <span className="tnum"> · {r.payeeUpiId}</span>}
+                    </span>
+                    <span className="text-[12px]" style={{ color: short ? "var(--flag-high-fg)" : "var(--yg-text-muted)" }}>
+                      <Amount paise={available} /> left in the line item after this
+                    </span>
+                  </div>
+                </div>
+
+                {/*
+                  The action, where the work is. PRD 9 asks for it here rather than
+                  behind a click into each request — you are paying eleven people,
+                  not reading eleven records.
+                */}
+                {pays && (
+                  <div style={{ borderTop: "1px solid var(--yg-surface-2)", paddingTop: "12px" }}>
+                    <RecordPayment
+                      id={r.id}
+                      humanId={r.humanId}
+                      payeeName={r.payeeName}
+                      payeeUpiId={r.payeeUpiId}
+                      amountPaise={r.amountPaise}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </section>
   );

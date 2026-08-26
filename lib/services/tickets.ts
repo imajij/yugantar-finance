@@ -53,7 +53,25 @@ export interface CreateTicketInput {
 export async function createTicket(actor: SessionUser, input: CreateTicketInput) {
   assertCan(actor, "ticket.create", { festId: actor.festId, departmentId: actor.departmentId });
 
-  if (input.targetDepartmentId === actor.departmentId) {
+  /*
+   * Who a ticket may be addressed to depends on who is raising it.
+   *
+   * A member raises work with their own department's head and nobody else. They do
+   * not negotiate across departments — that is what having a head is for — and a
+   * member who could address Logistics directly would be committing another
+   * department's people without its head knowing.
+   *
+   * Everybody else is the opposite: a ticket from an HOD, Finance or Management is
+   * one department asking another, so it may not be addressed to itself.
+   */
+  if (actor.role === "MEMBER") {
+    if (input.targetDepartmentId !== actor.departmentId) {
+      throw new ApiError(
+        "VALIDATION_ERROR",
+        "Ask your own department's head. They raise it with another department if that is what it needs.",
+      );
+    }
+  } else if (input.targetDepartmentId === actor.departmentId) {
     throw new ApiError("VALIDATION_ERROR", "A ticket asks another department for work; use your own board instead");
   }
 

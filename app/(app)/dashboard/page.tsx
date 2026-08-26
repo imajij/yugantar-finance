@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { and, asc, eq } from "drizzle-orm";
-import { Camera, CheckCheck, Clock, Receipt, Shield, Wallet } from "lucide-react";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { Camera, CheckCheck, CircleDot, Clock, MessagesSquare, Receipt, Shield, Wallet } from "lucide-react";
 import { db } from "@/db";
-import { departments } from "@/db/schema";
+import { departments, reimbursementRequests } from "@/db/schema";
 import { getSession, type SessionUser } from "@/lib/session";
 import { can } from "@/lib/authz";
 import { departmentTotals, departmentTotalsForFest, festTotals } from "@/lib/queries/budget";
@@ -13,7 +13,7 @@ import { readAuditLog } from "@/lib/services/audit";
 import { stalledStages } from "@/lib/queries/stalled";
 import { formatPaise } from "@/lib/money";
 import {
-  Amount, buttonClass, buttonStyle, Card, Empty, PageTitle, SectionHeading,
+  Amount, buttonClass, buttonStyle, Card, Empty, PageTitle, SectionHeading, StateChip,
 } from "@/components/ui";
 import { AvailableCard, AvailableHero, availableTone } from "@/components/five-numbers";
 import { StalledNotice } from "@/components/stalled";
@@ -34,9 +34,127 @@ export default async function DashboardPage() {
   const scope = { festId: user.festId, departmentId: user.departmentId };
   const festWide = can(user, "income.view", scope); // Finance HOD and Management (5.1)
 
-  return festWide
-    ? <FestOverview user={user} />
-    : <DepartmentOverview user={user} />;
+  if (festWide) return <FestOverview user={user} />;
+  // A Member is not shown their department's budget at all (5.1) — what they get is
+  // their own work, which is a different page rather than a redacted one.
+  return can(user, "department.budget.view", scope)
+    ? <DepartmentOverview user={user} />
+    : <MemberOverview user={user} />;
+}
+
+/**
+ * A Member's dashboard.
+ *
+ * They spend out of a budget without being shown it, so there is no figure on this
+ * page that is not their own money. What is left is the two things they actually
+ * open the app for: a receipt to claim, and whatever is waiting on them.
+ */
+async function MemberOverview({ user }: { user: SessionUser }) {
+  const mine = await db.select({
+    id: reimbursementRequests.id,
+    humanId: reimbursementRequests.humanId,
+    status: reimbursementRequests.status,
+    description: reimbursementRequests.description,
+    amountPaise: reimbursementRequests.amountPaise,
+  }).from(reimbursementRequests)
+    .where(and(
+      eq(reimbursementRequests.festId, user.festId),
+      eq(reimbursementRequests.submitterId, user.id),
+      isNull(reimbursementRequests.deletedAt),
+    ))
+    .orderBy(desc(reimbursementRequests.createdAt))
+    .limit(5);
+
+  const settled = ["PAID", "DECLINED", "WITHDRAWN"];
+  const inFlight = mine.filter((r) => !settled.includes(r.status));
+  const owed = inFlight.reduce((n, r) => n + r.amountPaise, 0);
+
+  return (
+    <>
+      <PageTitle
+        subtitle={
+          inFlight.length > 0
+            ? <>You are waiting on <span className="tnum">{formatPaise(owed)}</span> across{" "}
+                {inFlight.length} {inFlight.length === 1 ? "claim" : "claims"}.</>
+            : "Nothing of yours is in the queue."
+        }
+        action={
+          <Link href="/requests/new" className={buttonClass("hero")} style={buttonStyle("hero")}>
+            <Camera size={17} aria-hidden />
+            Claim a receipt
+          </Link>
+        }
+      >
+        {user.name.split(/\s+/)[0]}&rsquo;s work
+      </PageTitle>
+
+      {mine.length === 0 ? (
+        <Empty
+          icon={<Receipt size={24} aria-hidden />}
+          title="Nothing claimed yet"
+          action={
+            <Link href="/requests/new" className={buttonClass("primary")} style={buttonStyle("primary")}>
+              <Camera size={16} aria-hidden /> Photograph a receipt
+            </Link>
+          }
+        >
+          When you pay for something out of pocket, photograph the receipt here.
+          {" "}{user.departmentName}&rsquo;s head sees it within minutes, and Finance approves it
+          after that.
+        </Empty>
+      ) : (
+        <section className="flex flex-col gap-3">
+          <SectionHeading
+            aside={
+              <Link href="/requests" className="text-[12.5px]" style={{ color: "var(--yg-pink)" }}>
+                All of yours →
+              </Link>
+            }
+          >
+            Your claims
+          </SectionHeading>
+          <div className="flex flex-col gap-2.5">
+            {mine.map((r) => (
+              <Link
+                key={r.id}
+                href={`/requests/${r.id}`}
+                className="flex flex-col gap-2 rounded-[var(--r-card)] p-4 hover:border-lime sm:flex-row sm:items-center sm:gap-4"
+                style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+              >
+                <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="tnum text-[11.5px] text-text-muted">{r.humanId}</span>
+                    <StateChip state={r.status} />
+                  </span>
+                  <span className="text-[14px]">{r.description}</span>
+                </span>
+                <span className="tnum text-[15px]"><Amount paise={r.amountPaise} /></span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <Link
+          href="/tickets"
+          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-lime"
+          style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+        >
+          <CircleDot size={18} style={{ color: "var(--yg-lime)" }} aria-hidden />
+          <span className="text-[13.5px]">Ask {user.departmentName}&rsquo;s head for something</span>
+        </Link>
+        <Link
+          href="/chat"
+          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-lime"
+          style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+        >
+          <MessagesSquare size={18} style={{ color: "var(--yg-lime)" }} aria-hidden />
+          <span className="text-[13.5px]">{user.departmentName}&rsquo;s channels</span>
+        </Link>
+      </div>
+    </>
+  );
 }
 
 /** "Nine things are waiting on you" — the queue this person actually owns. */

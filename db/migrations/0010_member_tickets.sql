@@ -1,0 +1,13 @@
+-- A member raises work with their own department's head.
+--
+-- `tickets_cross_department` required the two departments to differ, because a
+-- ticket was defined as one department asking another. That definition left a
+-- member with nowhere to put "the truss arrived short" except a channel, where it
+-- has no owner, no due date and no state.
+--
+-- The rule that replaces it depends on the *requester's role*, which the row does
+-- not carry: a member must target their own department, and anybody who can act
+-- across departments must target another. That is not expressible as a check
+-- constraint, so it is enforced in `createTicket` — the only thing that writes
+-- here — and pinned by a test.
+ALTER TABLE "tickets" DROP CONSTRAINT IF EXISTS "tickets_cross_department";

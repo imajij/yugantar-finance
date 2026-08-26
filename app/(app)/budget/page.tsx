@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { departments } from "@/db/schema";
@@ -22,6 +22,12 @@ import { StalledNotice } from "@/components/stalled";
 export default async function BudgetPage() {
   const user = await getSession();
   if (!user) redirect("/sign-in");
+
+  // A Member is not shown a budget at all (5.1), so this is not theirs — refused
+  // here rather than by redirecting them into a department page that then 404s.
+  if (!can(user, "department.budget.view", { festId: user.festId, departmentId: user.departmentId })) {
+    notFound();
+  }
 
   // No department in the resource, so only fest-wide reach comes back true.
   const seesAll = canFestWide(user, "department.budget.view");

@@ -17,9 +17,11 @@ export interface LabelOption extends Option { color: string }
  * than the filing is worth. Anything skipped here can be set from the board later.
  */
 export function TicketForm({
-  departments, labels, projects, cycles, parents,
+  departments, labels, projects, cycles, parents, fixedTarget = false,
 }: {
   departments: Option[];
+  /** A member raises with their own head — one destination, so it is stated, not picked. */
+  fixedTarget?: boolean;
   labels: LabelOption[];
   projects: Option[];
   cycles: Option[];
@@ -66,7 +68,13 @@ export function TicketForm({
   }
 
   if (departments.length === 0) {
-    return <p className="text-sm text-text-muted">There is no other department to ask.</p>;
+    return (
+      <p className="text-[13.5px] text-text-muted">
+        {fixedTarget
+          ? "Your department has not been set up yet, so there is nobody to raise this with."
+          : "There is no other department to ask."}
+      </p>
+    );
   }
 
   return (
@@ -79,12 +87,16 @@ export function TicketForm({
         <textarea name="description" required minLength={5} maxLength={2000} rows={4} className={INPUT} />
       </Field>
 
-      <Field label="Which department?">
-        <select name="target_department_id" required className={INPUT} defaultValue="">
-          <option value="" disabled>Choose a department</option>
-          {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
-      </Field>
+      {fixedTarget ? (
+        <input type="hidden" name="target_department_id" value={departments[0]?.id ?? ""} />
+      ) : (
+        <Field label="Which department?">
+          <select name="target_department_id" required className={INPUT} defaultValue="">
+            <option value="" disabled>Choose a department</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </Field>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Needed by">

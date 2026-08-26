@@ -36,9 +36,11 @@ const techResource: Resource = { festId: FEST, departmentId: TECH, submitterId: 
 const MATRIX: [Action, Resource, Actor[]][] = [
   ["fest.view", { festId: FEST }, [member, hod, otherHod, finance, mgmt, superAdmin]],
   ["fest.settings.view", { festId: FEST }, [finance]],
-  ["department.budget.view", techResource, [member, hod, finance, mgmt, superAdmin]],
+  ["department.budget.view", techResource, [hod, finance, mgmt, superAdmin]],
   // Every department, not just their own — that is the point of the flag.
   ["department.budget.view", { festId: FEST, departmentId: LOGISTICS }, [otherHod, finance, mgmt, superAdmin]],
+  ["lineItem.view", techResource, [hod, finance, mgmt, superAdmin]],
+  ["lineItem.spendAgainst", techResource, [member, hod, finance, mgmt, superAdmin]],
   ["reimbursement.view", techResource, [hod, finance, mgmt]],
   ["reimbursement.create", { festId: FEST }, [member, hod, otherHod, finance, mgmt, superAdmin]],
   ["reimbursement.endorse", techResource, [hod, finance]],
@@ -201,9 +203,35 @@ describe("department scoping", () => {
     expect(can(member, "lineItem.view", { festId: FEST, departmentId: LOGISTICS })).toBe(false);
   });
 
-  test("a Member sees their own department read-only (7 in section 17)", () => {
-    expect(can(member, "lineItem.view", { festId: FEST, departmentId: TECH })).toBe(true);
+  /**
+   * A Member spends out of a budget without being shown it. What a department was
+   * allocated, what it has committed and how close it is to its cap are the head's
+   * business and Finance's — a Member who can read the balance is one who starts
+   * deciding whether to claim based on it.
+   */
+  test("a Member cannot read their own department's budget", () => {
+    expect(can(member, "lineItem.view", { festId: FEST, departmentId: TECH })).toBe(false);
+    expect(can(member, "department.budget.view", { festId: FEST, departmentId: TECH })).toBe(false);
     expect(can(member, "lineItem.edit", { festId: FEST, departmentId: TECH })).toBe(false);
+  });
+
+  /**
+   * The half a Member does keep. Choosing which pot a receipt is charged to is not
+   * reading that pot's balance, and it has to survive the rule above or a Member
+   * could not file a claim at all.
+   */
+  test("a Member may still file against their own department, and only their own", () => {
+    expect(can(member, "lineItem.spendAgainst", { festId: FEST, departmentId: TECH })).toBe(true);
+    expect(can(member, "lineItem.spendAgainst", { festId: FEST, departmentId: LOGISTICS })).toBe(false);
+  });
+
+  test("Finance and Management may file anywhere — their own departments hold no budget", () => {
+    // 5.1: every role may claim money they personally spent. Finance sits in the
+    // Finance department and Management in Core, neither of which has line items,
+    // so an own-department rule would leave them unable to claim at all.
+    for (const actor of [finance, mgmt]) {
+      expect(can(actor, "lineItem.spendAgainst", { festId: FEST, departmentId: TECH })).toBe(true);
+    }
   });
 
   test("nothing crosses fests (18.2 rule 10)", () => {

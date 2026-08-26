@@ -496,6 +496,49 @@ await hit("POST", "/api/v1/reimbursements/bulk-approve", {
   as: finance, body: { ids: [claimId] },
 });
 
+/*
+ * A second claim, taken as far as APPROVED and deliberately left there. The walk
+ * pays its first one, which empties the payment queue — so without this there is
+ * nothing in it to check the Management action against, and nothing in it when the
+ * fest is kept with `--keep` for a look at the interface.
+ */
+const secondReceipt = await hit("POST", "/api/v1/attachments/presign", {
+  as: techHodEarly,
+  body: { purpose: "RECEIPT", file_name: "tempo.jpg", mime_type: "image/jpeg", size_bytes: 1024 },
+  label: "/api/v1/attachments/presign (second receipt)",
+});
+const secondReceiptId = String(secondReceipt.json?.attachment_id ?? "");
+if (secondReceipt.json?.upload_url) {
+  const to = String(secondReceipt.json.upload_url);
+  await fetch(to.startsWith("http") ? to : `${BASE}${to}`, { method: "PUT", body: new Uint8Array(randomBytes(1024)) });
+  await hit("POST", `/api/v1/attachments/${secondReceiptId}/complete`, {
+    as: techHodEarly, label: "/api/v1/attachments/{id}/complete (second receipt)",
+  });
+}
+
+const unpaid = await hit("POST", "/api/v1/reimbursements", {
+  as: techHodEarly,
+  body: {
+    line_item_id: lineItemId,
+    expense_type_id: expenseTypeId,
+    description: "Tempo hire for the Saturday load-out",
+    transaction_on: "2026-11-27",
+    amount_paise: 620000,
+    payee_name: "Rohit Das",
+    payee_upi_id: "rohit@okaxis",
+    attachment_ids: [secondReceiptId],
+    submit: true,
+  },
+  label: "/api/v1/reimbursements (left approved, unpaid)",
+});
+// An HOD's own submission arrives already endorsed — there is nobody else in the
+// department who outranks them to do it, and endorsing your own is not a thing.
+const unpaidId = required("unpaid claim id", String(unpaid.json?.id ?? ""));
+await hit("POST", `/api/v1/reimbursements/${unpaidId}/transitions`, {
+  as: finance, body: { action: "APPROVE" },
+  label: "/api/v1/reimbursements/{id}/transitions APPROVE (stays in the pay queue)",
+});
+
 section("Vendors");
 const vendor = await hit("POST", "/api/v1/vendors", {
   as: finance, body: { name: `ABC Sound ${randomBytes(3).toString("hex")}`, upi_id: "abc@upi" },
@@ -770,6 +813,43 @@ if (dm.json?.id) {
   }
 }
 
+section("What a member may not see");
+/*
+ * A member spends out of a budget without being shown it (5.1), and raises work
+ * with their own head rather than across departments. Both are refusals, so both
+ * are worth a call rather than a screenshot.
+ */
+await hit("GET", `/api/v1/departments/${techId}/summary`, {
+  as: techMember, expect: 403, label: "/api/v1/departments/{own}/summary (member refused)",
+});
+await hit("GET", `/api/v1/departments/${techId}/line-items`, {
+  as: techMember, expect: 403, label: "/api/v1/departments/{own}/line-items (member refused)",
+});
+await hit("GET", `/api/v1/line-items/${lineItemId}`, {
+  as: techMember, expect: 403, label: "/api/v1/line-items/{id} (member refused)",
+});
+await hit("GET", "/budget", { as: techMember, expect: 404, label: "/budget (member refused)" });
+
+// The half they keep: filing against their own department's line item.
+await hit("POST", "/api/v1/tickets", {
+  as: techMember, expect: [400, 422],
+  body: {
+    title: "Asking Logistics directly for a van",
+    description: "Which is their head's call to make, not mine.",
+    target_department_id: coreDeptId, due_at: "2026-11-27T16:00:00+05:30",
+  },
+  label: "/api/v1/tickets (member cannot address another department)",
+});
+await hit("POST", "/api/v1/tickets", {
+  as: techMember,
+  body: {
+    title: "Spare XLR cables for the acoustic set",
+    description: "Two of ours have gone missing since the sound check.",
+    target_department_id: techId, due_at: "2026-11-27T16:00:00+05:30",
+  },
+  label: "/api/v1/tickets (member raises with their own head)",
+});
+
 section("Comments, flags, audit, notifications");
 await hit("POST", "/api/v1/comments", {
   as: finance, body: { entity_type: "REIMBURSEMENT", entity_id: claimId, body: "Checked against the quote." },
@@ -845,6 +925,27 @@ for (const page of ["/dashboard", "/requests", "/tickets", "/tickets/new", "/tic
 }
 // /chat has nothing of its own to show — it sends you to a channel.
 await hit("GET", "/chat", { as: finance, expect: [200, 307], label: "/chat (redirects to a channel)" });
+
+/*
+ * The payment queue carries the only control that moves money out, and only for
+ * the one role allowed to press it. Checked as content because a 200 proves
+ * neither half.
+ */
+const payQueue = await hit("GET", "/queues", { as: management, label: "/queues (Management)" });
+rows.push({
+  group, method: "GET", path: "Management can record a payment from the queue", as: "mgmt",
+  status: payQueue.status, expected: "content",
+  ok: payQueue.text.includes("Record payment"),
+  note: "Record payment",
+});
+
+const approveQueue = await hit("GET", "/queues", { as: finance, label: "/queues (Finance)" });
+rows.push({
+  group, method: "GET", path: "Finance is not offered it — 5.2", as: "finance",
+  status: approveQueue.status, expected: "absent",
+  ok: !approveQueue.text.includes("Record payment"),
+  note: "absent, as it should be",
+});
 await hit("GET", "/dashboard", { as: anonymous, expect: [307, 302], label: "/dashboard (anonymous)" });
 
 // A 200 only proves the route did not throw. These pages are the ones whose whole
