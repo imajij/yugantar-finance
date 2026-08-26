@@ -709,6 +709,121 @@ await hit("POST", "/api/v1/ticket-labels", {
   as: techMember, body: { name: "sound" }, expect: 403,
   label: "/api/v1/ticket-labels (member refused)",
 });
+
+section("Relations");
+/*
+ * A relation is one row read from both ends, and it never gates anything. Checked
+ * over HTTP because both halves of that are easy to lose: a second row written for
+ * the reverse direction, or a status refusing to move because something upstream
+ * has not landed.
+ */
+const blocker = await hit("POST", "/api/v1/tickets", {
+  as: finance,
+  body: {
+    title: "Generator delivered to the field", description: "Diesel, on the north side.",
+    target_department_id: techId, due_at: "2026-11-27T12:00:00+05:30",
+  },
+  label: "/api/v1/tickets (a ticket to block with)",
+});
+const blockerId = required("blocker id", String(blocker.json?.id ?? ""));
+
+await hit("POST", `/api/v1/tickets/${blockerId}/links`, {
+  as: finance, body: { to_type: "TICKET", to_id: filedId, relation: "BLOCKS" },
+  label: "/api/v1/tickets/{id}/links (blocks)",
+});
+await hit("POST", `/api/v1/tickets/${filedId}/links`, {
+  as: finance, expect: 409, body: { to_type: "TICKET", to_id: blockerId, relation: "BLOCKS" },
+  label: "/api/v1/tickets/{id}/links (the reverse deadlock is refused)",
+});
+await hit("POST", `/api/v1/tickets/${blockerId}/links`, {
+  as: finance, expect: [400, 422], body: { to_type: "TICKET", to_id: blockerId, relation: "BLOCKS" },
+  label: "/api/v1/tickets/{id}/links (a ticket cannot block itself)",
+});
+
+const blockedBoard = await hit("GET", "/api/v1/tickets?view=all", {
+  as: techHod, label: "/api/v1/tickets (the blocked card)",
+});
+rows.push({
+  group, method: "GET", path: "the blocked ticket says so on the board", as: "tech-hod",
+  status: blockedBoard.status, expected: "content",
+  ok: (blockedBoard.json?.data as { id: string; blocked_by: number }[] | undefined)
+    ?.some((t) => t.id === filedId && t.blocked_by === 1) === true,
+  note: "blocked_by = 1",
+});
+
+// The whole point: being blocked stops nothing. The target department's head takes
+// it on and starts it with the blocker still wide open.
+//
+// The REASSIGN is not ceremony. SCHEDULE moves a ticket out of the backlog into
+// ACCEPTED without giving it an owner, and START answers to the assignee — so a
+// scheduled ticket has to be handed to somebody before anyone can begin it.
+await hit("POST", `/api/v1/tickets/${filedId}/transitions`, {
+  as: techHod, body: { action: "REASSIGN", assignee_id: techHodEarlyId },
+  label: "/api/v1/tickets/{id}/transitions (a scheduled ticket needs an owner)",
+});
+await hit("POST", `/api/v1/tickets/${filedId}/transitions`, {
+  as: techHod, body: { action: "START" },
+  label: "/api/v1/tickets/{id}/transitions START (blocked, and it still moves)",
+});
+
+const withRelations = await hit("GET", `/tickets/${filedId}`, {
+  as: techHod, label: "/tickets/{id} (relations)",
+});
+rows.push({
+  group, method: "GET", path: "the ticket page names what it is waiting on", as: "tech-hod",
+  status: withRelations.status, expected: "content",
+  ok: withRelations.text.includes("Blocked by"),
+  note: "Blocked by",
+});
+
+section("Templates");
+const template = await hit("POST", "/api/v1/ticket-templates", {
+  as: techHod,
+  body: {
+    name: `Van request ${randomBytes(3).toString("hex")}`,
+    summary: "Booking a vehicle for a load-in",
+    target_department_id: techId,
+    title: "Van needed for load-in",
+    body: "Pickup point:\nDrop point:\nWhat is being moved:",
+    priority: "HIGH", due_in_hours: 48, label_ids: [labelId],
+  },
+});
+const templateId = required("template id", String(template.json?.id ?? ""));
+await hit("PATCH", `/api/v1/ticket-templates/${templateId}`, {
+  as: techHod, body: { priority: "URGENT" }, label: "/api/v1/ticket-templates/{id}",
+});
+await hit("GET", "/api/v1/ticket-templates", { as: finance });
+// Shaping the vocabulary belongs to whoever runs work; a Member picks from it.
+await hit("POST", "/api/v1/ticket-templates", {
+  as: techMember, expect: 403, body: { name: "Mine" },
+  label: "/api/v1/ticket-templates (member refused)",
+});
+const memberTemplates = await hit("GET", "/api/v1/ticket-templates", {
+  as: techMember, label: "/api/v1/ticket-templates (member reads)",
+});
+rows.push({
+  group, method: "GET", path: "a member is offered only what they could raise", as: "tech-member",
+  status: memberTemplates.status, expected: "content",
+  ok: ((memberTemplates.json?.data as { target_department_id: string | null }[]) ?? [])
+    .every((t) => t.target_department_id === null || t.target_department_id === techId),
+  note: "own department or open",
+});
+
+const newTicketPage = await hit("GET", "/tickets/new", {
+  as: techHod, label: "/tickets/new (template picker)",
+});
+rows.push({
+  group, method: "GET", path: "the new-ticket form offers the template", as: "tech-hod",
+  status: newTicketPage.status, expected: "content",
+  ok: newTicketPage.text.includes("Start from a template"),
+  note: "Start from a template",
+});
+
+await hit("DELETE", `/api/v1/ticket-templates/${templateId}`, {
+  as: techHod, label: "/api/v1/ticket-templates/{id} (retire)",
+});
+
+section("Board planning, tidied up");
 await hit("DELETE", `/api/v1/cycles/${cycleId}`, { as: finance, label: "/api/v1/cycles/{id}" });
 await hit("DELETE", `/api/v1/projects/${projectId}`, { as: finance, label: "/api/v1/projects/{id}" });
 // Ordering within a column is tidying, not a decision — its own endpoint, and it

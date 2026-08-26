@@ -50,6 +50,8 @@ export interface Fixture {
     "member" | "otherMember" | "hod" | "otherHod" | "finance" | "management" | "superAdmin",
     SessionUser
   >;
+  /** Tech asking Logistics — the shape every ticket route expects. */
+  ticketId: string;
   lineItemId: string;
   otherLineItemId: string;
   /** On the Finance department, so a Finance HOD can spend their own budget. */
@@ -143,10 +145,21 @@ export async function buildFixture(slugPrefix: string): Promise<Fixture> {
     values (${festId}, 'ABC Sound', ${users.finance.id}, '123456789012', 'HDFC0001234', 'abc@upi')
     returning id`);
 
+  // One live ticket, so the isolation sweep has something real to try to reach
+  // across the fest boundary at.
+  const { id: ticketId } = await one<{ id: string }>(sql`
+    insert into tickets (fest_id, human_id, title, description, requesting_department_id,
+                         requester_id, target_department_id, due_at)
+    values (${festId}, 'YUG-9001', 'Chairs to Audi B',
+            'Stacked at the back entrance is fine.', ${departments.tech},
+            ${users.hod.id}, ${departments.logistics}, now() + interval '2 days')
+    returning id`);
+
   return {
     festId,
     departments,
     users,
+    ticketId,
     lineItemId: await lineItem(departments.tech, "Sound"),
     otherLineItemId: await lineItem(departments.logistics, "Chairs"),
     financeLineItemId: await lineItem(departments.finance, "Office supplies"),

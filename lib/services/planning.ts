@@ -9,11 +9,15 @@
  * this week" without either question becoming a status.
  *
  * All three are fest-scoped and shared: a label made by Logistics is usable by
- * Tech, because the point of a shared vocabulary is that it is shared.
+ * Tech, because the point of a shared vocabulary is that it is shared. Templates,
+ * added later, follow the same rule for the same reason.
  */
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { cycles, projects, ticketLabels, ticketLabelLinks, tickets, users } from "@/db/schema";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { db, type Tx } from "@/db";
+import {
+  cycles, departments, projects, ticketLabels, ticketLabelLinks, ticketTemplateLabels,
+  ticketTemplates, tickets, users,
+} from "@/db/schema";
 import { ApiError, conflict, notFound } from "@/lib/api";
 import { assertCan, type Actor } from "@/lib/authz";
 import { recordAudit } from "./audit";
@@ -276,6 +280,9 @@ export async function deleteCycle(actor: Actor, id: string) {
     if (!before) throw notFound("Cycle");
 
     await tx.update(tickets).set({ cycleId: null }).where(eq(tickets.cycleId, id));
+    // Templates point at cycles too, and this is a hard delete — a template left
+    // holding the id would take the whole transaction down on the foreign key.
+    await tx.update(ticketTemplates).set({ cycleId: null }).where(eq(ticketTemplates.cycleId, id));
     await tx.delete(cycles).where(eq(cycles.id, id));
 
     await recordAudit(tx, {
@@ -284,6 +291,218 @@ export async function deleteCycle(actor: Actor, id: string) {
     });
     return { ok: true };
   });
+}
+
+/* ----------------------------------------------------------------- templates */
+
+/**
+ * A template is a half-written ticket.
+ *
+ * It saves typing and nothing else. Choosing one prefills a form; the ticket that
+ * comes out still goes through `createTicket`, which is still what decides who may
+ * address whom. A template that names Logistics does not let a Member raise with
+ * Logistics — the form does not offer it, and the API refuses it if they ask
+ * anyway. Worth being explicit about, because "template" is the sort of word that
+ * sounds like it might carry authority.
+ *
+ * Fest-scoped and shared, like labels: a template Logistics wrote for "how to ask
+ * us for a van" is exactly the thing Tech should be able to pick up.
+ *
+ * Retired rather than deleted (`is_active`), so a template that has shaped fifty
+ * tickets does not vanish from the record.
+ */
+export interface TemplateInput {
+  name: string;
+  summary?: string | null;
+  targetDepartmentId?: string | null;
+  title?: string | null;
+  body?: string | null;
+  priority?: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+  location?: string | null;
+  estimatedCostPaise?: number | null;
+  dueInHours?: number | null;
+  projectId?: string | null;
+  cycleId?: string | null;
+  labelIds?: string[];
+}
+
+/**
+ * Templates a caller could actually use.
+ *
+ * A Member may only raise with their own department, so a template addressed
+ * anywhere else is not a choice they have — offering it would mean a form that
+ * fills itself in and then refuses to submit. Filtered here rather than in the
+ * page, so the API and the screen cannot disagree about it.
+ */
+export async function listTemplates(actor: Actor, opts: { all?: boolean } = {}) {
+  const usable = actor.role === "MEMBER"
+    ? sql`and (tt.target_department_id is null or tt.target_department_id = ${actor.departmentId})`
+    : sql``;
+
+  return (await db.execute(sql`
+    select tt.id, tt.name, tt.summary, tt.target_department_id, d.name as target_department,
+           tt.title, tt.body, tt.default_priority::text as priority, tt.location,
+           tt.estimated_cost_paise, tt.due_in_hours,
+           tt.project_id, pj.name as project, tt.cycle_id, cy.name as cycle, tt.is_active,
+           coalesce((
+             select json_agg(json_build_object('id', l.id, 'name', l.name, 'color', l.color)
+                             order by l.name)
+               from ticket_template_labels tl
+               join ticket_labels l on l.id = tl.label_id
+              where tl.template_id = tt.id
+           ), '[]'::json) as labels
+      from ticket_templates tt
+      left join departments d on d.id = tt.target_department_id
+      left join projects pj on pj.id = tt.project_id and pj.deleted_at is null
+      left join cycles cy on cy.id = tt.cycle_id
+     where tt.fest_id = ${actor.festId}
+       ${opts.all ? sql`` : sql`and tt.is_active`}
+       ${usable}
+     order by tt.is_active desc, tt.name
+  `)) as unknown as Record<string, unknown>[];
+}
+
+export async function createTemplate(actor: Actor, input: TemplateInput) {
+  assertCan(actor, "ticket.plan", { festId: actor.festId, departmentId: actor.departmentId });
+  const name = input.name.trim();
+  if (name.length < 2) throw new ApiError("VALIDATION_ERROR", "A template needs a name");
+
+  return db.transaction(async (tx) => {
+    const [clash] = await tx.select({ id: ticketTemplates.id }).from(ticketTemplates)
+      .where(and(
+        eq(ticketTemplates.festId, actor.festId),
+        eq(ticketTemplates.isActive, true),
+        sql`lower(${ticketTemplates.name}) = lower(${name})`,
+      )).limit(1);
+    if (clash) throw conflict(`There is already a “${name}” template`);
+
+    await assertTemplateRefs(tx, actor, input);
+
+    const [row] = await tx.insert(ticketTemplates).values({
+      festId: actor.festId,
+      name,
+      summary: input.summary ?? null,
+      targetDepartmentId: input.targetDepartmentId ?? null,
+      title: input.title ?? null,
+      body: input.body ?? null,
+      defaultPriority: input.priority ?? "MEDIUM",
+      location: input.location ?? null,
+      estimatedCostPaise: input.estimatedCostPaise ?? null,
+      dueInHours: input.dueInHours ?? null,
+      projectId: input.projectId ?? null,
+      cycleId: input.cycleId ?? null,
+      createdBy: actor.id,
+    }).returning();
+
+    await setTemplateLabels(tx, row.id, input.labelIds);
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "TICKET_TEMPLATE", entityId: row.id, actorId: actor.id,
+      action: "template.create", after: { name: row.name, target_department_id: row.targetDepartmentId },
+    });
+    return row;
+  });
+}
+
+export async function updateTemplate(actor: Actor, id: string, input: Partial<TemplateInput>) {
+  assertCan(actor, "ticket.plan", { festId: actor.festId, departmentId: actor.departmentId });
+
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select().from(ticketTemplates)
+      .where(and(eq(ticketTemplates.id, id), eq(ticketTemplates.festId, actor.festId))).limit(1);
+    if (!before) throw notFound("Template");
+    await assertTemplateRefs(tx, actor, input);
+
+    const pick = <T>(next: T | undefined, current: T) => (next === undefined ? current : next);
+    const [after] = await tx.update(ticketTemplates).set({
+      name: input.name?.trim() ?? before.name,
+      summary: pick(input.summary, before.summary),
+      targetDepartmentId: pick(input.targetDepartmentId, before.targetDepartmentId),
+      title: pick(input.title, before.title),
+      body: pick(input.body, before.body),
+      defaultPriority: input.priority ?? before.defaultPriority,
+      location: pick(input.location, before.location),
+      estimatedCostPaise: pick(input.estimatedCostPaise, before.estimatedCostPaise),
+      dueInHours: pick(input.dueInHours, before.dueInHours),
+      projectId: pick(input.projectId, before.projectId),
+      cycleId: pick(input.cycleId, before.cycleId),
+      updatedAt: new Date(),
+    }).where(eq(ticketTemplates.id, id)).returning();
+
+    if (input.labelIds !== undefined) await setTemplateLabels(tx, id, input.labelIds);
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "TICKET_TEMPLATE", entityId: id, actorId: actor.id,
+      action: "template.update",
+      before: { name: before.name }, after: { name: after.name },
+    });
+    return after;
+  });
+}
+
+/**
+ * Retiring a template. Soft, because the tickets it shaped are still in the record
+ * and somebody reading the audit log a month later should be able to see what they
+ * were filled in from.
+ */
+export async function retireTemplate(actor: Actor, id: string) {
+  assertCan(actor, "ticket.plan", { festId: actor.festId, departmentId: actor.departmentId });
+
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select().from(ticketTemplates)
+      .where(and(eq(ticketTemplates.id, id), eq(ticketTemplates.festId, actor.festId))).limit(1);
+    if (!before) throw notFound("Template");
+
+    const [after] = await tx.update(ticketTemplates)
+      .set({ isActive: !before.isActive, updatedAt: new Date() })
+      .where(eq(ticketTemplates.id, id)).returning();
+
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "TICKET_TEMPLATE", entityId: id, actorId: actor.id,
+      action: after.isActive ? "template.restore" : "template.retire",
+      before: { name: before.name, is_active: before.isActive },
+      after: { is_active: after.isActive },
+    });
+    return after;
+  });
+}
+
+async function setTemplateLabels(tx: Tx, templateId: string, labelIds?: string[]) {
+  if (labelIds === undefined) return;
+  await tx.delete(ticketTemplateLabels).where(eq(ticketTemplateLabels.templateId, templateId));
+  if (labelIds.length === 0) return;
+  await tx.insert(ticketTemplateLabels)
+    .values([...new Set(labelIds)].map((labelId) => ({ templateId, labelId })))
+    .onConflictDoNothing();
+}
+
+/**
+ * Every id a template points at has to belong to this fest (18.2 rule 10). A UUID
+ * is not a secret, and a template is a place somebody could otherwise park a
+ * reference to another fest's project and have this one render its name.
+ */
+async function assertTemplateRefs(tx: Tx, actor: Actor, input: Partial<TemplateInput>) {
+  const check = async (id: string | null | undefined, what: string, q: () => Promise<unknown[]>) => {
+    if (!id) return;
+    if ((await q()).length === 0) throw notFound(what);
+  };
+
+  await check(input.targetDepartmentId, "Department", () =>
+    tx.select({ id: departments.id }).from(departments)
+      .where(and(eq(departments.id, input.targetDepartmentId!), eq(departments.festId, actor.festId)))
+      .limit(1));
+  await check(input.projectId, "Project", () =>
+    tx.select({ id: projects.id }).from(projects)
+      .where(and(eq(projects.id, input.projectId!), eq(projects.festId, actor.festId), isNull(projects.deletedAt)))
+      .limit(1));
+  await check(input.cycleId, "Cycle", () =>
+    tx.select({ id: cycles.id }).from(cycles)
+      .where(and(eq(cycles.id, input.cycleId!), eq(cycles.festId, actor.festId)))
+      .limit(1));
+
+  if (input.labelIds?.length) {
+    const found = await tx.select({ id: ticketLabels.id }).from(ticketLabels)
+      .where(and(eq(ticketLabels.festId, actor.festId), inArray(ticketLabels.id, input.labelIds)));
+    if (found.length !== new Set(input.labelIds).size) throw notFound("Label");
+  }
 }
 
 /* -------------------------------------------------------------------- shared */

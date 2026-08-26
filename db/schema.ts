@@ -62,6 +62,7 @@ export const entityType = pgEnum("entity_type", [
   "FEST", "DEPARTMENT", "LINE_ITEM", "REIMBURSEMENT", "VENDOR", "VENDOR_REQUEST", "VENDOR_MILESTONE",
   "INCOME_ENTRY", "BUDGET_TRANSFER", "TICKET", "USER", "ATTACHMENT", "COMMENT", "FLAG",
   "ALLOCATION_REQUEST", "TICKET_LABEL", "PROJECT", "CYCLE", "CHANNEL", "MESSAGE",
+  "TICKET_TEMPLATE",
 ]);
 export const channelKind = pgEnum("channel_kind", ["DEPARTMENT", "DIRECT"]);
 export const allocationRequestStatus = pgEnum("allocation_request_status", [
@@ -422,15 +423,44 @@ export const ticketWatchers = pgTable("ticket_watchers", {
   userId: uuid("user_id").notNull().references(() => users.id),
 }, (t) => [primaryKey({ columns: [t.ticketId, t.userId] })]);
 
+/**
+ * A half-written ticket (PRD 9.5 extended, Linear's templates).
+ *
+ * Every field is optional, because a template that fills in two boxes is still a
+ * useful template and demanding more means nobody writes one. It carries no
+ * authority of its own: choosing one only prefills a form, and the ticket it
+ * produces goes through `createTicket` like any other — which is still what
+ * decides who may address whom.
+ *
+ * `dueInHours` rather than a date: a template outlives any particular one.
+ * `fields` is left over from the 0000 scaffold and is read by nothing.
+ */
 export const ticketTemplates = pgTable("ticket_templates", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   festId: uuid("fest_id").notNull().references(() => fests.id),
+  /** What it is called in the picker ("Van request"), not the ticket's title. */
   name: text("name").notNull(),
+  summary: text("summary"),
   targetDepartmentId: uuid("target_department_id").references(() => departments.id),
+  title: text("title"),
+  body: text("body"),
   defaultPriority: ticketPriority("default_priority").notNull().default("MEDIUM"),
+  location: text("location"),
+  estimatedCostPaise: paise("estimated_cost_paise"),
+  dueInHours: integer("due_in_hours"),
+  projectId: uuid("project_id").references(() => projects.id),
+  cycleId: uuid("cycle_id").references(() => cycles.id),
   fields: jsonb("fields").notNull().default([]),
   isActive: boolean("is_active").notNull().default(true),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
 });
+
+export const ticketTemplateLabels = pgTable("ticket_template_labels", {
+  templateId: uuid("template_id").notNull().references(() => ticketTemplates.id, { onDelete: "cascade" }),
+  labelId: uuid("label_id").notNull().references(() => ticketLabels.id, { onDelete: "cascade" }),
+}, (t) => [primaryKey({ columns: [t.templateId, t.labelId] })]);
 
 /**
  * Linear's planning layer (PRD 9.5 extended): a project groups tickets toward a

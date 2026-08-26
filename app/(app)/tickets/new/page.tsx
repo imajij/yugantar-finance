@@ -3,7 +3,7 @@ import { and, asc, eq, isNull, ne, notInArray, or } from "drizzle-orm";
 import { db } from "@/db";
 import { departments, tickets } from "@/db/schema";
 import { getSession } from "@/lib/session";
-import { listCycles, listLabels, listProjects } from "@/lib/services/planning";
+import { listCycles, listLabels, listProjects, listTemplates } from "@/lib/services/planning";
 import { PageTitle } from "@/components/ui";
 import { TicketForm } from "./form";
 
@@ -20,7 +20,7 @@ export default async function NewTicketPage() {
    */
   const raisesToOwn = user.role === "MEMBER";
 
-  const [targets, labels, projects, cycles, parents] = await Promise.all([
+  const [targets, labels, projects, cycles, parents, templates] = await Promise.all([
     db.select({ id: departments.id, name: departments.name }).from(departments)
       .where(and(
         eq(departments.festId, user.festId),
@@ -46,6 +46,9 @@ export default async function NewTicketPage() {
       ))
       .orderBy(asc(tickets.humanId))
       .limit(100),
+    // Filtered by the service to what this caller could actually raise — a member
+    // is not shown a template addressed to a department they may not ask.
+    listTemplates(user),
   ]);
 
   return (
@@ -66,6 +69,20 @@ export default async function NewTicketPage() {
         projects={projects.map((p) => ({ id: String(p.id), name: String(p.name) }))}
         cycles={cycles.map((c) => ({ id: String(c.id), name: String(c.name) }))}
         parents={parents}
+        templates={templates.map((t) => ({
+          id: String(t.id),
+          name: String(t.name),
+          summary: (t.summary as string) ?? null,
+          target_department_id: (t.target_department_id as string) ?? null,
+          title: (t.title as string) ?? null,
+          body: (t.body as string) ?? null,
+          priority: String(t.priority),
+          location: (t.location as string) ?? null,
+          due_in_hours: t.due_in_hours === null ? null : Number(t.due_in_hours),
+          project_id: (t.project_id as string) ?? null,
+          cycle_id: (t.cycle_id as string) ?? null,
+          label_ids: ((t.labels ?? []) as { id: string }[]).map((l) => l.id),
+        }))}
       />
     </div>
   );

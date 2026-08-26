@@ -108,6 +108,14 @@ export function Peek({
               <span className="tnum">{ticket.child_done_count}/{ticket.child_count} done</span>
             </Row>
           )}
+          {ticket.blocked_by > 0 && (
+            <Row label="Blocked by">
+              <span style={{ color: "var(--flag-med-fg)" }}>
+                <span className="tnum">{ticket.blocked_by}</span> open ticket
+                {ticket.blocked_by === 1 ? "" : "s"}
+              </span>
+            </Row>
+          )}
         </dl>
 
         <p className="text-[12.5px] leading-relaxed text-text-muted">

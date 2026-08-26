@@ -85,6 +85,13 @@
       "when": 1787960000000,
       "tag": "0011_board_rank",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787970000000,
+      "tag": "0012_relations_and_templates",
+      "breakpoints": true
     }
   ]
 }

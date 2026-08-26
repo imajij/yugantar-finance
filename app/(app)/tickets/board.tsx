@@ -74,6 +74,7 @@ export interface BoardTicket {
   parent_human_id: string | null;
   child_count: number;
   child_done_count: number;
+  blocked_by: number;
   /** Where it sits in its column once somebody has dragged it. */
   board_rank: number | null;
 }
@@ -1143,6 +1144,20 @@ function Row({
             )}
           </Inline>
 
+          {/*
+            * Shown, never enforced. The card says what is in front of this one; it
+            * does not stop anybody moving it, because the person holding the ticket
+            * knows whether the blocker really has to land first.
+            */}
+          {t.blocked_by > 0 && (
+            <span
+              className="rounded-full px-1.5 py-px text-[10.5px] font-medium"
+              style={{ background: "var(--flag-med-bg)", color: "var(--flag-med-fg)" }}
+              title={`Waiting on ${t.blocked_by} open ticket${t.blocked_by === 1 ? "" : "s"}`}
+            >
+              blocked
+            </span>
+          )}
           {t.child_count > 0 && (
             <span className="tnum text-text-muted" title="Sub-tickets done">
               {t.child_done_count}/{t.child_count}

@@ -103,9 +103,11 @@ async function dropFestsMatching(exec: Executor, like: string): Promise<void> {
       // An approved allocation request points at the transfer it made.
       sql`delete from allocation_requests where fest_id in ${scope}`,
       sql`delete from budget_transfers where fest_id in ${scope}`,
+      // Templates point at projects and cycles, so they go before both. The label
+      // links cascade, but the row itself does not.
+      sql`delete from ticket_templates where fest_id in ${scope}`,
       sql`delete from projects where fest_id in ${scope}`,
       sql`delete from cycles where fest_id in ${scope}`,
-      sql`delete from ticket_templates where fest_id in ${scope}`,
       sql`delete from users where fest_id in ${scope}`,
       sql`delete from human_id_sequences where fest_id in ${scope}`,
       sql`delete from departments where fest_id in ${scope}`,

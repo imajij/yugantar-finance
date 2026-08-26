@@ -244,6 +244,27 @@ const CASES: Case[] = [
     method: "GET",
     allow: EVERYONE, // everyone sees their own department's; only Mg/F see all
   },
+  {
+    // Reading templates is not planning: a Member picks one to raise a ticket with,
+    // and the list they get is already filtered to what they may actually raise.
+    name: "GET /ticket-templates",
+    load: () => import("@/app/api/v1/ticket-templates/route") as Promise<Record<string, Handler>>,
+    method: "GET",
+    allow: EVERYONE,
+  },
+  {
+    // Writing one is. `ticket.plan` — anybody who runs work shapes the vocabulary,
+    // a Member uses it.
+    name: "POST /ticket-templates",
+    load: () => import("@/app/api/v1/ticket-templates/route") as Promise<Record<string, Handler>>,
+    method: "POST",
+    options: (f) => ({
+      body: { name: `Van ${crypto.randomUUID().slice(0, 8)}`, target_department_id: f.departments.logistics },
+    }),
+    // `ticket.plan`, unchanged: the same list that already governs labels,
+    // projects and cycles.
+    allow: ["hod", "otherHod", "finance", "management", "superAdmin"],
+  },
 
   /* ---------------------------------------------------- 20.10 flags and audit */
   {
