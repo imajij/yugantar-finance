@@ -71,7 +71,8 @@ export type Action =
   | "income.manage"
   // writes — everything else
   | "ticket.create" | "ticket.triage" | "ticket.work" | "ticket.close" | "ticket.plan"
-  | "comment.create" | "flag.resolve" | "flag.raise" | "user.manage" | "expenseType.manage";
+  | "comment.create" | "flag.resolve" | "flag.raise"
+  | "user.manage" | "user.manageOwnTeam" | "expenseType.manage";
 
 const isFinance = (a: Actor) => a.role === "FINANCE_HOD";
 const isSuperAdmin = (a: Actor) => a.isSuperAdmin === true;
@@ -235,6 +236,19 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
       // an administrator because they own the fest's shape. Both leave the same audit
       // trail — an allocation only ever moves by transfer, with a reason (7.1).
       return finance || superAdmin;
+
+    case "user.manageOwnTeam":
+      // A department head runs their own team: who is in it, and who is not any
+      // more. Narrower than `user.manage` in every direction that matters — one
+      // department, members only, and never a role or a department move. Those stay
+      // with Finance, because a head who could promote is a head who could appoint
+      // their own endorser, and a head who could move somebody between departments
+      // could take another department's people without asking.
+      //
+      // An administrator is deliberately absent. The flag is oversight and never
+      // authority: appointing people is a thing you do to a fest, not a thing you
+      // watch it do.
+      return finance || (hod && own);
 
     case "fest.manage":
     case "department.manage":

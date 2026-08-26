@@ -173,6 +173,26 @@ async function auditAt(page: Page): Promise<{ wide: Wide[]; buried: number }> {
  * sweep does — the raw token never leaves the server normally, only its hash is
  * stored, so this writes its own.
  */
+/**
+ * Screens only a department head can open. Swept in a second pass, as one, because
+ * signing in as Finance and following the redirect to /admin would measure the wrong
+ * page and report a pass — the silent no-op this whole file exists to catch.
+ */
+const HOD_PATHS = ["/team"];
+
+/** Plants a sign-in token and follows the real callback. */
+async function plant(page: Page, sql: postgres.Sql, userId: string) {
+  const token = randomBytes(32).toString("base64url");
+  const hash = createHash("sha256").update(token).digest("hex");
+  await sql`
+    insert into sign_in_tokens (user_id, token_hash, expires_at)
+    values (${userId}, ${hash}, now() + interval '10 minutes')`;
+  await page.goto(`${BASE}/auth/callback?token=${token}`, { waitUntil: "domcontentloaded" });
+}
+
+/** The fest being swept, remembered so the second pass signs into the same one. */
+let sweptFestId = "";
+
 async function signIn(page: Page): Promise<Record<string, string>> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
@@ -187,6 +207,7 @@ async function signIn(page: Page): Promise<Record<string, string>> {
          + (select count(*) from line_items l where l.fest_id = f.id) as rows
       from fests f order by rows desc, f.created_at desc limit 1`;
   if (!fest) throw new Error("No fest — run pnpm db:seed");
+  sweptFestId = String(fest.id);
 
   const [user] = await sql`
     select u.id from users u
@@ -208,15 +229,21 @@ async function signIn(page: Page): Promise<Record<string, string>> {
                            where c.fest_id = ${fest.id} order by c.created_at limit 1`),
   };
 
-  const token = randomBytes(32).toString("base64url");
-  const hash = createHash("sha256").update(token).digest("hex");
-  await sql`
-    insert into sign_in_tokens (user_id, token_hash, expires_at)
-    values (${user.id}, ${hash}, now() + interval '10 minutes')`;
+  await plant(page, sql, String(user.id));
   await sql.end();
-
-  await page.goto(`${BASE}/auth/callback?token=${token}`, { waitUntil: "domcontentloaded" });
   return ids;
+}
+
+/** Signs the same browser in as a department head, or says why it could not. */
+async function signInAsHod(page: Page): Promise<boolean> {
+  const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
+  const [hod] = await sql`
+    select id from users
+     where fest_id = ${sweptFestId} and status = 'ACTIVE' and role = 'DEPT_HOD'
+     order by created_at limit 1`;
+  if (hod) await plant(page, sql, String(hod.id));
+  await sql.end();
+  return Boolean(hod);
 }
 
 /* ---------------------------------------------------------------------- run */
@@ -260,6 +287,31 @@ for (const path of paths) {
         error: (e as Error).message.slice(0, 80),
       });
     }
+  }
+}
+
+if (!only || HOD_PATHS.includes(only)) {
+  if (await signInAsHod(page)) {
+    for (const path of HOD_PATHS) {
+      paths.push(path);
+      for (const w of WIDTHS) {
+        await page.setViewportSize({ width: w.width, height: w.height });
+        try {
+          const res = await page.goto(`${BASE}${path}`, { waitUntil: "networkidle", timeout: 20_000 });
+          if (res && res.status() >= 400) {
+            rows.push({ path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0, error: `HTTP ${res.status()}` });
+            continue;
+          }
+          const { by, offenders } = await overflowAt(page, w.width);
+          const { wide, buried } = await auditAt(page);
+          rows.push({ path, width: w.name, overflowBy: by, offenders, wide, buried });
+        } catch (e) {
+          rows.push({ path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0, error: (e as Error).message.slice(0, 80) });
+        }
+      }
+    }
+  } else {
+    console.log(`\n  \x1b[33mno active department head in that fest — ${HOD_PATHS.join(", ")} is not being checked. Run pnpm smoke --keep first.\x1b[0m`);
   }
 }
 

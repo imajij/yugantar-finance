@@ -6,7 +6,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { departments, expenseTypes, fests, users } from "@/db/schema";
 import { ApiError, conflict, notFound } from "@/lib/api";
-import { assertCan, type Actor } from "@/lib/authz";
+import { assertCan, can, canFestWide, type Actor } from "@/lib/authz";
 import { requestSignInLink, revokeAllSessions } from "@/lib/auth";
 import { enforce } from "@/lib/rate-limit";
 import { clerkConfigured, emailDomainAllowed, revokeClerkSessions, sendClerkInvitation } from "@/lib/clerk";
@@ -55,8 +55,60 @@ async function assertSeatFree(festId: string, role: Role, exceptUserId?: string)
   }
 }
 
+/**
+ * What a department head may do to a person, as opposed to what Finance may.
+ *
+ * A head runs their own team and nothing else. Expressed as one function because
+ * the three call sites below would otherwise each need to remember four rules, and
+ * the one that forgot would be the way in.
+ *
+ * Their limits, and why each is there:
+ *   - **their own department only** — otherwise a head could take another
+ *     department's people, or read a list that is not theirs;
+ *   - **members only, in and out** — a head who could appoint another head could
+ *     appoint their own endorser, which is 5.2 undone from the inside;
+ *   - **no role changes and no department moves** — both are promotions in
+ *     disguise, and both belong to Finance;
+ *   - **never themselves** — the one mistake nobody can undo from inside the app.
+ */
+function assertMayManage(
+  actor: Actor,
+  target: { id?: string; role: Role; departmentId: string; isSuperAdmin?: boolean },
+  wanted?: { role?: Role; departmentId?: string; isSuperAdmin?: boolean },
+) {
+  // Finance and administrators go through the wider door and skip all of this.
+  if (can(actor, "user.manage", { festId: actor.festId })) return;
+
+  assertCan(actor, "user.manageOwnTeam", { festId: actor.festId, departmentId: target.departmentId });
+
+  // Checked before the role rule below, or a head editing their own row would be
+  // told "roles are Finance's to set" — true of the row, and not the reason.
+  if (target.id && target.id === actor.id) {
+    throw new ApiError("VALIDATION_ERROR", "You cannot change your own account");
+  }
+  if (target.role !== "MEMBER") {
+    throw new ApiError(
+      "FORBIDDEN",
+      "A department head manages the members of their department. Roles are Finance's to set.",
+    );
+  }
+  if (wanted?.role !== undefined && wanted.role !== target.role) {
+    throw new ApiError("FORBIDDEN", "Changing somebody's role is Finance's to do");
+  }
+  if (wanted?.departmentId !== undefined && wanted.departmentId !== target.departmentId) {
+    throw new ApiError("FORBIDDEN", "Moving somebody between departments is Finance's to do");
+  }
+  if (wanted?.isSuperAdmin !== undefined && wanted.isSuperAdmin !== target.isSuperAdmin) {
+    throw new ApiError("FORBIDDEN", "Only an administrator appoints another");
+  }
+}
+
 export async function inviteUser(actor: Actor, input: UserInput) {
-  assertCan(actor, "user.manage", { festId: actor.festId });
+  assertMayManage(
+    actor,
+    { role: input.role, departmentId: input.departmentId },
+    { isSuperAdmin: input.isSuperAdmin || undefined },
+  );
   assertMaySetSuperAdmin(actor, input.isSuperAdmin);
   await assertSeatFree(actor.festId, input.role);
 
@@ -130,15 +182,18 @@ export async function inviteUser(actor: Actor, input: UserInput) {
  * anything they did not already have.
  */
 export async function resendInvitation(actor: Actor, id: string) {
-  assertCan(actor, "user.manage", { festId: actor.festId });
-
   const [target] = await db.select({
     id: users.id, name: users.name, email: users.email, status: users.status,
+    role: users.role, departmentId: users.departmentId,
   }).from(users)
     .where(and(eq(users.id, id), eq(users.festId, actor.festId))).limit(1);
   // Existence in *this* fest first: answering anything else to somebody holding
   // another fest's user id would describe our fest to an outsider.
   if (!target) throw notFound("User");
+
+  // Sending somebody their own invitation again is not a change to their account,
+  // so a head may do it for their own people without the self-check.
+  assertMayManage(actor, { role: target.role, departmentId: target.departmentId });
 
   if (target.status === "DISABLED") {
     throw new ApiError("VALIDATION_ERROR", "That account is deactivated. Reactivate it first.");
@@ -169,14 +224,18 @@ export async function updateUser(
   input: Partial<Pick<UserInput, "name" | "role" | "departmentId" | "upiId" | "phone" | "isSuperAdmin">>
     & { status?: "ACTIVE" | "DISABLED" },
 ) {
-  assertCan(actor, "user.manage", { festId: actor.festId });
-
   // Existence in *this* fest is settled first. Checking the seat first would answer
   // "this fest already has a finance hod" to somebody holding another fest's user id —
   // a refusal, but one that describes our fest to an outsider.
-  const [target] = await db.select({ id: users.id }).from(users)
+  const [target] = await db.select({
+    id: users.id, role: users.role, departmentId: users.departmentId, isSuperAdmin: users.isSuperAdmin,
+  }).from(users)
     .where(and(eq(users.id, id), eq(users.festId, actor.festId))).limit(1);
   if (!target) throw notFound("User");
+
+  assertMayManage(actor, target, {
+    role: input.role, departmentId: input.departmentId, isSuperAdmin: input.isSuperAdmin,
+  });
 
   if (input.role) await assertSeatFree(actor.festId, input.role, id);
 
@@ -247,8 +306,15 @@ export async function updateUser(
   return updated;
 }
 
+/**
+ * Everyone the caller may manage: the whole fest for Finance, one department for
+ * its head. The scoping is the permission — a head asking for the list gets their
+ * own team rather than a refusal, and there is no parameter they could pass to
+ * widen it.
+ */
 export async function listUsers(actor: Actor) {
-  assertCan(actor, "user.manage", { festId: actor.festId });
+  assertCan(actor, "user.manageOwnTeam", { festId: actor.festId, departmentId: actor.departmentId });
+  const festWide = canFestWide(actor, "user.manage");
   return db
     .select({
       id: users.id, name: users.name, email: users.email, role: users.role,
@@ -257,7 +323,10 @@ export async function listUsers(actor: Actor) {
       department: departments.name, departmentId: users.departmentId,
     })
     .from(users).innerJoin(departments, eq(departments.id, users.departmentId))
-    .where(eq(users.festId, actor.festId))
+    .where(and(
+      eq(users.festId, actor.festId),
+      festWide ? undefined : eq(users.departmentId, actor.departmentId),
+    ))
     .orderBy(asc(departments.name), asc(users.name));
 }
 
