@@ -53,7 +53,9 @@ const CASES: Case[] = [
     name: "GET /users",
     load: () => import("@/app/api/v1/users/route") as Promise<Record<string, Handler>>,
     method: "GET",
-    allow: ["finance"],
+    // A head gets their own team rather than a refusal; the scoping *is* the
+    // permission, and there is no parameter that widens it.
+    allow: ["hod", "otherHod", "finance"],
   },
   {
     name: "POST /users — invite",
@@ -62,14 +64,18 @@ const CASES: Case[] = [
     options: (f) => ({
       body: { name: "New", email: `new-${crypto.randomUUID()}@sst.scaler.com`, role: "MEMBER", department_id: f.departments.tech },
     }),
-    allow: ["finance"],
+    // Tech's head may add a member to Tech. Logistics' head may not — same body,
+    // another department.
+    allow: ["hod", "finance"],
   },
   {
     name: "PATCH /users/{id}",
     load: () => import("@/app/api/v1/users/[id]/route") as Promise<Record<string, Handler>>,
     method: "PATCH",
     options: (f) => ({ params: { id: f.users.member.id }, body: { name: "Renamed" } }),
-    allow: ["finance"],
+    // Tech's head reaches a Tech member; Logistics' head reaches the same id and
+    // is refused, which is the whole point of the narrower door.
+    allow: ["hod", "finance"],
   },
   {
     name: "POST /expense-types",

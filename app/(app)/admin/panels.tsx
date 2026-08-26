@@ -90,7 +90,7 @@ interface Person {
 }
 
 export function People({
-  users, departments, meId, canManageAdmins, canRaiseConcerns = false,
+  users, departments, meId, canManageAdmins, canRaiseConcerns = false, fixedDepartmentId,
 }: {
   users: Person[];
   departments: { id: string; name: string }[];
@@ -99,7 +99,15 @@ export function People({
   canManageAdmins: boolean;
   /** `can(user, "flag.raise")` — flagging a person, per 8.3. */
   canRaiseConcerns?: boolean;
+  /**
+   * Set for a department head, who manages one department and only its members.
+   * The role and department controls do not appear at all, because they are not
+   * theirs to change — the server refuses either way (see `assertMayManage`), and a
+   * control that always fails is worse than no control.
+   */
+  fixedDepartmentId?: string;
 }) {
+  const team = fixedDepartmentId !== undefined;
   const { save, busy, error } = useSave();
   const [adding, setAdding] = useState(false);
 
@@ -135,22 +143,26 @@ export function People({
               <span className="truncate text-[12px] text-text-muted">{u.email}</span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center">
-              <select
-                defaultValue={u.role} disabled={busy || u.id === meId} className={INPUT}
-                aria-label={`Role for ${u.name}`}
-                onChange={(e) => save(`/api/v1/users/${u.id}`, "PATCH", { role: e.target.value })}
-              >
-                {ROLES.map((r) => <option key={r} value={r}>{r.replace("_", " ").toLowerCase()}</option>)}
-              </select>
-              <select
-                defaultValue={u.departmentId} disabled={busy} className={INPUT}
-                aria-label={`Department for ${u.name}`}
-                onChange={(e) => save(`/api/v1/users/${u.id}`, "PATCH", { department_id: e.target.value })}
-              >
-                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </div>
+            {team ? (
+              <span className="text-[12px] text-text-muted">{u.role.replace("_", " ").toLowerCase()}</span>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center">
+                <select
+                  defaultValue={u.role} disabled={busy || u.id === meId} className={INPUT}
+                  aria-label={`Role for ${u.name}`}
+                  onChange={(e) => save(`/api/v1/users/${u.id}`, "PATCH", { role: e.target.value })}
+                >
+                  {ROLES.map((r) => <option key={r} value={r}>{r.replace("_", " ").toLowerCase()}</option>)}
+                </select>
+                <select
+                  defaultValue={u.departmentId} disabled={busy} className={INPUT}
+                  aria-label={`Department for ${u.name}`}
+                  onChange={(e) => save(`/api/v1/users/${u.id}`, "PATCH", { department_id: e.target.value })}
+                >
+                  {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center gap-2">
               {canManageAdmins && (
@@ -166,7 +178,7 @@ export function People({
                   admin
                 </label>
               )}
-              {u.id !== meId && (
+              {u.id !== meId && !(team && u.role !== "MEMBER") && (
                 <Button
                   tone="ghost"
                   disabled={busy}
@@ -196,22 +208,27 @@ export function People({
             const f = new FormData(e.currentTarget);
             const ok = await save("/api/v1/users", "POST", {
               name: f.get("name"), email: f.get("email"),
-              role: f.get("role"), department_id: f.get("department_id"),
-              is_super_admin: f.get("is_super_admin") === "on",
+              role: team ? "MEMBER" : f.get("role"),
+              department_id: team ? fixedDepartmentId : f.get("department_id"),
+              is_super_admin: !team && f.get("is_super_admin") === "on",
             });
             if (ok) setAdding(false);
           }}
         >
           <input name="name" required placeholder="Name" minLength={2} className={INPUT} />
           <input name="email" required type="email" placeholder="email@sst.scaler.com" className={INPUT} />
-          <select name="role" defaultValue="MEMBER" className={INPUT}>
-            {ROLES.map((r) => <option key={r} value={r}>{r.replace("_", " ").toLowerCase()}</option>)}
-          </select>
-          <select name="department_id" required defaultValue="" className={INPUT}>
-            <option value="" disabled>Department</option>
-            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-          {canManageAdmins && (
+          {!team && (
+            <>
+              <select name="role" defaultValue="MEMBER" className={INPUT}>
+                {ROLES.map((r) => <option key={r} value={r}>{r.replace("_", " ").toLowerCase()}</option>)}
+              </select>
+              <select name="department_id" required defaultValue="" className={INPUT}>
+                <option value="" disabled>Department</option>
+                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </>
+          )}
+          {canManageAdmins && !team && (
             <label className="flex items-center gap-1.5 pb-2 text-xs text-text-soft">
               <input type="checkbox" name="is_super_admin" />
               Administrator
@@ -225,7 +242,7 @@ export function People({
         </form>
       ) : (
         <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-pink)" }}>
-          + Invite someone
+          {team ? "+ Add a team member" : "+ Invite someone"}
         </button>
       )}
 

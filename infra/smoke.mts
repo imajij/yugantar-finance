@@ -861,6 +861,87 @@ await hit("POST", "/api/v1/tickets", {
   label: "/api/v1/tickets (member raises with their own head)",
 });
 
+section("Team management");
+/*
+ * The narrow door. A head runs their own department's roster and nothing else, so
+ * every check here is a way of trying to widen it: appointing a second head,
+ * reaching into another department, editing one's own row.
+ */
+const otherDeptId = await mkDept("Logistics", `logi-${randomBytes(3).toString("hex")}`, "BUDGET");
+const otherHodId = await mkUser("Logi HOD", "DEPT_HOD", otherDeptId);
+
+const roster = await hit("GET", "/api/v1/users", {
+  as: techHodEarly, label: "/api/v1/users (head sees their own team)",
+});
+const otherHodEmail = (await one<{ email: string }>(sql`select email from users where id = ${otherHodId}`)).email;
+rows.push({
+  group, method: "GET", path: "another department's people are not in it", as: "tech-hod",
+  status: roster.status, expected: "absent",
+  ok: roster.status === 200 && !roster.text.includes(otherHodEmail),
+  note: "scoped to their department",
+});
+
+const hired = await hit("POST", "/api/v1/users", {
+  as: techHodEarly,
+  body: {
+    name: "Stage Hand", email: `${randomBytes(6).toString("hex")}@sst.scaler.com`,
+    role: "MEMBER", department_id: techId,
+  },
+  label: "/api/v1/users (head adds a member)",
+});
+const hiredId = required("hired user id", String(hired.json?.id ?? ""));
+// Resent while the invitation is still outstanding — which is the only time it
+// means anything, and the only time the service allows it.
+await hit("POST", `/api/v1/users/${hiredId}/invite`, {
+  as: techHodEarly, label: "/api/v1/users/{id}/invite (head resends)",
+});
+await hit("PATCH", `/api/v1/users/${hiredId}`, {
+  as: techHodEarly, body: { status: "DISABLED" }, label: "/api/v1/users/{id} (head removes a member)",
+});
+
+// 5.2 from the inside: a head who could appoint a head could appoint their own endorser.
+await hit("POST", "/api/v1/users", {
+  as: techHodEarly, expect: 403,
+  body: {
+    name: "Shadow Head", email: `${randomBytes(6).toString("hex")}@sst.scaler.com`,
+    role: "DEPT_HOD", department_id: techId,
+  },
+  label: "/api/v1/users (head cannot appoint a head)",
+});
+await hit("POST", "/api/v1/users", {
+  as: techHodEarly, expect: 403,
+  body: {
+    name: "Poached", email: `${randomBytes(6).toString("hex")}@sst.scaler.com`,
+    role: "MEMBER", department_id: otherDeptId,
+  },
+  label: "/api/v1/users (head cannot staff another department)",
+});
+await hit("PATCH", `/api/v1/users/${otherHodId}`, {
+  as: techHodEarly, expect: 403, body: { status: "DISABLED" },
+  label: "/api/v1/users/{id} (head cannot reach another department)",
+});
+await hit("PATCH", `/api/v1/users/${hiredId}`, {
+  as: techHodEarly, expect: 403, body: { department_id: otherDeptId },
+  label: "/api/v1/users/{id} (head cannot move somebody out)",
+});
+await hit("PATCH", `/api/v1/users/${hiredId}`, {
+  as: techHodEarly, expect: 403, body: { role: "DEPT_HOD" },
+  label: "/api/v1/users/{id} (head cannot promote)",
+});
+await hit("PATCH", `/api/v1/users/${techHodEarlyId}`, {
+  as: techHodEarly, expect: [400, 422], body: { status: "DISABLED" },
+  label: "/api/v1/users/{self} (head cannot edit their own account)",
+});
+await hit("GET", "/api/v1/users", {
+  as: techMember, expect: 403, label: "/api/v1/users (member refused)",
+});
+
+await hit("GET", "/team", { as: techHodEarly, expect: 200 });
+// Finance has /admin, which is this page plus the fest; two doors to the same
+// people is a way to end up maintaining one of them.
+await hit("GET", "/team", { as: finance, expect: 307, label: "/team (Finance is sent to /admin)" });
+await hit("GET", "/team", { as: techMember, expect: 404, label: "/team (member refused)" });
+
 section("Comments, flags, audit, notifications");
 await hit("POST", "/api/v1/comments", {
   as: finance, body: { entity_type: "REIMBURSEMENT", entity_id: claimId, body: "Checked against the quote." },
