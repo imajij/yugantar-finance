@@ -17,10 +17,11 @@ const INPUT =
  * address" state here, by design.
  */
 export function SignInForm({
-  domain,
+  domains,
   deliversEmail,
 }: {
-  domain: string | null;
+  /** The college's domains, first one shown as the example. */
+  domains: string[];
   deliversEmail: boolean;
 }) {
   const [email, setEmail] = useState("");
@@ -98,7 +99,7 @@ export function SignInForm({
         autoFocus
         autoComplete="email"
         inputMode="email"
-        placeholder={domain ? `you@${domain}` : "you@college.edu"}
+        placeholder={domains[0] ? `you@${domains[0]}` : "you@college.edu"}
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         className={`mt-1.5 ${INPUT}`}
@@ -120,7 +121,8 @@ export function SignInForm({
       )}
 
       <p className="mt-5 text-center text-xs text-text-muted">
-        Only {domain ? `@${domain}` : "college"} accounts that have been invited can sign in.
+        Only {domains.length ? domains.map((d) => `@${d}`).join(" and ") : "college"} accounts that
+        have been invited can sign in.
         Ask the Finance HOD for an invitation.
       </p>
     </form>

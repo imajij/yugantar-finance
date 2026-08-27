@@ -985,6 +985,25 @@ section("Team management");
 const otherDeptId = await mkDept("Logistics", `logi-${randomBytes(3).toString("hex")}`, "BUDGET");
 const otherHodId = await mkUser("Logi HOD", "DEPT_HOD", otherDeptId);
 
+// The college is two Workspaces. A `scaler.com` head is as real as an
+// `sst.scaler.com` one, and the invite path is where that gets decided.
+await hit("POST", "/api/v1/users", {
+  as: finance,
+  body: {
+    name: "Scaler Staff", email: `${randomBytes(6).toString("hex")}@scaler.com`,
+    role: "DEPT_HOD", department_id: otherDeptId,
+  },
+  label: "/api/v1/users (a scaler.com head is invited)",
+});
+await hit("POST", "/api/v1/users", {
+  as: finance, expect: [400, 422],
+  body: {
+    name: "Outsider", email: `${randomBytes(6).toString("hex")}@notscaler.com`,
+    role: "MEMBER", department_id: otherDeptId,
+  },
+  label: "/api/v1/users (a lookalike domain is refused)",
+});
+
 const roster = await hit("GET", "/api/v1/users", {
   as: techHodEarly, label: "/api/v1/users (head sees their own team)",
 });
@@ -1051,10 +1070,21 @@ await hit("GET", "/api/v1/users", {
   as: techMember, expect: 403, label: "/api/v1/users (member refused)",
 });
 
-await hit("GET", "/team", { as: techHodEarly, expect: 200 });
-// Finance has /admin, which is this page plus the fest; two doors to the same
-// people is a way to end up maintaining one of them.
-await hit("GET", "/team", { as: finance, expect: 307, label: "/team (Finance is sent to /admin)" });
+// One page, two sizes: a head gets their department, Finance gets the fest.
+const teamPage = await hit("GET", "/team", { as: techHodEarly, expect: 200 });
+rows.push({
+  group, method: "GET", path: "a head's page is their department, not the fest", as: "tech-hod",
+  status: teamPage.status, expected: "content",
+  ok: teamPage.text.includes("Your team") && !teamPage.text.includes(otherHodEmail),
+  note: "own department only",
+});
+const financeTeam = await hit("GET", "/team", { as: finance, expect: 200, label: "/team (Finance)" });
+rows.push({
+  group, method: "GET", path: "Finance gets the whole fest on the same page", as: "finance",
+  status: financeTeam.status, expected: "content",
+  ok: financeTeam.text.includes("Everybody in the fest") && financeTeam.text.includes(otherHodEmail),
+  note: "fest-wide",
+});
 await hit("GET", "/team", { as: techMember, expect: 404, label: "/team (member refused)" });
 
 section("Comments, flags, audit, notifications");
@@ -1127,7 +1157,7 @@ section("Pages");
 await hit("GET", "/sign-in", { as: finance, expect: 307, label: "/sign-in (already signed in)" });
 for (const page of ["/dashboard", "/requests", "/tickets", "/tickets/new", "/tickets/planning",
                     "/budget", "/budget/review", "/vendors", "/income", "/queues", "/flags",
-                    "/notifications", "/close-out", "/audit", "/admin"]) {
+                    "/notifications", "/close-out", "/audit", "/admin", "/team"]) {
   await hit("GET", page, { as: finance, expect: 200 });
 }
 // /chat has nothing of its own to show — it sends you to a channel.

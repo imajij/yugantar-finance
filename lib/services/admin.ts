@@ -9,7 +9,9 @@ import { ApiError, conflict, notFound } from "@/lib/api";
 import { assertCan, can, canFestWide, type Actor } from "@/lib/authz";
 import { requestSignInLink, revokeAllSessions } from "@/lib/auth";
 import { enforce } from "@/lib/rate-limit";
-import { clerkConfigured, emailDomainAllowed, revokeClerkSessions, sendClerkInvitation } from "@/lib/clerk";
+import {
+  allowedEmailDomains, clerkConfigured, emailDomainAllowed, revokeClerkSessions, sendClerkInvitation,
+} from "@/lib/clerk";
 import type { Role } from "@/lib/state-machines/types";
 import { recordAudit, snapshot } from "./audit";
 import { ensureDepartmentChannel, removeFromAllChannels, syncMembershipForUser } from "./chat";
@@ -116,7 +118,7 @@ export async function inviteUser(actor: Actor, input: UserInput) {
   if (!emailDomainAllowed(input.email) && input.role !== "MANAGEMENT") {
     throw new ApiError(
       "VALIDATION_ERROR",
-      `Only @${process.env.ALLOWED_EMAIL_DOMAIN} addresses can be invited, except for Management`,
+      `Only @${allowedEmailDomains().join(" or @")} addresses can be invited, except for Management`,
     );
   }
 

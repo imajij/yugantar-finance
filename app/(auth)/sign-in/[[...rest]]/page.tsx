@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { SignIn } from "@clerk/nextjs";
 import { clerkConfigured, getSession } from "@/lib/session";
-import { allowedEmailDomain } from "@/lib/clerk";
+import { allowedEmailDomains, describeAllowedDomains } from "@/lib/clerk";
 import { emailConfigured } from "@/lib/email";
 import { SignInForm } from "./form";
 
@@ -23,7 +23,8 @@ export default async function SignInPage({
 }) {
   if (await getSession()) redirect("/dashboard");
 
-  const domain = allowedEmailDomain();
+  const domains = allowedEmailDomains();
+  const spoken = describeAllowedDomains();
   const { error } = await searchParams;
 
   return (
@@ -68,12 +69,12 @@ export default async function SignInPage({
               }}
             />
             <p className="mt-4 text-center text-xs text-text-muted">
-              Use your {domain ? `@${domain}` : "college"} account. External Management users
+              Use your {spoken ? `@${domains.join(" or @")}` : "college"} account. External Management users
               sign in with the address they were invited on.
             </p>
           </div>
         ) : (
-          <SignInForm domain={domain} deliversEmail={emailConfigured()} />
+          <SignInForm domains={domains} deliversEmail={emailConfigured()} />
         )}
       </main>
     </div>
