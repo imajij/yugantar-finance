@@ -103,11 +103,25 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .filter((g) => g.items.length > 0);
   const tabs = TABS.filter((t) => can(user, t.action, scope));
 
+  /*
+   * The shell is the viewport, and nothing outside it scrolls.
+   *
+   * It used to be `min-h-screen`, which made the whole app one long document: the
+   * sidebar scrolled away with the content, the mobile header had to be `sticky`
+   * to survive, the tab bar had to be `fixed` and every page had to leave 96px of
+   * padding underneath it. Three workarounds for one decision.
+   *
+   * Now the frame is fixed at `h-dvh` (dynamic, so a phone's disappearing browser
+   * chrome does not cut the bottom off) and each region scrolls inside its own
+   * box — the sidebar its nav, `main` its page. Chat gets a whole two-pane layout
+   * for free, because a child asking to fill the height is now asking for
+   * something that exists.
+   */
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-dvh overflow-hidden">
       {/* ------------------------------------------------------------ sidebar */}
       <aside
-        className="hidden w-[244px] shrink-0 flex-col gap-[22px] overflow-y-auto p-[22px_14px] md:flex"
+        className="hidden w-[244px] shrink-0 flex-col gap-[22px] overflow-y-auto overscroll-contain p-[22px_14px] md:flex"
         style={{ background: "var(--yg-surface)", borderRight: "1px solid var(--yg-surface-2)" }}
       >
         <Link href="/dashboard" className="flex items-center gap-2.5 px-2">
@@ -172,8 +186,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
       {/* --------------------------------------------------------------- main */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* No longer `sticky`: it is a fixed row of a frame that does not move. */}
         <header
-          className="sticky top-0 z-20 md:hidden"
+          className="shrink-0 md:hidden"
           style={{ background: "var(--yg-surface)", borderBottom: "1px solid var(--yg-surface-2)" }}
         >
           <div className="flex items-center justify-between gap-3 px-4 py-2.5">
@@ -201,16 +216,25 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </header>
 
         {/*
-          `min-h-0` so a child can be a fixed two-pane layout (chat) rather than
-          every screen having to be a scrolling document. The bottom padding on
-          small screens clears the tab bar.
+          The page's own scroll box. `min-h-0` so a child can instead be a fixed
+          two-pane layout that fills the height (chat); `scrollbar-gutter: stable`
+          so a page does not jump sideways by a scrollbar's width the moment it
+          grows past one screen.
         */}
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col px-4 py-5 pb-24 md:px-7 md:py-8 md:pb-8">
+        <main
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-5 md:px-7 md:py-8"
+          style={{ scrollbarGutter: "stable" }}
+        >
           {children}
         </main>
 
+        {/*
+          A row of the frame rather than a bar floating over the page. Nothing can
+          be buried underneath it now, which is what the 96px of bottom padding on
+          every screen was there to prevent.
+        */}
         <nav
-          className="fixed inset-x-0 bottom-0 z-20 flex justify-around gap-1 px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:hidden"
+          className="shrink-0 flex justify-around gap-1 px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:hidden"
           style={{ background: "var(--yg-surface)", borderTop: "1px solid var(--yg-surface-2)" }}
           aria-label="Primary"
         >
