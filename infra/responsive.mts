@@ -55,8 +55,10 @@ interface Row {
   path: string; width: string; overflowBy: number; offenders: Offender[];
   /** Scrollers you have to swipe to read — legal, and still bad on a phone. */
   wide: Wide[];
-  /** Interactive controls the fixed tab bar sits on top of. */
+  /** Interactive controls a fixed bar sits on top of. */
   buried: number;
+  /** True when the document itself scrolls — the app shell is supposed to be fixed. */
+  pageScrolls: boolean;
   error?: string;
 }
 
@@ -120,16 +122,40 @@ async function overflowAt(page: Page, viewport: number): Promise<{ by: number; o
  * still something nobody can read. Reported as a warning rather than a failure,
  * because a Kanban board is *meant* to scroll and a table of people is not.
  *
- * **Buried controls.** The bottom tab bar is fixed. Anything interactive underneath
- * it cannot be tapped, which is the kind of break that looks fine in a screenshot.
- * Measured at the *bottom* of the page: mid-scroll, whatever happens to sit in that
- * band can be scrolled out of it, and only what is still there at the end is stuck.
+ * **Buried controls.** Anything interactive underneath a bar pinned to the viewport
+ * cannot be tapped, which is the kind of break that looks fine in a screenshot. The
+ * tab bar is a row of the shell now rather than something floating over the page,
+ * so what this catches is the bars that are still fixed — the board's bulk-action
+ * bar, chiefly. Measured with every scroller at the bottom: mid-scroll, whatever
+ * happens to sit in that band can be scrolled out of it, and only what is still
+ * there at the end is stuck.
  */
-async function auditAt(page: Page): Promise<{ wide: Wide[]; buried: number }> {
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+async function auditAt(page: Page): Promise<{ wide: Wide[]; buried: number; pageScrolls: boolean }> {
+  /*
+   * Every scroll box to the bottom, not just the window.
+   *
+   * The app shell is fixed at viewport height, so `window.scrollTo` moves nothing
+   * and the checks below would quietly only ever see the top of a long page — the
+   * silent pass this file exists to catch. Whatever actually scrolls is what has
+   * to be scrolled.
+   */
+  await page.evaluate(() => {
+    window.scrollTo(0, document.body.scrollHeight);
+    for (const el of Array.from(document.querySelectorAll("*"))) {
+      if (el.scrollHeight > el.clientHeight + 1) el.scrollTop = el.scrollHeight;
+    }
+  });
   await page.waitForTimeout(120);
   return page.evaluate(() => {
     const limit = document.documentElement.clientWidth;
+
+    /*
+     * The document must not scroll. Every scrolling surface inside the app is a
+     * container with its own box; if the page itself has grown a scrollbar, the
+     * shell has leaked and the sidebar goes with it.
+     */
+    const root = document.documentElement;
+    const pageScrolls = root.scrollHeight > root.clientHeight + 1;
 
     const wide: Wide[] = [];
     for (const el of Array.from(document.querySelectorAll(".overflow-x-auto, .overflow-x-scroll, [data-scroll-x]"))) {
@@ -145,24 +171,36 @@ async function auditAt(page: Page): Promise<{ wide: Wide[]; buried: number }> {
       });
     }
 
+    /*
+     * Every bar actually pinned to the viewport, found by computed style rather
+     * than by class name. Asking for `nav.fixed` was fine while the tab bar was
+     * the only one — and the moment it stopped being fixed, the check stopped
+     * being able to fail, which is worse than not having it.
+     */
+    const bars = Array.from(document.querySelectorAll("body *")).filter((el) => {
+      if (getComputedStyle(el).position !== "fixed") return false;
+      const r = el.getBoundingClientRect();
+      // Something short, wide and against an edge — a bar. Not a full-screen
+      // overlay, which covers the page on purpose and takes the taps with it.
+      return r.height > 0 && r.height < 140 && r.width > limit * 0.4;
+    });
+
     let buried = 0;
-    const bar = document.querySelector("nav.fixed");
-    if (bar) {
+    for (const bar of bars) {
       const b = bar.getBoundingClientRect();
-      if (b.height > 0) {
-        for (const el of Array.from(document.querySelectorAll("a, button, input, select, textarea"))) {
-          const r = el.getBoundingClientRect();
-          if (r.width === 0 || r.height === 0) continue;
-          if (bar.contains(el)) continue;
-          // Only what is on screen right now: everything below the fold is fine.
-          if (r.top > b.bottom || r.bottom < b.top) continue;
-          if (r.left > limit || r.right < 0) continue;
-          buried++;
-        }
+      for (const el of Array.from(document.querySelectorAll("a, button, input, select, textarea"))) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        if (bar.contains(el) || el.contains(bar)) continue;
+        if (getComputedStyle(el).position === "fixed") continue;
+        // Only what is on screen right now: everything below the fold is fine.
+        if (r.top > b.bottom || r.bottom < b.top) continue;
+        if (r.left > limit || r.right < 0) continue;
+        buried++;
       }
     }
 
-    return { wide: wide.slice(0, 4), buried };
+    return { wide: wide.slice(0, 4), buried, pageScrolls };
   });
 }
 
@@ -273,17 +311,17 @@ for (const path of paths) {
       const res = await page.goto(`${BASE}${path}`, { waitUntil: "networkidle", timeout: 20_000 });
       if (res && res.status() >= 400) {
         rows.push({
-          path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0,
+          path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0, pageScrolls: false,
           error: `HTTP ${res.status()}`,
         });
         continue;
       }
       const { by, offenders } = await overflowAt(page, w.width);
-      const { wide, buried } = await auditAt(page);
-      rows.push({ path, width: w.name, overflowBy: by, offenders, wide, buried });
+      const { wide, buried, pageScrolls } = await auditAt(page);
+      rows.push({ path, width: w.name, overflowBy: by, offenders, wide, buried, pageScrolls });
     } catch (e) {
       rows.push({
-        path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0,
+        path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0, pageScrolls: false,
         error: (e as Error).message.slice(0, 80),
       });
     }
@@ -299,14 +337,14 @@ if (!only || HOD_PATHS.includes(only)) {
         try {
           const res = await page.goto(`${BASE}${path}`, { waitUntil: "networkidle", timeout: 20_000 });
           if (res && res.status() >= 400) {
-            rows.push({ path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0, error: `HTTP ${res.status()}` });
+            rows.push({ path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0, pageScrolls: false, error: `HTTP ${res.status()}` });
             continue;
           }
           const { by, offenders } = await overflowAt(page, w.width);
-          const { wide, buried } = await auditAt(page);
-          rows.push({ path, width: w.name, overflowBy: by, offenders, wide, buried });
+          const { wide, buried, pageScrolls } = await auditAt(page);
+          rows.push({ path, width: w.name, overflowBy: by, offenders, wide, buried, pageScrolls });
         } catch (e) {
-          rows.push({ path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0, error: (e as Error).message.slice(0, 80) });
+          rows.push({ path, width: w.name, overflowBy: 0, offenders: [], wide: [], buried: 0, pageScrolls: false, error: (e as Error).message.slice(0, 80) });
         }
       }
     }
@@ -319,19 +357,24 @@ await browser.close();
 
 /* -------------------------------------------------------------------- report */
 
-const bad = rows.filter((r) => r.overflowBy > 1 || r.error || r.buried > 0);
+const bad = rows.filter((r) => r.overflowBy > 1 || r.error || r.buried > 0 || r.pageScrolls);
 const pad = (s: string, n: number) => s.padEnd(n).slice(0, n);
 
 console.log("");
 for (const path of paths) {
   const mine = rows.filter((r) => r.path === path);
-  const broken = mine.filter((r) => r.overflowBy > 1 || r.error || r.buried > 0);
+  const broken = mine.filter((r) => r.overflowBy > 1 || r.error || r.buried > 0 || r.pageScrolls);
   // Only worth saying once, and only where a phone has to read it.
   const swipes = mine.find((r) => r.width === "phone")?.wide ?? [];
   const mark = broken.length === 0 ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
   const summary = broken.length === 0
     ? "\x1b[2mfits every width\x1b[0m"
-    : broken.map((b) => `\x1b[31m${b.width} ${b.error ?? (b.buried > 0 && b.overflowBy <= 1 ? `${b.buried} under the tab bar` : `+${b.overflowBy}px`)}\x1b[0m`).join("  ");
+    : broken.map((b) => `\x1b[31m${b.width} ${
+        b.error
+          ?? (b.pageScrolls ? "the page itself scrolls"
+            : b.buried > 0 && b.overflowBy <= 1 ? `${b.buried} under the tab bar`
+            : `+${b.overflowBy}px`)
+      }\x1b[0m`).join("  ");
   console.log(`  ${mark} ${pad(path, 26)} ${summary}`);
 
   for (const w of swipes) {
