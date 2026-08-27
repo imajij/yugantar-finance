@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound as nf, redirect } from "next/navigation";
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -8,7 +9,7 @@ import { listUsers } from "@/lib/services/admin";
 import { festTotals } from "@/lib/queries/budget";
 import { thresholdsFrom } from "@/lib/flags/types";
 import { Card, PageTitle } from "@/components/ui";
-import { Departments, ExpenseTypes, FestBudget, People, Thresholds } from "./panels";
+import { Departments, ExpenseTypes, FestBudget, Thresholds } from "./panels";
 
 export const dynamic = "force-dynamic";
 
@@ -62,10 +63,6 @@ export default async function AdminPage() {
     festTotals(user.festId),
   ]);
 
-  const assignable = depts
-    .filter((d) => d.isActive)
-    .map((d) => ({ id: d.id, name: d.name }));
-
   return (
     <>
       <PageTitle>Admin</PageTitle>
@@ -93,22 +90,22 @@ export default async function AdminPage() {
         <Departments departments={depts} />
       </Card>
 
+      {/*
+        * People used to be a card here, under the fest budget and the department
+        * list — the screen somebody opens weekly sitting beneath the ones they set
+        * up once, and invisible in the sidebar, because you cannot navigate to a
+        * card. It has its own page now.
+        */}
       <Card className="mt-4">
         <h2 className="font-display text-sm">People</h2>
         <p className="mt-1 text-xs text-text-muted">
-          Inviting someone emails them a sign-in link. A department can have as many heads as it
-          needs — where it has more than one, a head&rsquo;s own claim is endorsed by one of the
-          others rather than skipping the step. A fest has one Finance HOD and one Management
-          account. Deactivating someone keeps their history, ends their sessions, and only stops
-          them signing in.
+          Inviting, deactivating and moving people between departments happens on{" "}
+          <Link href="/team" className="underline underline-offset-2" style={{ color: "var(--yg-pink)" }}>
+            Team
+          </Link>
+          . <span className="tnum">{people.length}</span> {people.length === 1 ? "person" : "people"}{" "}
+          in this fest.
         </p>
-        <People
-          users={people}
-          departments={assignable}
-          meId={user.id}
-          canManageAdmins={can(user, "superAdmin.manage", { festId: user.festId })}
-          canRaiseConcerns={can(user, "flag.raise", { festId: user.festId, departmentId: user.departmentId })}
-        />
       </Card>
 
       <Card className="mt-4">

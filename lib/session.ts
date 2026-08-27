@@ -18,7 +18,7 @@ import { db } from "@/db";
 import { departments, users } from "@/db/schema";
 import type { Actor } from "@/lib/authz";
 import {
-  allowedEmailDomain, clerkConfigured, currentClerkIdentity, emailDomainAllowed,
+  clerkConfigured, currentClerkIdentity, describeAllowedDomains, emailDomainAllowed,
 } from "@/lib/clerk";
 import { SESSION_COOKIE, resolveSession } from "@/lib/auth";
 
@@ -103,7 +103,7 @@ async function linkClerkAccount(clerkUserId: string): Promise<SessionUser | null
   // when the row is created, so this only catches a row that predates the setting —
   // but the two paths into an account must not disagree about who may use it.
   if (!emailDomainAllowed(identity.email) && invited.role !== "MANAGEMENT") {
-    console.warn(`[clerk] ${identity.email} is outside ${allowedEmailDomain()} — refusing`);
+    console.warn(`[clerk] ${identity.email} is outside ${describeAllowedDomains()} — refusing`);
     return null;
   }
   if (invited.clerkUserId && invited.clerkUserId !== clerkUserId) {

@@ -30,7 +30,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { departments, sessions, signInTokens, users } from "@/db/schema";
-import { allowedEmailDomain, emailDomainAllowed } from "@/lib/clerk";
+import { describeAllowedDomains, emailDomainAllowed } from "@/lib/clerk";
 import { appUrl, sendEmail } from "@/lib/email";
 import type { SessionUser } from "@/lib/session";
 
@@ -97,7 +97,7 @@ export async function requestSignInLink({ email, ip }: LinkRequest): Promise<voi
     // Management is invited from outside the college domain by design (PRD 13);
     // `inviteUser` is where that exception is decided, so an existing row is proof
     // it was already allowed. Nothing to refuse here.
-    console.info(`[auth] ${normalised} is outside ${allowedEmailDomain()} — invited, so allowed`);
+    console.info(`[auth] ${normalised} is outside ${describeAllowedDomains()} — invited, so allowed`);
   }
 
   const raw = newToken();

@@ -23,11 +23,6 @@ interface NavItem {
   badge?: "messages" | "flags" | "notifications";
   /** An amber badge is a queue with your name on it, not a tally. */
   hot?: boolean;
-  /**
-   * Hidden from anybody who can do the wider thing. "Team" is the department-sized
-   * door into the same people; Finance already has "Admin" and does not need both.
-   */
-  unless?: Action;
 }
 
 /**
@@ -57,7 +52,7 @@ const GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { href: "/tickets", label: "Tickets", icon: CircleDot, action: "ticket.create" },
       { href: "/chat", label: "Channels", icon: MessagesSquare, action: "fest.view", badge: "messages" },
-      { href: "/team", label: "Team", icon: Users, action: "user.manageOwnTeam", unless: "user.manage" },
+      { href: "/team", label: "Team", icon: Users, action: "user.manageOwnTeam" },
     ],
   },
   {
@@ -103,7 +98,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const groups = GROUPS
     .map((g) => ({
       ...g,
-      items: g.items.filter((n) => can(user, n.action, scope) && !(n.unless && can(user, n.unless, scope))),
+      items: g.items.filter((n) => can(user, n.action, scope)),
     }))
     .filter((g) => g.items.length > 0);
   const tabs = TABS.filter((t) => can(user, t.action, scope));
