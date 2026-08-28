@@ -444,9 +444,9 @@ await hit("POST", `/api/v1/departments/${techId}/line-items`, {
 });
 
 section("Reimbursements");
-const receiptFor = async () => {
+const receiptFor = async (as: Session = finance, purpose = "RECEIPT") => {
   const p = await hit("POST", "/api/v1/attachments/presign", {
-    as: finance, body: { purpose: "RECEIPT", file_name: "r.jpg", mime_type: "image/jpeg", size_bytes: 1024 },
+    as, body: { purpose, file_name: "r.jpg", mime_type: "image/jpeg", size_bytes: 1024 },
     label: "/api/v1/attachments/presign",
   });
   const url = String(p.json?.upload_url ?? "");
@@ -455,7 +455,7 @@ const receiptFor = async () => {
     method: "PUT", body: new Uint8Array(randomBytes(1024)),
   });
   await hit("POST", `/api/v1/attachments/${p.json?.attachment_id}/complete`, {
-    as: finance, label: "/api/v1/attachments/{id}/complete",
+    as, label: "/api/v1/attachments/{id}/complete",
   });
   return String(p.json?.attachment_id ?? "");
 };
@@ -581,6 +581,142 @@ await hit("PATCH", `/api/v1/vendor-requests/${vrId}`, {
 });
 await hit("POST", `/api/v1/vendor-requests/${vrId}/transitions`, {
   as: finance, body: { action: "SUBMIT" }, label: "/api/v1/vendor-requests/{id}/transitions SUBMIT",
+});
+
+section("Vendor payments");
+/*
+ * The half the walk never reached. Everything below the SUBMIT above was untested
+ * over HTTP, which is how a balance milestone came to be settleable with one paisa.
+ */
+const vr2 = await hit("POST", "/api/v1/vendor-requests", {
+  as: techHodEarly,
+  body: {
+    vendor_id: vendorId, line_item_id: lineItemId, description: "Monitors and stands for the side stage",
+    total_value_paise: 10000000,
+    milestones: [{ kind: "ADVANCE", planned_paise: 4000000 }, { kind: "BALANCE", planned_paise: 6000000 }],
+    expected_delivery_on: "2026-11-26", submit: true,
+  },
+  label: "/api/v1/vendor-requests (full lifecycle)",
+});
+const vr2Id = required("second vendor request id", String(vr2.json?.id ?? ""));
+await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: finance, body: { action: "APPROVE" }, label: "/api/v1/vendor-requests/{id}/transitions APPROVE",
+});
+
+const detail = await hit("GET", `/api/v1/vendor-requests/${vr2Id}`, {
+  as: finance, label: "/api/v1/vendor-requests/{id} (milestones)",
+});
+const ms = (detail.json?.milestones ?? []) as { id: string; kind: string; planned_paise: number }[];
+const advanceId = required("advance milestone id", String(ms.find((m) => m.kind === "ADVANCE")?.id ?? ""));
+const balanceId = required("balance milestone id", String(ms.find((m) => m.kind === "BALANCE")?.id ?? ""));
+
+// A payment settles its own milestone, in full, or it is not a payment.
+await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: management, expect: [400, 422],
+  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 1, paid_at: "2026-11-20", payment_reference: "UTR-X" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (part payment refused)",
+});
+await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: management, expect: [400, 422],
+  body: { action: "RECORD_ADVANCE", milestone_id: balanceId, paid_paise: 6000000, paid_at: "2026-11-20", payment_reference: "UTR-X" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (wrong milestone refused)",
+});
+await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: management,
+  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 4000000, paid_at: "2026-11-20", payment_reference: "UTR-ADV" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE",
+});
+
+await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: techHodEarly,
+  body: {
+    action: "CONFIRM_DELIVERY", delivered_at: "2026-11-26",
+    invoice_attachment_id: await receiptFor(techHodEarly, "INVOICE"), invoice_total_paise: 10000000,
+  },
+  label: "/api/v1/vendor-requests/{id}/transitions CONFIRM_DELIVERY",
+});
+await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: finance, body: { action: "RELEASE_BALANCE" },
+  label: "/api/v1/vendor-requests/{id}/transitions RELEASE_BALANCE",
+});
+
+// The one that closed a ₹60,000 balance for a rupee.
+await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: management, expect: [400, 422],
+  body: { action: "RECORD_BALANCE", milestone_id: balanceId, paid_paise: 100, paid_at: "2026-11-28", payment_reference: "UTR-X" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_BALANCE (token payment refused)",
+});
+const stillOpen = await hit("GET", `/api/v1/vendor-requests/${vr2Id}`, {
+  as: finance, label: "/api/v1/vendor-requests/{id} (after the refusal)",
+});
+rows.push({
+  group, method: "GET", path: "the refused payment left it open and owing", as: "finance",
+  status: stillOpen.status, expected: "content",
+  ok: stillOpen.json?.status === "BALANCE_APPROVED",
+  note: String(stillOpen.json?.status ?? "?"),
+});
+
+const closedVr = await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: management,
+  body: { action: "RECORD_BALANCE", milestone_id: balanceId, paid_paise: 6000000, paid_at: "2026-11-28", payment_reference: "UTR-BAL" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_BALANCE",
+});
+rows.push({
+  group, method: "POST", path: "paid in full, and only then closed", as: "mgmt",
+  status: closedVr.status, expected: "content",
+  ok: closedVr.json?.status === "CLOSED",
+  note: String(closedVr.json?.status ?? "?"),
+});
+
+section("Management's own claim (5.2)");
+/*
+ * The deadlock: the only role that records a payment is Management, this fest has
+ * one Management account, and it is the claimant's. 5.2's fallback is the Finance
+ * HOD recording it with a note.
+ */
+const mgmtClaim = await hit("POST", "/api/v1/reimbursements", {
+  as: management,
+  body: {
+    line_item_id: lineItemId, expense_type_id: expenseTypeId,
+    description: "Tea and snacks for the overnight build crew",
+    transaction_on: "2026-11-24", amount_paise: 90000,
+    payee_name: "Management", payee_upi_id: "mgmt@upi",
+    attachment_ids: [await receiptFor(management)], submit: true,
+  },
+  label: "/api/v1/reimbursements (Management's own)",
+});
+const mgmtClaimId = required("management claim id", String(mgmtClaim.json?.id ?? ""));
+await hit("POST", `/api/v1/reimbursements/${mgmtClaimId}/transitions`, {
+  as: techHodEarly, body: { action: "ENDORSE" },
+  label: "/api/v1/reimbursements/{id}/transitions ENDORSE (Management's own)",
+});
+await hit("POST", `/api/v1/reimbursements/${mgmtClaimId}/transitions`, {
+  as: finance, body: { action: "APPROVE" },
+  label: "/api/v1/reimbursements/{id}/transitions APPROVE (Management's own)",
+});
+await hit("POST", `/api/v1/reimbursements/${mgmtClaimId}/transitions`, {
+  as: management, expect: 403,
+  body: { action: "RECORD_PAYMENT", payment_reference: "UTR-M", paid_at: "2026-11-25" },
+  label: "/api/v1/reimbursements/{id}/transitions RECORD_PAYMENT (never your own)",
+});
+await hit("POST", `/api/v1/reimbursements/${mgmtClaimId}/transitions`, {
+  as: finance, expect: [400, 422],
+  body: { action: "RECORD_PAYMENT", payment_reference: "UTR-M", paid_at: "2026-11-25" },
+  label: "/api/v1/reimbursements/{id}/transitions RECORD_PAYMENT (Finance, no note)",
+});
+const rescued = await hit("POST", `/api/v1/reimbursements/${mgmtClaimId}/transitions`, {
+  as: finance,
+  body: {
+    action: "RECORD_PAYMENT", payment_reference: "UTR-M", paid_at: "2026-11-25",
+    note: "Sole Management account is the claimant; recorded by Finance under 5.2",
+  },
+  label: "/api/v1/reimbursements/{id}/transitions RECORD_PAYMENT (5.2 fallback)",
+});
+rows.push({
+  group, method: "POST", path: "the claim that could never be paid, paid", as: "finance",
+  status: rescued.status, expected: "content",
+  ok: rescued.json?.status === "PAID",
+  note: String(rescued.json?.status ?? "?"),
 });
 
 section("Income");

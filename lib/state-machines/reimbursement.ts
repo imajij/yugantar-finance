@@ -30,7 +30,13 @@ export const REIMBURSEMENT_TRANSITIONS: readonly T[] = [
   { from: "HOD_ENDORSED", action: "DECLINE", to: "DECLINED", roles: ["FINANCE_HOD"], actor: ["NOT_SUBMITTER"], requires: ["reason"] },
 
   { from: "APPROVED", action: "HOLD", to: "ON_HOLD", roles: ["MANAGEMENT"], requires: ["reason"] },
-  { from: "APPROVED", action: "RECORD_PAYMENT", to: "PAID", roles: ["MANAGEMENT"], actor: ["NOT_SUBMITTER"], requires: ["payment_reference", "paid_at"] },
+  /*
+   * Finance is on this list only for 5.2's fallback: a Management user's own claim,
+   * in a fest with a single Management account, which nobody else could ever pay.
+   * The table says who may in principle; `can` decides whether this caller may here
+   * (`reimbursement.recordPayment`), and the service requires the note.
+   */
+  { from: "APPROVED", action: "RECORD_PAYMENT", to: "PAID", roles: ["MANAGEMENT", "FINANCE_HOD"], actor: ["NOT_SUBMITTER"], requires: ["payment_reference", "paid_at"] },
 
   { from: "ON_HOLD", action: "RESOLVE_HOLD", to: "APPROVED", roles: ["FINANCE_HOD"], requires: ["note"] },
   { from: "ON_HOLD", action: "DECLINE", to: "DECLINED", roles: ["FINANCE_HOD"], actor: ["NOT_SUBMITTER"], requires: ["reason"] },

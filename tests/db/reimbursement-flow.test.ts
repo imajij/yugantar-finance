@@ -21,6 +21,14 @@ import { dropFests } from "@/lib/test-support";
 let festId: string, techId: string, financeDeptId: string, coreId: string, expenseTypeId: string, lineItemId: string;
 let member: Actor, techHod: Actor, finance: Actor, finance2: Actor, mgmt: Actor;
 
+/** Hoisted so a test can add somebody mid-run — a second Management account, say. */
+const mkUser = async (email: string, role: Actor["role"], deptId: string): Promise<Actor> => ({
+  id: (await one<{ id: string }>(sql`
+    insert into users (fest_id, email, name, role, department_id, status)
+    values (${festId}, ${email}, ${email}, ${sql.raw(`'${role}'::user_role`)}, ${deptId}, 'ACTIVE') returning id`)).id,
+  festId, role, departmentId: deptId,
+});
+
 async function one<T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T> {
   return ((await db.execute(q)) as unknown as T[])[0];
 }
@@ -62,13 +70,6 @@ beforeEach(async () => {
   financeDeptId = await mkDept("Finance", "finance", "FINANCE", 0);
   coreId = await mkDept("Core", "core", "CORE", 0);
   techId = await mkDept("Tech", "tech", "BUDGET", R(100000));
-
-  const mkUser = async (email: string, role: Actor["role"], deptId: string): Promise<Actor> => ({
-    id: (await one<{ id: string }>(sql`
-      insert into users (fest_id, email, name, role, department_id, status)
-      values (${festId}, ${email}, ${email}, ${sql.raw(`'${role}'::user_role`)}, ${deptId}, 'ACTIVE') returning id`)).id,
-    festId, role, departmentId: deptId,
-  });
 
   member = await mkUser("member@t.test", "MEMBER", techId);
   techHod = await mkUser("hod@t.test", "DEPT_HOD", techId);
@@ -140,16 +141,92 @@ test("a Finance HOD's own request is approved by Management, not by Finance", as
   await expect(transitionReimbursement(mgmt, req.id, "APPROVE")).resolves.toMatchObject({ status: "APPROVED" });
 });
 
-test("nobody pays their own request", async () => {
+/** An approved Management claim, ready for somebody to pay. */
+async function mgmtClaimAwaitingPayment() {
   const req = await createReimbursement(mgmt, baseRequest({
     attachmentIds: [await receipt(mgmt)], payeeUpiId: "mg@upi", submit: true,
   }));
   await transitionReimbursement(techHod, req.id, "ENDORSE");
   await transitionReimbursement(finance, req.id, "APPROVE");
+  return req;
+}
+
+test("nobody pays their own request", async () => {
+  const req = await mgmtClaimAwaitingPayment();
 
   await expect(transitionReimbursement(mgmt, req.id, "RECORD_PAYMENT", {
     payment_reference: "UTR1", paid_at: "2026-11-30",
   })).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+
+/*
+ * The question the test above stops one step short of: *then who?*
+ *
+ * Management is the only role that records a payment, and this fest has one
+ * Management account, and it is the claimant's. Refusing them — correctly — left
+ * the claim approved and unpayable for good: no seat could be filled to fix it,
+ * because the seat was already filled by the one person disqualified from using it.
+ *
+ * 5.2 answers it: a different Management user, or the Finance HOD with a note.
+ */
+test("with one Management account, Finance records their payment — with a note", async () => {
+  const req = await mgmtClaimAwaitingPayment();
+
+  // The note is what makes this a documented fallback rather than a hole.
+  await expect(transitionReimbursement(finance, req.id, "RECORD_PAYMENT", {
+    payment_reference: "UTR1", paid_at: "2026-11-30",
+  })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+  const paid = await transitionReimbursement(finance, req.id, "RECORD_PAYMENT", {
+    payment_reference: "UTR1", paid_at: "2026-11-30",
+    note: "Sole Management account is the claimant; recorded by Finance under 5.2",
+  });
+  expect(paid.status).toBe("PAID");
+  expect(paid.paidBy).toBe(finance.id);
+
+  // And the reason it happened is on the record, not just in somebody's memory.
+  const detail = await getReimbursementDetail(finance, req.id);
+  expect(JSON.stringify(detail.timeline)).toContain("5.2");
+});
+
+test("a second Management account takes the payment back off Finance", async () => {
+  const mgmt2 = await mkUser("mg2@t.test", "MANAGEMENT", coreId);
+  const req = await mgmtClaimAwaitingPayment();
+
+  // The fallback is for when there is nobody else. There is somebody else.
+  await expect(transitionReimbursement(finance, req.id, "RECORD_PAYMENT", {
+    payment_reference: "UTR1", paid_at: "2026-11-30", note: "trying it on",
+  })).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+  await expect(transitionReimbursement(mgmt2, req.id, "RECORD_PAYMENT", {
+    payment_reference: "UTR1", paid_at: "2026-11-30",
+  })).resolves.toMatchObject({ status: "PAID" });
+});
+
+test("the fallback does not leak onto anybody else's claim", async () => {
+  // A Member's claim has a Management user available who is not the claimant, so
+  // Finance has no business recording it — 5.2's separation still applies.
+  const req = await createReimbursement(member, baseRequest({
+    attachmentIds: [await receipt(member)], submit: true,
+  }));
+  await transitionReimbursement(techHod, req.id, "ENDORSE");
+  await transitionReimbursement(finance, req.id, "APPROVE");
+
+  await expect(transitionReimbursement(finance, req.id, "RECORD_PAYMENT", {
+    payment_reference: "UTR1", paid_at: "2026-11-30", note: "why not",
+  })).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+
+test("an inactive second Management account is not a payer", async () => {
+  const mgmt2 = await mkUser("mg3@t.test", "MANAGEMENT", coreId);
+  await db.execute(sql`update users set status = 'INVITED' where id = ${mgmt2.id}`);
+  const req = await mgmtClaimAwaitingPayment();
+
+  // Somebody who has not accepted their invitation cannot pay anything, so the
+  // fallback is open — the seat existing is not the same as it being filled.
+  await expect(transitionReimbursement(finance, req.id, "RECORD_PAYMENT", {
+    payment_reference: "UTR1", paid_at: "2026-11-30", note: "sole active Management is the claimant",
+  })).resolves.toMatchObject({ status: "PAID" });
 });
 
 test("send back, edit, resubmit — a new version, the old one kept", async () => {

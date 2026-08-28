@@ -324,13 +324,68 @@ export async function transitionVendorRequest(
         if (milestone.paidPaise !== null) throw conflict("That milestone is already paid");
         if (body.paid_paise! <= 0) throw new ApiError("VALIDATION_ERROR", "Paid amount must be positive");
 
+        /*
+         * The action names which milestone it is for, so it has to be that kind of
+         * milestone. Without this, `RECORD_ADVANCE` against the balance milestone
+         * marks the balance paid and leaves the request in ADVANCE_PAID — a request
+         * that reads as half-settled with nothing left to pay.
+         */
+        const wantsAdvance = action === "RECORD_ADVANCE";
+        if (wantsAdvance !== (milestone.kind === "ADVANCE")) {
+          throw new ApiError(
+            "VALIDATION_ERROR",
+            wantsAdvance
+              ? "That is not the advance milestone; record the balance instead"
+              : "That is the advance milestone; record the advance instead",
+          );
+        }
+
+        /*
+         * Pay what was agreed, or change what was agreed first.
+         *
+         * 7.3 gives exactly one way to settle for less than the planned amount:
+         * reduce the approved value at `RELEASE_BALANCE`, with a reason, which
+         * rescales the unpaid milestones and returns the difference to Available
+         * where the department can see it. Letting a payment quietly be any number
+         * routed around all of that — ₹1 against a ₹4,00,000 milestone marked it
+         * paid, closed the request, and dropped ₹3,99,999 out of Committed with no
+         * reason recorded anywhere and nobody owing anything.
+         */
+        if (body.paid_paise !== milestone.plannedPaise) {
+          throw new ApiError(
+            "VALIDATION_ERROR",
+            body.paid_paise! < milestone.plannedPaise
+              ? "A payment settles the milestone in full. To pay less, reduce the approved value at release "
+                + "and say why — that returns the difference to the department."
+              : "A payment cannot exceed the milestone. Raise the approved value before paying it.",
+            { planned_paise: milestone.plannedPaise, offered_paise: body.paid_paise },
+          );
+        }
+
         await tx.update(vendorMilestones).set({
           paidPaise: body.paid_paise!, paidAt: new Date(body.paid_at!),
           paidBy: actor.id, paymentReference: body.payment_reference!, updatedAt: now,
         }).where(eq(vendorMilestones.id, milestone.id));
 
-        to = action === "RECORD_ADVANCE" ? "ADVANCE_PAID" : "CLOSED";
-        if (to === "CLOSED") patch.closedAt = now;
+        /*
+         * Closing is "nothing is owed", not "the balance action was used". The MVP
+         * makes two milestones, but the model allows more (19.x), and a request with
+         * a third still unpaid must not close — CLOSED leaves Committed entirely
+         * (0001_views.sql), so whatever is still owed would simply vanish.
+         */
+        const stillOwed = milestones
+          .filter((m) => m.id !== milestone.id && m.paidPaise === null)
+          .reduce((sum, m) => sum + m.plannedPaise, 0);
+
+        if (wantsAdvance) {
+          to = "ADVANCE_PAID";
+        } else if (stillOwed === 0) {
+          to = "CLOSED";
+          patch.closedAt = now;
+        } else {
+          // Paid, and still open, because something is still owed on it.
+          to = "BALANCE_APPROVED";
+        }
         break;
       }
 

@@ -174,6 +174,11 @@ export async function transitionReimbursement(
       submitterId: before.submitterId,
       submitterRole: submitter.role,
       status: before.status,
+      // Only asked when it can matter, and asked before `can` rather than inside it:
+      // `can` is pure, and this is a fact about who works here (5.2).
+      hasPeerPayer: action === "RECORD_PAYMENT" && submitter.role === "MANAGEMENT"
+        ? await peerPayerExists(tx, actor.festId, before.submitterId)
+        : undefined,
     };
 
     // Role and state come from the table; who exactly, from the actor constraints (5.2).
@@ -182,6 +187,19 @@ export async function transitionReimbursement(
       throw new ApiError("FORBIDDEN", `You may not ${action} this request`);
     }
     assertActionPermission(actor, action, resource);
+
+    /*
+     * 5.2 — the Finance HOD recording a Management user's payment is the documented
+     * fallback for a fest with one Management account, and the note is what makes it
+     * a fallback rather than a hole. It is the only record of why the usual pair of
+     * people was not the pair who signed this off.
+     */
+    if (action === "RECORD_PAYMENT" && actor.role === "FINANCE_HOD" && !(body.note ?? body.reason)) {
+      throw new ApiError(
+        "VALIDATION_ERROR",
+        "This fest has one Management account and it is theirs, so you are recording it in their place (5.2). Say so in a note.",
+      );
+    }
 
     // 8.3 — approving over an open High flag needs an acknowledgement note.
     if (action === "APPROVE") {
@@ -295,7 +313,10 @@ export function waitingOn(status: ReimbursementState, submitterRole: Actor["role
   switch (status) {
     case "SUBMITTED": return "Department HOD";
     case "HOD_ENDORSED": return approverRoleFor(submitterRole) === "MANAGEMENT" ? "Management" : "Finance HOD";
-    case "APPROVED": return "Management";
+    // Where the claim is Management's own, Finance may be the one who records it
+    // (5.2). Which of the two it lands on depends on whether a second Management
+    // account exists, which this cannot see — so it names both rather than guessing.
+    case "APPROVED": return submitterRole === "MANAGEMENT" ? "Management or Finance HOD" : "Management";
     case "ON_HOLD": return "Finance HOD";
     case "SENT_BACK": case "DRAFT": return "Submitter";
     default: return "—";
@@ -333,6 +354,24 @@ async function loadSubmitter(tx: Tx, id: string) {
  * approve the same request adds a signature without adding a second pair of eyes —
  * and 7.2 exists precisely to avoid that theatre.
  */
+/**
+ * Another Management user who could record this payment — anyone active in the role
+ * who is not the person claiming. Distinct from `peerEndorserExists`, which asks the
+ * same shape of question one step earlier in the chain.
+ */
+async function peerPayerExists(tx: Tx, festId: string, submitterId: string): Promise<boolean> {
+  const [row] = (await tx.execute(sql`
+    select exists (
+      select 1 from users
+       where fest_id = ${festId}
+         and role = 'MANAGEMENT'
+         and status = 'ACTIVE'
+         and id <> ${submitterId}
+    ) as present
+  `)) as unknown as { present: boolean }[];
+  return Boolean(row?.present);
+}
+
 async function peerEndorserExists(
   tx: Tx, festId: string, departmentId: string, submitterId: string,
 ): Promise<boolean> {

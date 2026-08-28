@@ -306,3 +306,142 @@ test("retiring is soft, so everything already raised against the vendor still re
   const detail = await getVendorRequestDetail(finance, req.id);
   expect(detail.vendor.name).toBeTruthy();
 });
+
+/* ------------------------------------------- a payment settles its own milestone */
+
+/**
+ * Approved, advance paid, balance released — the state a request is in when the
+ * only thing left is to pay the balance and close it.
+ */
+async function readyForBalance() {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+  const advance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "ADVANCE")!;
+  await transitionVendorRequest(mgmt, req.id, "RECORD_ADVANCE", {
+    milestone_id: advance.id, paid_paise: R(16000), paid_at: "2026-11-20", payment_reference: "UTR-ADV",
+  });
+  await transitionVendorRequest(techHod, req.id, "CONFIRM_DELIVERY", {
+    delivered_at: "2026-11-26",
+    invoice_attachment_id: await attachment(techHod, "INVOICE", R(40000)),
+    invoice_total_paise: R(40000),
+  });
+  await transitionVendorRequest(finance, req.id, "RELEASE_BALANCE");
+  const balance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "BALANCE")!;
+  return { req, balance };
+}
+
+/**
+ * The one that closed a ₹24,000 balance with a one-paisa transfer.
+ *
+ * CLOSED leaves Committed entirely (0001_views.sql), so the request settled, the
+ * ₹23,999.99 nobody had paid stopped being committed, and it came back as
+ * Available — money the department could then spend twice, with nothing anywhere
+ * recording that the vendor was still owed it.
+ */
+test("a token payment cannot settle a milestone", async () => {
+  const { req, balance } = await readyForBalance();
+
+  await expect(transitionVendorRequest(mgmt, req.id, "RECORD_BALANCE", {
+    milestone_id: balance.id, paid_paise: 1, paid_at: "2026-11-28", payment_reference: "UTR-BAL",
+  })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+  // Untouched: still open, still owed, still committed.
+  const after = await getVendorRequestDetail(finance, req.id);
+  expect(after.status).toBe("BALANCE_APPROVED");
+  expect(after.milestones.find((m) => m.kind === "BALANCE")!.paidPaise).toBeNull();
+  expect((await lineItemTotals(lineItemId))!.committedPaise).toBe(R(24000));
+});
+
+test("a payment cannot exceed its milestone either", async () => {
+  const { req, balance } = await readyForBalance();
+
+  await expect(transitionVendorRequest(mgmt, req.id, "RECORD_BALANCE", {
+    milestone_id: balance.id, paid_paise: R(30000), paid_at: "2026-11-28", payment_reference: "UTR-BAL",
+  })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+});
+
+/**
+ * Paying less is legitimate — it just is not a payment. 7.3 routes it through the
+ * release, where it needs a reason and the difference visibly goes back.
+ */
+test("paying less than planned goes through the release, and still closes", async () => {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+  const advance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "ADVANCE")!;
+  await transitionVendorRequest(mgmt, req.id, "RECORD_ADVANCE", {
+    milestone_id: advance.id, paid_paise: R(16000), paid_at: "2026-11-20", payment_reference: "UTR-ADV",
+  });
+  await transitionVendorRequest(techHod, req.id, "CONFIRM_DELIVERY", {
+    delivered_at: "2026-11-26",
+    invoice_attachment_id: await attachment(techHod, "INVOICE", R(30000)),
+    invoice_total_paise: R(30000),
+  });
+  // Two speakers short: approved value down to ₹30,000, so the balance is ₹14,000.
+  await transitionVendorRequest(finance, req.id, "RELEASE_BALANCE", {
+    approved_value_paise: R(30000), reason: "Two monitors were not delivered",
+  });
+
+  const balance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "BALANCE")!;
+  expect(balance.plannedPaise).toBe(R(14000));
+
+  const closed = await transitionVendorRequest(mgmt, req.id, "RECORD_BALANCE", {
+    milestone_id: balance.id, paid_paise: R(14000), paid_at: "2026-11-28", payment_reference: "UTR-BAL",
+  });
+  expect(closed.status).toBe("CLOSED");
+
+  // ₹30,000 spent, nothing committed, and the ₹10,000 back where it came from.
+  const t = (await lineItemTotals(lineItemId))!;
+  expect(t.spentPaise).toBe(R(30000));
+  expect(t.committedPaise).toBe(0);
+});
+
+test("a payment has to be for the milestone the action names", async () => {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+  const balance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "BALANCE")!;
+
+  // Otherwise this marks the balance paid and parks the request in ADVANCE_PAID:
+  // half-settled by its status, with nothing left to pay.
+  await expect(transitionVendorRequest(mgmt, req.id, "RECORD_ADVANCE", {
+    milestone_id: balance.id, paid_paise: R(24000), paid_at: "2026-11-20", payment_reference: "UTR-X",
+  })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+});
+
+/**
+ * The MVP makes two milestones; the schema allows more. A request with a third
+ * still unpaid must not close, because CLOSED takes the whole thing out of
+ * Committed and whatever is still owed would simply stop existing.
+ */
+test("the balance payment does not close a request that still owes something", async () => {
+  const req = await createVendorRequest(techHod, request({
+    submit: true,
+    milestones: [
+      { kind: "ADVANCE" as const, plannedPaise: R(16000) },
+      { kind: "BALANCE" as const, plannedPaise: R(14000) },
+      { kind: "OTHER" as const, plannedPaise: R(10000) },
+    ],
+  }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+  const ms = (await getVendorRequestDetail(finance, req.id)).milestones;
+  await transitionVendorRequest(mgmt, req.id, "RECORD_ADVANCE", {
+    milestone_id: ms.find((m) => m.kind === "ADVANCE")!.id,
+    paid_paise: R(16000), paid_at: "2026-11-20", payment_reference: "UTR-ADV",
+  });
+  await transitionVendorRequest(techHod, req.id, "CONFIRM_DELIVERY", {
+    delivered_at: "2026-11-26",
+    invoice_attachment_id: await attachment(techHod, "INVOICE", R(40000)),
+    invoice_total_paise: R(40000),
+  });
+  await transitionVendorRequest(finance, req.id, "RELEASE_BALANCE");
+
+  const after = (await getVendorRequestDetail(finance, req.id)).milestones;
+  const paid = await transitionVendorRequest(mgmt, req.id, "RECORD_BALANCE", {
+    milestone_id: after.find((m) => m.kind === "BALANCE")!.id,
+    paid_paise: after.find((m) => m.kind === "BALANCE")!.plannedPaise,
+    paid_at: "2026-11-28", payment_reference: "UTR-BAL",
+  });
+
+  expect(paid.status).toBe("BALANCE_APPROVED");
+  // The third milestone is still owed, and still says so.
+  expect((await lineItemTotals(lineItemId))!.committedPaise).toBe(R(10000));
+});
