@@ -200,6 +200,15 @@ test("a request the caller has nothing to do with is not readable", async () => 
 
 /* ------------------------------------------------------------------ idempotency */
 
+/** How many times this claim was actually endorsed, whatever the responses said. */
+async function endorsements(id: string): Promise<number> {
+  const rows = await db.execute(sql`
+    select count(*)::int as n from audit_events
+     where entity_type = 'REIMBURSEMENT' and entity_id = ${id}
+       and action = 'reimbursement.transition.ENDORSE'`);
+  return Number((rows as unknown as { n: number }[])[0].n);
+}
+
 test("a repeated Idempotency-Key returns the original response, not a second write", async () => {
   const create = (await load("reimbursements")).POST;
   const transitions = (await load("reimbursements/[id]/transitions")).POST;
@@ -238,6 +247,163 @@ test("a repeated Idempotency-Key returns the original response, not a second wri
     headers: { "Idempotency-Key": key },
   });
   expect(stolen.code).toBe("CONFLICT");
+});
+
+/**
+ * The half the test above cannot see: a key that is already claimed.
+ *
+ * The old implementation read the key, ran the handler, and wrote the key
+ * afterwards — so a serial retry replayed correctly (which is what the test above
+ * proves) and a concurrent one did not. Both found no row, both ran, and the
+ * loser's response was dropped. That is a double-click or a retry on a flaky
+ * connection, and on these routes it is a second payment.
+ *
+ * Set up rather than raced. Firing two requests together and hoping they interleave
+ * at the right instruction passes on a quiet machine for the wrong reason — it did,
+ * against the very bug it was written for. So the reservation is written first,
+ * exactly as the wrapper writes one, and the request then has to meet it.
+ */
+test("a key already claimed by a request in flight does not run again", async () => {
+  const create = (await load("reimbursements")).POST;
+  const transitions = (await load("reimbursements/[id]/transitions")).POST;
+
+  const created = await callAs(fx.users.member, create, {
+    method: "POST", body: { ...newRequest(await receipt(fx.users.member.id)), submit: true },
+  });
+  const id = String(created.json!.id);
+  const key = crypto.randomUUID();
+
+  // Claimed, not yet finished: `response` is null while the work is running.
+  await db.execute(sql`
+    insert into idempotency_keys (key, user_id, response, fingerprint)
+    values (${key}, ${fx.users.hod.id}, null, null)`);
+
+  const blocked = await callAs(fx.users.hod, transitions, {
+    method: "POST", params: { id }, body: { action: "ENDORSE" },
+    headers: { "Idempotency-Key": key },
+  });
+  expect(blocked.code).toBe("CONFLICT");
+  expect(blocked.message).toMatch(/still being processed/i);
+
+  // The point of all of it: the record did not move.
+  expect(await endorsements(id)).toBe(0);
+});
+
+/**
+ * The other side of a reservation: a request that claims a key and then dies leaves
+ * the row pending for good. Without a way back, that key is unusable forever — the
+ * caller retries, is told "still running", and stays told.
+ */
+test("a reservation left behind by a dead request is reclaimed", async () => {
+  const create = (await load("reimbursements")).POST;
+  const transitions = (await load("reimbursements/[id]/transitions")).POST;
+
+  const created = await callAs(fx.users.member, create, {
+    method: "POST", body: { ...newRequest(await receipt(fx.users.member.id)), submit: true },
+  });
+  const id = String(created.json!.id);
+  const key = crypto.randomUUID();
+
+  await db.execute(sql`
+    insert into idempotency_keys (key, user_id, response, fingerprint, created_at)
+    values (${key}, ${fx.users.hod.id}, null, null, now() - interval '20 minutes')`);
+
+  const retried = await callAs(fx.users.hod, transitions, {
+    method: "POST", params: { id }, body: { action: "ENDORSE" },
+    headers: { "Idempotency-Key": key },
+  });
+  expect(retried.status).toBe(200);
+  expect(retried.json!.status).toBe("HOD_ENDORSED");
+});
+
+/**
+ * The real-world shape, kept for what it asserts rather than for what it proves:
+ * however two simultaneous requests interleave, the record moves once. It is not
+ * the regression test — the two above are — because the interleaving is the
+ * scheduler's to decide.
+ */
+test("two requests with one key leave the record moved once", async () => {
+  const create = (await load("reimbursements")).POST;
+  const transitions = (await load("reimbursements/[id]/transitions")).POST;
+
+  const created = await callAs(fx.users.member, create, {
+    method: "POST", body: { ...newRequest(await receipt(fx.users.member.id)), submit: true },
+  });
+  const id = String(created.json!.id);
+  const key = crypto.randomUUID();
+
+  const send = () => callAs(fx.users.hod, transitions, {
+    method: "POST", params: { id }, body: { action: "ENDORSE" },
+    headers: { "Idempotency-Key": key },
+  });
+  const results = await Promise.all([send(), send(), send(), send()]);
+
+  for (const r of results) {
+    if (r.status === 200) expect(r.json!.status).toBe("HOD_ENDORSED");
+    else expect(r.code).toBe("CONFLICT");
+  }
+  expect(await endorsements(id)).toBe(1);
+});
+
+test("a key cannot be reused for a different request", async () => {
+  const create = (await load("reimbursements")).POST;
+  const transitions = (await load("reimbursements/[id]/transitions")).POST;
+
+  const first = await callAs(fx.users.member, create, {
+    method: "POST", body: { ...newRequest(await receipt(fx.users.member.id)), submit: true },
+  });
+  const second = await callAs(fx.users.member, create, {
+    method: "POST", body: { ...newRequest(await receipt(fx.users.member.id)), submit: true },
+  });
+  const key = crypto.randomUUID();
+
+  await callAs(fx.users.hod, transitions, {
+    method: "POST", params: { id: String(first.json!.id) }, body: { action: "ENDORSE" },
+    headers: { "Idempotency-Key": key },
+  });
+
+  /*
+   * Same key, different claim. Replaying here would hand back the stored response
+   * for the *first* request — the caller would be told the second one was endorsed,
+   * with the first one's id in the body, and would have no way to know.
+   */
+  const reused = await callAs(fx.users.hod, transitions, {
+    method: "POST", params: { id: String(second.json!.id) }, body: { action: "ENDORSE" },
+    headers: { "Idempotency-Key": key },
+  });
+  expect(reused.code).toBe("CONFLICT");
+  expect(reused.message).toMatch(/different request/i);
+});
+
+test("a failed attempt hands the key back", async () => {
+  const create = (await load("reimbursements")).POST;
+  const transitions = (await load("reimbursements/[id]/transitions")).POST;
+
+  const created = await callAs(fx.users.member, create, {
+    method: "POST", body: { ...newRequest(await receipt(fx.users.member.id)), submit: true },
+  });
+  const id = String(created.json!.id);
+  const key = crypto.randomUUID();
+
+  // Refused: Finance cannot endorse a Tech claim at this point in the chain.
+  const refused = await callAs(fx.users.member, transitions, {
+    method: "POST", params: { id }, body: { action: "APPROVE" },
+    headers: { "Idempotency-Key": key },
+  });
+  expect(refused.status).toBeGreaterThanOrEqual(400);
+
+  /*
+   * The same key must still work. A reservation that survived its own failure would
+   * mean one refused attempt burns the key: the caller fixes whatever was wrong,
+   * retries with the key their client generated for this action, and is told the
+   * request is still being processed — forever.
+   */
+  const retried = await callAs(fx.users.hod, transitions, {
+    method: "POST", params: { id }, body: { action: "ENDORSE" },
+    headers: { "Idempotency-Key": key },
+  });
+  expect(retried.status).toBe(200);
+  expect(retried.json!.status).toBe("HOD_ENDORSED");
 });
 
 /* ----------------------------------------------------------------- notifications */

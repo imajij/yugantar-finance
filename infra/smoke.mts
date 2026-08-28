@@ -77,6 +77,8 @@ async function hit(
     expect?: number | number[] | ((s: number) => boolean);
     label?: string;
     raw?: boolean;
+    /** Extra request headers — `Idempotency-Key`, chiefly. */
+    headers?: Record<string, string>;
   } = {},
 ): Promise<{ status: number; json: Record<string, unknown> | null; text: string; headers: Headers }> {
   const as = opts.as ?? anonymous;
@@ -97,6 +99,7 @@ async function hit(
       "x-forwarded-for": CALLER_IP,
       ...(opts.body === undefined ? {} : { "content-type": "application/json" }),
       ...(as.cookie ? { cookie: as.cookie } : {}),
+      ...(opts.headers ?? {}),
     },
     ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
   });
@@ -1222,6 +1225,52 @@ rows.push({
   note: "fest-wide",
 });
 await hit("GET", "/team", { as: techMember, expect: 404, label: "/team (member refused)" });
+
+section("Idempotency");
+/*
+ * Over HTTP, where a double-click actually happens. The key is claimed before the
+ * work, so of two simultaneous requests one does it and the other is told so —
+ * rather than both running and one response being quietly dropped.
+ */
+const dupKey = randomBytes(16).toString("hex");
+const dupBody = {
+  title: "Barricades for the entrance queue",
+  description: "Ten of them, and somebody to place them.",
+  target_department_id: techId, due_at: "2026-11-27T09:00:00+05:30",
+};
+const sendTwice = async () => {
+  const post = () => fetch(`${BASE}/api/v1/tickets`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": CALLER_IP,
+      "Idempotency-Key": dupKey,
+      ...(finance.cookie ? { cookie: finance.cookie } : {}),
+    },
+    body: JSON.stringify(dupBody),
+  });
+  const [a, b] = await Promise.all([post(), post()]);
+  return Promise.all([a.json().catch(() => null), b.json().catch(() => null)]) as Promise<
+    ({ id?: string; error?: { code?: string } } | null)[]
+  >;
+};
+const [firstTry, secondTry] = await sendTwice();
+const madeIds = new Set([firstTry?.id, secondTry?.id].filter(Boolean));
+rows.push({
+  group, method: "POST", path: "two identical requests make one ticket", as: "finance",
+  status: 200, expected: "content",
+  // Either the same id twice (one did the work, the other replayed it) or one id
+  // and one conflict. Never two ids.
+  ok: madeIds.size === 1,
+  note: madeIds.size === 1 ? "one ticket" : `${madeIds.size} tickets`,
+});
+
+// A key belongs to the request that made it, not just to the user.
+await hit("POST", "/api/v1/tickets", {
+  as: finance, expect: 409, headers: { "Idempotency-Key": dupKey },
+  body: { ...dupBody, title: "Something else entirely, same key" },
+  label: "/api/v1/tickets (same key, different request)",
+});
 
 section("Evidence, once submitted");
 /*
