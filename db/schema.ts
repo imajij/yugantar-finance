@@ -790,9 +790,21 @@ export const cronRuns = pgTable("cron_runs", {
   lastResult: jsonb("last_result"),
 });
 
+/**
+ * A claim on a piece of work, not a record of it (18.2 rule 9).
+ *
+ * The row is inserted *before* the handler runs, so the unique key is what decides
+ * which of two identical requests does the work. `response` is NULL while that work
+ * is in flight and holds the result once it finishes; `fingerprint` binds the key to
+ * the request that made it, so reusing one on a different call is refused rather
+ * than replaying somebody else's answer.
+ */
 export const idempotencyKeys = pgTable("idempotency_keys", {
   key: text("key").primaryKey(),
   userId: uuid("user_id").notNull().references(() => users.id),
-  response: jsonb("response").notNull(),
+  /** NULL means the work is still running. */
+  response: jsonb("response"),
+  /** sha256 of method, path and body. Null on rows written before this existed. */
+  fingerprint: text("fingerprint"),
   createdAt: ts("created_at").notNull().defaultNow(),
 });

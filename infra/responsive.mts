@@ -236,23 +236,41 @@ async function signIn(page: Page): Promise<Record<string, string>> {
   if (!url) throw new Error("DATABASE_URL is not set");
   const sql = postgres(url, { max: 1 });
 
-  // The fest with the most in it, not the first one — a sweep against an empty fest
-  // renders empty states everywhere and passes without testing anything.
+  /*
+   * The fest with the most in it, and an administrator in it — in that order.
+   *
+   * Most rows alone is not enough: the oversight screens (`/audit`, `/close-out`)
+   * answer to the administrator flag, so a fest whose users are all ordinary staff
+   * makes them 404 and the sweep reports five broken renders that are nothing to do
+   * with layout. Left to itself on a machine with several fests lying about, it
+   * quietly picked one of those and stopped checking those screens at all.
+   */
   const [fest] = await sql`
-    select f.id,
+    select f.id, f.slug,
            (select count(*) from reimbursement_requests r where r.fest_id = f.id)
          + (select count(*) from tickets t where t.fest_id = f.id)
-         + (select count(*) from line_items l where l.fest_id = f.id) as rows
-      from fests f order by rows desc, f.created_at desc limit 1`;
+         + (select count(*) from line_items l where l.fest_id = f.id) as rows,
+           exists (select 1 from users u
+                    where u.fest_id = f.id and u.status = 'ACTIVE' and u.is_super_admin) as has_admin
+      from fests f
+     order by has_admin desc, rows desc, f.created_at desc
+     limit 1`;
   if (!fest) throw new Error("No fest — run pnpm db:seed");
   sweptFestId = String(fest.id);
 
   const [user] = await sql`
-    select u.id from users u
+    select u.id, u.email, u.role, u.is_super_admin from users u
      where u.fest_id = ${fest.id} and u.status = 'ACTIVE'
-     order by (u.role = 'FINANCE_HOD') desc, u.is_super_admin desc, u.created_at
+     order by u.is_super_admin desc, (u.role = 'FINANCE_HOD') desc, u.created_at
      limit 1`;
   if (!user) throw new Error("That fest has no active user");
+
+  // Said out loud, because "which fest and whose eyes" is the first question when a
+  // screen 404s and the second when one renders empty.
+  console.log(
+    `\n  \x1b[2msweeping ${fest.slug} (${fest.rows} rows) as ${user.email}`
+    + `${user.is_super_admin ? " · administrator" : " · not an administrator, so oversight screens will 404"}\x1b[0m`,
+  );
 
   const one = async (q: postgres.PendingQuery<postgres.Row[]>) => String((await q)[0]?.id ?? "");
   const ids: Record<string, string> = {

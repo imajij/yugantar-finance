@@ -2,8 +2,9 @@
  * Route-handler plumbing (PRD 20.1). Handlers parse, call `can`, call a service,
  * and respond — no business logic here or in them.
  */
+import { createHash } from "node:crypto";
 import { NextResponse, after } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ZodError, type ZodType } from "zod";
 import { db } from "@/db";
 import { idempotencyKeys } from "@/db/schema";
@@ -145,13 +146,25 @@ export function route<P extends Record<string, string> = Record<string, string>>
       const isWrite = request.method !== "GET" && request.method !== "HEAD";
       if (isWrite) await enforce("write", user.id);
 
+      /*
+       * The key is claimed before the work, not written after it. Whoever wins the
+       * unique index does the work; everyone else replays it or is told it is still
+       * running. See `claimIdempotent`.
+       */
       const key = options.idempotent ? request.headers.get("Idempotency-Key") : null;
-      if (key) {
-        const replay = await replayIdempotent(key, user.id);
-        if (replay) return NextResponse.json(replay);
-      }
+      const claim = key ? await claimIdempotent(key, user.id, await fingerprint(request, params)) : null;
+      if (claim?.kind === "replay") return NextResponse.json(claim.response);
 
-      const result = await handler({ user, params, request });
+      let result: Response | unknown;
+      try {
+        result = await handler({ user, params, request });
+      } catch (error) {
+        // The handler's own transaction rolled back, so nothing happened and the key
+        // has to become usable again — otherwise one failed attempt would make the
+        // caller's retry, with the same key, permanently impossible.
+        if (key) await releaseIdempotent(key);
+        throw error;
+      }
 
       // Notifications are written inside the same transaction as the write that
       // caused them, then delivered here — after the response, so a slow mail
@@ -168,9 +181,13 @@ export function route<P extends Record<string, string> = Record<string, string>>
       }
 
       // A handler that built its own Response (a CSV download, say) is returned as-is.
-      if (result instanceof Response) return result;
+      // There is nothing to store, so the claim is dropped rather than left pending.
+      if (result instanceof Response) {
+        if (key) await releaseIdempotent(key);
+        return result;
+      }
 
-      if (key) await storeIdempotent(key, user.id, result);
+      if (key) await completeIdempotent(key, result);
       return NextResponse.json(result);
     } catch (error) {
       return toErrorResponse(error);
@@ -178,23 +195,108 @@ export function route<P extends Record<string, string> = Record<string, string>>
   };
 }
 
-async function replayIdempotent(key: string, userId: string): Promise<unknown | null> {
+/**
+ * How long a reservation may sit unfinished before it is treated as abandoned.
+ *
+ * A process that dies between claiming a key and finishing leaves the row NULL for
+ * good, and that key can then never be used again — the caller retries, is told
+ * "still running", and stays told forever. Fifteen minutes is far longer than any
+ * handler here takes and short enough that a genuine retry gets through.
+ */
+const CLAIM_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * What request this is, so a key cannot be reused for a different one.
+ *
+ * The route params are in here as well as the path, and deliberately: they are what
+ * actually identifies the record being acted on. Two calls to
+ * `/reimbursements/{id}/transitions` differ only in a segment the path happens to
+ * carry, and reading that identity out of the URL string works right up until
+ * something spells the URL differently.
+ */
+async function fingerprint(request: Request, params: Record<string, string>): Promise<string> {
+  // Cloned: the handler still has to read the body itself.
+  const body = await request.clone().text().catch(() => "");
+  const { pathname, search } = new URL(request.url);
+  const target = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join("&");
+  return createHash("sha256")
+    .update(`${request.method} ${pathname}${search} ${target} ${body}`)
+    .digest("hex");
+}
+
+type Claim =
+  | { kind: "owned" }
+  | { kind: "replay"; response: unknown };
+
+/**
+ * Claims the right to do a piece of work, or explains who already has it.
+ *
+ * The insert is the decision. `on conflict do nothing ... returning` gives back a
+ * row only to the transaction that created it, so exactly one of any number of
+ * concurrent requests carrying the same key owns the work — the rest fall through
+ * to the read below, which is where the old implementation's whole story used to
+ * begin.
+ *
+ * Three ways to lose:
+ *   - **another user's key** — refused, as before;
+ *   - **a different request** — refused, because replaying the stored response of
+ *     an unrelated call would tell the caller their payment succeeded when what
+ *     actually succeeded was something else entirely;
+ *   - **the same request, still running** — 409, because the honest answer is "ask
+ *     again in a moment", not a second execution and not a fabricated result.
+ */
+async function claimIdempotent(key: string, userId: string, fp: string): Promise<Claim> {
+  const [claimed] = await db
+    .insert(idempotencyKeys)
+    .values({ key, userId, fingerprint: fp, response: null })
+    .onConflictDoNothing()
+    .returning({ key: idempotencyKeys.key });
+  if (claimed) return { kind: "owned" };
+
   const [row] = await db
-    .select({ response: idempotencyKeys.response, userId: idempotencyKeys.userId })
+    .select()
     .from(idempotencyKeys)
     .where(eq(idempotencyKeys.key, key))
     .limit(1);
-  if (!row) return null;
+  // Vanished between the two statements — whoever held it released it, so try again.
+  if (!row) return claimIdempotent(key, userId, fp);
+
   // A key belongs to the user who first used it; reuse by anyone else is a conflict.
   if (row.userId !== userId) throw conflict("Idempotency-Key already used by another user");
-  return row.response;
+  // Null on rows written before fingerprints existed; those are only ever replayed.
+  if (row.fingerprint && row.fingerprint !== fp) {
+    throw conflict("That Idempotency-Key was used for a different request");
+  }
+
+  if (row.response !== null) return { kind: "replay", response: row.response };
+
+  // Still pending. Either it is genuinely in flight, or the request that claimed it
+  // died and left the key stranded.
+  const age = Date.now() - new Date(row.createdAt).getTime();
+  if (age < CLAIM_TTL_MS) {
+    throw conflict("That request is still being processed — retry in a moment");
+  }
+
+  const [reclaimed] = await db
+    .update(idempotencyKeys)
+    .set({ userId, fingerprint: fp, createdAt: new Date() })
+    .where(and(eq(idempotencyKeys.key, key), isNull(idempotencyKeys.response)))
+    .returning({ key: idempotencyKeys.key });
+  // Guarded on `response is null`, so a claim that completed in the meantime is not
+  // trampled — that caller gets their replay on the next attempt.
+  return reclaimed ? { kind: "owned" } : claimIdempotent(key, userId, fp);
 }
 
-async function storeIdempotent(key: string, userId: string, response: unknown): Promise<void> {
+async function completeIdempotent(key: string, response: unknown): Promise<void> {
   await db
-    .insert(idempotencyKeys)
-    .values({ key, userId, response: response as object })
-    .onConflictDoNothing();
+    .update(idempotencyKeys)
+    .set({ response: response as object })
+    .where(eq(idempotencyKeys.key, key));
+}
+
+/** Hands the key back, so a failed attempt does not use it up. */
+async function releaseIdempotent(key: string): Promise<void> {
+  await db.delete(idempotencyKeys).where(and(eq(idempotencyKeys.key, key), isNull(idempotencyKeys.response)));
 }
 
 /**

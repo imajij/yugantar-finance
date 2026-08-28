@@ -10,7 +10,7 @@ import type { Actor } from "@/lib/authz";
 import { rupeesToPaise as R } from "@/lib/money";
 import { createLineItem } from "@/lib/services/line-items";
 import {
-  createReimbursement, getReimbursementDetail, transitionReimbursement,
+  createReimbursement, getReimbursementDetail, transitionReimbursement, updateReimbursement,
 } from "@/lib/services/reimbursements";
 import { departmentTotals, lineItemTotals } from "@/lib/queries/budget";
 import { stalledStages } from "@/lib/queries/stalled";
@@ -18,8 +18,9 @@ import { resendInvitation } from "@/lib/services/admin";
 import { auditEvents } from "@/db/schema";
 import { dropFests } from "@/lib/test-support";
 
-let festId: string, techId: string, financeDeptId: string, coreId: string, expenseTypeId: string, lineItemId: string;
-let member: Actor, techHod: Actor, finance: Actor, finance2: Actor, mgmt: Actor;
+let festId: string, techId: string, logiId: string, financeDeptId: string, coreId: string;
+let expenseTypeId: string, lineItemId: string, logiLineItemId: string;
+let member: Actor, techHod: Actor, logiHod: Actor, finance: Actor, finance2: Actor, mgmt: Actor;
 
 /** Hoisted so a test can add somebody mid-run — a second Management account, say. */
 const mkUser = async (email: string, role: Actor["role"], deptId: string): Promise<Actor> => ({
@@ -70,9 +71,11 @@ beforeEach(async () => {
   financeDeptId = await mkDept("Finance", "finance", "FINANCE", 0);
   coreId = await mkDept("Core", "core", "CORE", 0);
   techId = await mkDept("Tech", "tech", "BUDGET", R(100000));
+  logiId = await mkDept("Logistics", "logistics", "BUDGET", R(100000));
 
   member = await mkUser("member@t.test", "MEMBER", techId);
   techHod = await mkUser("hod@t.test", "DEPT_HOD", techId);
+  logiHod = await mkUser("logihod@t.test", "DEPT_HOD", logiId);
   finance = await mkUser("fin@t.test", "FINANCE_HOD", financeDeptId);
   finance2 = await mkUser("fin2@t.test", "FINANCE_HOD", financeDeptId);
   mgmt = await mkUser("mg@t.test", "MANAGEMENT", coreId);
@@ -86,6 +89,12 @@ beforeEach(async () => {
     insert into attachments (fest_id, entity_type, entity_id, purpose, kind, url, label, source_name, quoted_amount_paise, uploaded_by)
     values (${festId}, 'LINE_ITEM', ${lineItemId}, 'QUOTE', 'LINK', 'https://example.com/quote',
             'Quotation — ABC Sound', 'ABC Sound', ${R(58000)}, ${techHod.id})`);
+
+  logiLineItemId = (await createLineItem(logiHod, { departmentId: logiId, name: "Chairs", plannedPaise: R(60000) })).id;
+  await db.execute(sql`
+    insert into attachments (fest_id, entity_type, entity_id, purpose, kind, url, label, source_name, quoted_amount_paise, uploaded_by)
+    values (${festId}, 'LINE_ITEM', ${logiLineItemId}, 'QUOTE', 'LINK', 'https://example.com/quote2',
+            'Quotation — Chair Co', 'Chair Co', ${R(58000)}, ${logiHod.id})`);
 });
 
 afterAll(() => dropFests(db, "flow-"));
@@ -439,4 +448,88 @@ test("a deactivated account is reactivated, not re-invited", async () => {
 
 test("only somebody who manages users can send one", async () => {
   await expect(resendInvitation(member, mgmt.id)).rejects.toThrow(/not permitted/i);
+});
+
+/* ------------------------------------------- a claim belongs to one department */
+
+/**
+ * The line item says whose budget a claim spends, and the department has to follow
+ * it (REVIEW_FINDINGS P1 #6).
+ *
+ * The edit used to change the line item and leave `department_id` behind. That is
+ * not a cosmetic disagreement between two columns: the department is what decides
+ * who endorses the claim, whose queue it lands in, and who may see it at all. A
+ * claim charged to Logistics while still reading as Tech gets endorsed by Tech's
+ * head, spends Logistics' allocation, and never appears to Logistics' head — who
+ * would have been the one person able to say the money was not theirs to spend.
+ */
+test("moving a claim's line item moves the claim", async () => {
+  // Finance may spend against any department's line item (5.1), which is what makes
+  // this reachable at all — a Member cannot move a claim out of their department.
+  const req = await createReimbursement(finance, baseRequest({
+    attachmentIds: [await receipt(finance)],
+  }));
+  expect(req.departmentId).toBe(techId);
+
+  const moved = await updateReimbursement(finance, req.id, { lineItemId: logiLineItemId });
+  expect(moved.lineItemId).toBe(logiLineItemId);
+  expect(moved.departmentId).toBe(logiId);
+});
+
+test("endorsement follows it, and the department it left cannot endorse it", async () => {
+  const req = await createReimbursement(finance, baseRequest({
+    attachmentIds: [await receipt(finance)],
+  }));
+  await updateReimbursement(finance, req.id, { lineItemId: logiLineItemId });
+  await transitionReimbursement(finance, req.id, "SUBMIT");
+
+  // Tech's head has nothing to do with this claim any more.
+  await expect(transitionReimbursement(techHod, req.id, "ENDORSE"))
+    .rejects.toMatchObject({ code: "FORBIDDEN" });
+
+  await expect(transitionReimbursement(logiHod, req.id, "ENDORSE"))
+    .resolves.toMatchObject({ status: "HOD_ENDORSED" });
+});
+
+test("so does who can see it", async () => {
+  const req = await createReimbursement(finance, baseRequest({
+    attachmentIds: [await receipt(finance)],
+  }));
+  await updateReimbursement(finance, req.id, { lineItemId: logiLineItemId });
+
+  await expect(getReimbursementDetail(logiHod, req.id)).resolves.toBeTruthy();
+  // The old department loses sight of a claim that no longer spends its budget.
+  await expect(getReimbursementDetail(techHod, req.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+
+test("the move is on the record, with both departments named", async () => {
+  const req = await createReimbursement(finance, baseRequest({
+    attachmentIds: [await receipt(finance)],
+  }));
+  await updateReimbursement(finance, req.id, { lineItemId: logiLineItemId });
+
+  // The audit row itself, not the rendered timeline: a claim changing whose budget
+  // it spends has to be answerable later with *which* budget it left.
+  const [event] = (await db.execute(sql`
+    select before, after from audit_events
+     where entity_type = 'REIMBURSEMENT' and entity_id = ${req.id}
+       and action = 'reimbursement.update'
+     order by created_at desc limit 1`)) as unknown as {
+      before: Record<string, unknown>; after: Record<string, unknown>;
+    }[];
+  expect(event.before.departmentId).toBe(techId);
+  expect(event.after.departmentId).toBe(logiId);
+});
+
+test("a Member cannot move a claim out of their own department", async () => {
+  const req = await createReimbursement(member, baseRequest({
+    attachmentIds: [await receipt(member)],
+  }));
+  // `lineItem.spendAgainst` is own-department only for a Member, so the door the
+  // fix opens for Finance stays shut for everybody else.
+  await expect(updateReimbursement(member, req.id, { lineItemId: logiLineItemId }))
+    .rejects.toMatchObject({ code: "FORBIDDEN" });
+
+  const unmoved = await getReimbursementDetail(member, req.id);
+  expect(unmoved.departmentId).toBe(techId);
 });

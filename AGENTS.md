@@ -39,3 +39,16 @@ pnpm test && pnpm lint && pnpm typecheck
 
 `tests/db/budget-arithmetic.test.ts` is the PRD 19.6 fixture. If it fails, the
 budget views no longer implement section 6.2 / 6.3 — fix the views, not the test.
+
+`pnpm smoke --keep` then `pnpm responsive` is the wider pass: the first walks the
+API over HTTP and leaves a fest with real rows behind, the second renders every
+screen at five widths against it. A sweep run against an empty database renders
+empty states and passes without testing anything, which is why the order matters.
+
+## CI
+
+`.github/workflows/ci.yml` runs all of the above on every push: lint, types and
+the suite in one job, then build → start → smoke → sweep in another, both against
+a throwaway Postgres. It is **not a merge gate until branch protection is turned
+on** (Settings → Branches → require `check` and `walk`), and until then a red
+commit still deploys — migrations first.

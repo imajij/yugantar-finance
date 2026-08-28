@@ -25,7 +25,10 @@ import {
 } from "./notify-routing";
 
 const AUDITED = [
-  "status", "amountPaise", "lineItemId", "expenseTypeId", "description", "transactionOn",
+  // `departmentId` because a claim can move between departments when its line item
+  // does, and a claim changing whose budget it spends is not something to leave off
+  // the record.
+  "status", "amountPaise", "departmentId", "lineItemId", "expenseTypeId", "description", "transactionOn",
   "payeeName", "payeeUpiId", "merchant", "version", "paymentReference",
 ] as const;
 
@@ -122,13 +125,26 @@ export async function updateReimbursement(actor: Actor, id: string, input: Updat
       submitterId: before.submitterId, status: before.status,
     });
 
+    /*
+     * A claim belongs to the department whose budget it spends, and the line item is
+     * what says which that is. Creation gets this right; the edit used to change the
+     * line item and leave `department_id` behind, so a claim could be charged to
+     * Logistics while every rule that reads the department — who endorses it, whose
+     * queue it appears in, who may see it at all — still answered "Tech".
+     *
+     * The pattern is `updateVendorRequest`'s, which has always moved both together.
+     */
+    let movedTo: { id: string; departmentId: string } | null = null;
     if (input.lineItemId && input.lineItemId !== before.lineItemId) {
+      // `loadOpenLineItem` is also the permission check: `lineItem.spendAgainst`
+      // means a Member cannot move a claim out of their own department at all.
       const item = await loadOpenLineItem(tx, actor, input.lineItemId);
       await assertDocumentThreshold(tx, actor.festId, item.id, item.plannedPaise);
+      movedTo = { id: item.id, departmentId: item.departmentId };
     }
 
     const [after] = await tx.update(reimbursementRequests).set({
-      ...(input.lineItemId !== undefined ? { lineItemId: input.lineItemId } : {}),
+      ...(movedTo ? { lineItemId: movedTo.id, departmentId: movedTo.departmentId } : {}),
       ...(input.expenseTypeId !== undefined ? { expenseTypeId: input.expenseTypeId } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.transactionOn !== undefined ? { transactionOn: input.transactionOn } : {}),

@@ -115,7 +115,19 @@ export default async function AuditPage({
                 </time>
 
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <p className="text-[13.5px]">
+                  {/*
+                    `anywhere` rather than `break-words`: an action name is one
+                    unbroken token — `vendor_request.transition.CONFIRM_DELIVERY` —
+                    and normal word wrapping has nowhere to put a break in it, so it
+                    hangs off the side of a phone instead.
+
+                    Found by CI and not reproducible on a Mac: on Linux the fallback
+                    font renders that string 336px wide at 12.5px, nine more than a
+                    360px phone has. Which is the argument for the rule rather than
+                    against it — the width of somebody else's font is not something
+                    this layout should depend on.
+                  */}
+                  <p className="text-[13.5px] [overflow-wrap:anywhere]">
                     <span className="text-text-soft">{e.actor ?? "System"}</span>{" "}
                     <span className="tnum text-[12.5px]">{e.action}</span>{" "}
                     {href ? (
