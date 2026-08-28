@@ -202,3 +202,125 @@ async function closeReason(id: string): Promise<string | null> {
   const r = await one<{ close_reason: string | null }>(sql`select close_reason from line_items where id = ${id}`);
   return r.close_reason;
 }
+
+/* --------------------------------------------------------- two at the same time */
+
+/**
+ * Σ allocations ≤ the fest total, under concurrency.
+ *
+ * This is the block that no column constraint can hold: it is a claim about every
+ * department row at once, so the only thing standing behind it is a lock. The
+ * single-request path was already careful — each transfer locks the department rows
+ * it touches — and that is exactly why the hole was invisible. Two transfers into
+ * two *different* departments never contend for the same row, so nothing made them
+ * wait for each other.
+ *
+ * The interleaving is forced rather than raced. A test that fires two requests and
+ * hopes they overlap passes on a fast machine for the wrong reason; this one holds
+ * the first transaction open until the second has had its chance.
+ */
+test("two transfers out of the reserve cannot both spend it", async () => {
+  // Reserve is ₹4,00,000. Each of these wants ₹3,00,000, so exactly one may win.
+  const each = R(300000);
+  const reserveBefore = R(1000000) - R(400000) - R(200000);
+  expect(reserveBefore).toBe(R(400000));
+
+  let releaseFirst!: () => void;
+  const firstMayCommit = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let firstIsHolding!: () => void;
+  const firstHasTransferred = new Promise<void>((resolve) => { firstIsHolding = resolve; });
+
+  // Transaction A: does its transfer, then sits on the lock without committing.
+  const a = db.transaction(async (tx) => {
+    const { transferBudgetIn } = await import("@/lib/services/budget");
+    const row = await transferBudgetIn(tx, finance, {
+      fromDepartmentId: null, toDepartmentId: techId,
+      amountPaise: each, reason: "Tech needs more for the stage",
+    });
+    firstIsHolding();
+    await firstMayCommit;
+    return row;
+  });
+
+  await firstHasTransferred;
+
+  /*
+   * Transaction B, while A is still open. With the reserve serialised on the fest
+   * row it blocks here; without, it sails through its own check — A's increase is
+   * uncommitted and invisible to it — and both fest budgets get spent.
+   */
+  const b = db.transaction(async (tx) => {
+    const { transferBudgetIn } = await import("@/lib/services/budget");
+    return transferBudgetIn(tx, finance, {
+      fromDepartmentId: null, toDepartmentId: logisticsId,
+      amountPaise: each, reason: "Logistics needs more for the trucks",
+    });
+  });
+
+  // Long enough for B to get as far as it is going to get.
+  await new Promise((r) => setTimeout(r, 250));
+  releaseFirst();
+
+  const [resultA, resultB] = await Promise.allSettled([a, b]);
+  expect(resultA.status).toBe("fulfilled");
+  expect(resultB.status).toBe("rejected");
+  if (resultB.status === "rejected") {
+    expect((resultB.reason as ApiError).code).toBe("OVER_ALLOCATION");
+  }
+
+  // The invariant itself, which is the thing that actually matters: whatever the
+  // two transactions did between them, the departments cannot hold more than the
+  // fest has.
+  const [{ allocated, total }] = (await db.execute(sql`
+    select (select coalesce(sum(allocated_paise), 0) from departments where fest_id = ${festId})::bigint as allocated,
+           (select total_budget_paise from fests where id = ${festId})::bigint as total
+  `)) as unknown as { allocated: string; total: string }[];
+  expect(Number(allocated)).toBeLessThanOrEqual(Number(total));
+  expect(Number(allocated)).toBe(R(400000) + R(200000) + each);
+});
+
+/**
+ * The other side of the same inequality: the total cannot be lowered underneath an
+ * allocation that is still in flight.
+ *
+ * Worth being precise about what this proves, because it passed before the lock was
+ * added too. It was not luck and it was not design — `budget_transfers.fest_id` is a
+ * foreign key, so writing the transfer history takes a `FOR KEY SHARE` lock on the
+ * fest row, which conflicts with the `FOR UPDATE` that `setTotalBudget` takes.
+ * Verified: with the history insert the second transaction blocks, without it, it
+ * does not.
+ *
+ * So the property held as a side-effect of an unrelated insert, and would have
+ * disappeared the day somebody dropped that foreign key or moved an allocation
+ * without writing history. It is now held by the same explicit lock as everything
+ * else touching the reserve. The test is here to keep the property, whichever
+ * mechanism is providing it.
+ */
+test("the total cannot be cut out from under an in-flight allocation", async () => {
+  let releaseFirst!: () => void;
+  const firstMayCommit = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let firstIsHolding!: () => void;
+  const firstHasTransferred = new Promise<void>((resolve) => { firstIsHolding = resolve; });
+
+  const transfer = db.transaction(async (tx) => {
+    const { transferBudgetIn } = await import("@/lib/services/budget");
+    const row = await transferBudgetIn(tx, finance, {
+      fromDepartmentId: null, toDepartmentId: techId,
+      amountPaise: R(400000), reason: "The whole reserve",
+    });
+    firstIsHolding();
+    await firstMayCommit;
+    return row;
+  });
+
+  await firstHasTransferred;
+  // Cutting the total to exactly what was allocated *before* the transfer.
+  const cut = setTotalBudget(finance, R(600000), "Sponsor pulled out");
+  await new Promise((r) => setTimeout(r, 250));
+  releaseFirst();
+
+  const [t, c] = await Promise.allSettled([transfer, cut]);
+  expect(t.status).toBe("fulfilled");
+  // The cut has to lose: ₹10,00,000 was allocated by the time it got the lock.
+  expect(c.status).toBe("rejected");
+});

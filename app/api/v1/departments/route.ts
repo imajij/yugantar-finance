@@ -7,6 +7,7 @@ import { overAllocation, parseBody, route } from "@/lib/api";
 import { recordAudit } from "@/lib/services/audit";
 import { ensureDepartmentChannel } from "@/lib/services/chat";
 import { departmentTotalsForFest, festTotals } from "@/lib/queries/budget";
+import { lockFestForAllocation } from "@/lib/services/budget";
 
 /** PRD 20.4 — budget figures only for departments the caller may see. */
 export const GET = route(async ({ user }) => {
@@ -60,7 +61,11 @@ export const POST = route(async ({ user, request }) => {
   const body = await parseBody(request, createSchema);
 
   return db.transaction(async (tx) => {
-    // Σ allocations may never exceed the fest total (4.7 — the one hard block).
+    // Σ allocations may never exceed the fest total (4.7 — the one hard block). The
+    // same lock every transfer takes: a department created with an allocation moves
+    // money out of the reserve as surely as a transfer does, and two of them at once
+    // would otherwise each read a reserve the other was already spending.
+    await lockFestForAllocation(tx, user.festId);
     const totals = await festTotals(user.festId, tx);
     if (totals && totals.allocatedPaise + body.allocated_paise > totals.totalBudgetPaise) {
       throw overAllocation("Department allocations would exceed the fest total budget", {

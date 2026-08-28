@@ -25,6 +25,9 @@ const query = z.object({
 /** Statement-style exports render as a print-ready page; the rest are tables. */
 const DEFAULT_FORMAT: Record<ExportKind, ExportFormat> = {
   transactions: "csv",
+  // Excel by default: this one is opened, sorted and filtered by a person, not fed
+  // to another system.
+  reimbursements: "xlsx",
   "department-statement": "xlsx",
   "payment-batch": "csv",
   "vendor-ledger": "xlsx",

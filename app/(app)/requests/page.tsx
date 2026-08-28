@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Camera, Receipt } from "lucide-react";
+import { Camera, Receipt, Sheet } from "lucide-react";
 import { redirect } from "next/navigation";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { Plus } from "lucide-react";
@@ -9,6 +9,9 @@ import { getSession } from "@/lib/session";
 import { canFestWide } from "@/lib/authz";
 import { Amount, buttonClass, buttonStyle, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
 import { waitingOn } from "@/lib/services/reimbursements";
+
+/** Kept out of the JSX so the download reads as one thing in one place. */
+const EXCEL_HREF = "/api/v1/exports/reimbursements?format=xlsx";
 
 export default async function RequestsPage() {
   const user = await getSession();
@@ -56,13 +59,33 @@ export default async function RequestsPage() {
     <>
       <PageTitle
         action={
-          <Link
-            href="/requests/new"
-            className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium"
-            style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
-          >
-            <Plus size={15} aria-hidden /> New request
-          </Link>
+          <div className="flex items-center gap-2">
+            {/*
+              Whatever this screen is showing you, as a spreadsheet. The file is
+              scoped by the same rule the list is (`reimbursementScope`), so it is
+              never a way to take away more than the page in front of you.
+
+              An `<a>`, because this is a download and not a navigation: `Link`
+              would client-side route to it and the browser would never be handed
+              the attachment.
+            */}
+            {rows.length > 0 && (
+              <a
+                href={EXCEL_HREF}
+                className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-sm"
+                style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+              >
+                <Sheet size={15} aria-hidden /> Excel
+              </a>
+            )}
+            <Link
+              href="/requests/new"
+              className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium"
+              style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
+            >
+              <Plus size={15} aria-hidden /> New request
+            </Link>
+          </div>
         }
       >
         {seesAll ? "Reimbursements" : user.role === "DEPT_HOD" ? `${user.departmentName} reimbursements` : "My requests"}

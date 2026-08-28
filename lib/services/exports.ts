@@ -22,11 +22,13 @@ import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { ApiError, notFound } from "@/lib/api";
 import { assertCan, canFestWide, type Actor } from "@/lib/authz";
+import { waitingOn } from "./reimbursements";
 import { formatPaise } from "@/lib/money";
 import { buildXlsx, type Column, type Sheet } from "@/lib/xlsx";
 
 export type ExportKind =
   | "transactions"
+  | "reimbursements"
   | "department-statement"
   | "payment-batch"
   | "vendor-ledger"
@@ -124,6 +126,90 @@ const TRANSACTION_COLUMNS: Column[] = [
   { key: "payment_reference", header: "Payment reference", width: 22 },
   { key: "open_flags", header: "Open flags", type: "number", width: 11 },
 ];
+
+const REIMBURSEMENT_COLUMNS: Column[] = [
+  { key: "reference", header: "Reference", width: 12 },
+  { key: "status", header: "Status", width: 16 },
+  { key: "waiting_on", header: "Waiting on", width: 16 },
+  { key: "department", header: "Department", width: 16 },
+  { key: "line_item", header: "Line item", width: 22 },
+  { key: "expense_type", header: "Expense type", width: 18 },
+  { key: "description", header: "Description", width: 40 },
+  { key: "amount_paise", header: "Amount", type: "money", width: 14 },
+  { key: "transaction_on", header: "Spent on", type: "date", width: 14 },
+  { key: "payee_name", header: "Payee", width: 22 },
+  { key: "payee_upi_id", header: "Payee UPI", width: 20 },
+  { key: "submitted_by", header: "Raised by", width: 18 },
+  { key: "submitted_at", header: "Raised at", type: "date", width: 14 },
+  { key: "endorsed_by", header: "Endorsed by", width: 18 },
+  { key: "endorsed_at", header: "Endorsed at", type: "date", width: 14 },
+  { key: "approved_by", header: "Approved by", width: 18 },
+  { key: "approved_at", header: "Approved at", type: "date", width: 14 },
+  { key: "paid_by", header: "Paid by", width: 18 },
+  { key: "paid_at", header: "Paid at", type: "date", width: 14 },
+  { key: "payment_reference", header: "Payment reference", width: 22 },
+  { key: "receipts", header: "Receipts", type: "number", width: 10 },
+  { key: "open_flags", header: "Open flags", type: "number", width: 11 },
+];
+
+/**
+ * How much of the ledger this caller may take away.
+ *
+ * The same three-way rule the Reimbursements screen renders from — fest-wide for
+ * Finance, Management and administrators; own department for a head; own claims for
+ * everybody else. Written here as SQL rather than trusted from a filter, because a
+ * spreadsheet is the one artefact that leaves the building: getting this wrong does
+ * not show a Member somebody else's claim on a screen they can close, it hands them
+ * a file with every payee's UPI id in it.
+ */
+function reimbursementScope(actor: Actor): SQL {
+  if (canFestWide(actor, "reimbursement.view")) return sql``;
+  if (actor.role === "DEPT_HOD") return sql`and r.department_id = ${actor.departmentId}`;
+  return sql`and r.submitter_id = ${actor.id}`;
+}
+
+/**
+ * Reimbursements on their own, which `transactions` cannot be.
+ *
+ * 12.1 unions claims and vendor milestones into one ledger, which is the right
+ * shape for reconciling a department and the wrong one for the question people
+ * actually ask of this screen — "what has my team claimed, and where has it got
+ * to". Separate columns too: a claim has a payee, a UPI id and a receipt count,
+ * none of which a vendor milestone has, and a union has to drop them.
+ */
+async function reimbursementRows(actor: Actor, f: Filters) {
+  return rows(sql`
+    select r.human_id as reference, r.status::text as status,
+           d.name as department, li.name as line_item, et.name as expense_type,
+           r.description, r.amount_paise, r.transaction_on,
+           r.payee_name, r.payee_upi_id,
+           u.name as submitted_by, r.submitted_at,
+           eu.name as endorsed_by, r.endorsed_at,
+           au.name as approved_by, r.approved_at,
+           pu.name as paid_by, r.paid_at, r.payment_reference,
+           su.role::text as submitter_role,
+           (select count(*)::int from attachments a
+             where a.entity_type = 'REIMBURSEMENT' and a.entity_id = r.id
+               and a.removed_at is null) as receipts,
+           (select count(*)::int from flags fl
+             where fl.entity_type = 'REIMBURSEMENT' and fl.entity_id = r.id and fl.status = 'OPEN') as open_flags
+      from reimbursement_requests r
+      join departments d on d.id = r.department_id
+      join line_items li on li.id = r.line_item_id
+      join expense_types et on et.id = r.expense_type_id
+      join users u on u.id = r.submitter_id
+      join users su on su.id = r.submitter_id
+      left join users eu on eu.id = r.endorsed_by
+      left join users au on au.id = r.approved_by
+      left join users pu on pu.id = r.paid_by
+     where r.fest_id = ${actor.festId} and r.deleted_at is null
+       ${reimbursementScope(actor)}
+       ${whereFrom("r", f, { dateColumn: "transaction_on" })}
+       ${f.expenseTypeId ? sql`and r.expense_type_id = ${f.expenseTypeId}` : sql``}
+       ${f.payee ? sql`and r.payee_name ilike ${`%${f.payee}%`}` : sql``}
+     order by r.created_at desc
+  `);
+}
 
 /** 12.1 — every reimbursement and every vendor milestone, with its full history. */
 async function transactions(actor: Actor, f: Filters) {
@@ -588,6 +674,20 @@ function cards(entries: [string, string][]): string {
 
 const PERMISSION: Record<ExportKind, Parameters<typeof assertCan>[1]> = {
   transactions: "export.run",
+  /*
+   * Not `export.run`, which is Finance, Management and heads: everyone may see
+   * *some* reimbursements — their own at least — so everyone may take that same
+   * list away with them. `reimbursement.create` is the gate because it is the one
+   * every role in the fest passes (5.1: anybody may claim money they spent), and
+   * because somebody who may file a claim is exactly somebody who has claims worth
+   * exporting.
+   *
+   * `reimbursement.view` cannot be the gate even though it reads as the right
+   * question: it is answered per row, from a `submitterId`, and there is no single
+   * row to hand it here. How much of the ledger comes out is decided by
+   * `reimbursementScope`, not by this.
+   */
+  reimbursements: "reimbursement.create",
   "department-statement": "export.run",
   "payment-batch": "export.run",
   "vendor-ledger": "vendor.view",
@@ -636,6 +736,22 @@ export async function runExport(actor: Actor, kind: ExportKind, format: ExportFo
       const data = await transactions(actor, f);
       return deliver("transactions", format, [
         { name: "Transactions", columns: TRANSACTION_COLUMNS, rows: data },
+      ]);
+    }
+
+    case "reimbursements": {
+      const data = await reimbursementRows(actor, f);
+      // "Waiting on" is derived rather than stored — the same function the list
+      // screen uses, so the column and the screen cannot drift apart.
+      const withWaiting = data.map((row) => ({
+        ...row,
+        waiting_on: waitingOn(
+          row.status as Parameters<typeof waitingOn>[0],
+          row.submitter_role as Parameters<typeof waitingOn>[1],
+        ),
+      }));
+      return deliver("reimbursements", format, [
+        { name: "Reimbursements", columns: REIMBURSEMENT_COLUMNS, rows: withWaiting },
       ]);
     }
 

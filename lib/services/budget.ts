@@ -12,13 +12,28 @@ import { ApiError, notFound, overAllocation } from "@/lib/api";
 import { departmentTotals } from "@/lib/queries/budget";
 import { recordAudit } from "./audit";
 
+/**
+ * Takes the lock that everything touching the reserve queues behind, and returns
+ * the fest total it is protecting.
+ *
+ * Σ allocations ≤ the fest total is a claim about many rows at once, so no column
+ * constraint can hold it — it has to be a lock, and it has to be the same lock
+ * everywhere. Both sides of the inequality live under this one: raising or lowering
+ * the total, moving money out of the reserve, and creating a department that starts
+ * with an allocation.
+ */
+export async function lockFestForAllocation(tx: Tx, festId: string) {
+  const [fest] = await tx.select({ id: fests.id, totalBudgetPaise: fests.totalBudgetPaise })
+    .from(fests).where(eq(fests.id, festId)).for("update");
+  if (!fest) throw notFound("Fest");
+  return fest;
+}
+
 export async function setTotalBudget(actor: Actor, totalBudgetPaise: number, reason: string) {
   assertCan(actor, "fest.manage", { festId: actor.festId });
 
   return db.transaction(async (tx) => {
-    const [fest] = await tx.select().from(fests).where(eq(fests.id, actor.festId)).for("update");
-    if (!fest) throw notFound("Fest");
-
+    const fest = await lockFestForAllocation(tx, actor.festId);
     const allocated = await sumAllocations(tx, actor.festId);
     if (totalBudgetPaise < allocated) {
       throw overAllocation("The fest total cannot drop below what is already allocated", {
@@ -76,6 +91,26 @@ export async function transferBudgetIn(tx: Tx, actor: Actor, input: TransferInpu
     throw new ApiError("VALIDATION_ERROR", "Transfer amount must be positive");
   }
 
+  /*
+   * Anything that moves money *out of* the reserve serialises on the fest row.
+   *
+   * The department locks below are not enough, because two transfers into two
+   * different departments never contend for the same department row. Each then
+   * runs `sumAllocations` in READ COMMITTED, neither sees the other's uncommitted
+   * increase, both find the reserve sufficient, and both commit — leaving Σ
+   * allocations above the fest total, which is the one hard block in the system
+   * (7.1). The reserve is a shared quantity, so it needs a shared lock, and the
+   * fest row is the thing it is a property of.
+   *
+   * Taken before the department locks, and `setTotalBudget` takes the same row, so
+   * every path that can change either side of the inequality queues in one order.
+   * Moving money *back* into the reserve only ever helps the invariant and does not
+   * need to wait.
+   */
+  if (input.fromDepartmentId === null) {
+    await lockFestForAllocation(tx, actor.festId);
+  }
+
   const ids = [input.fromDepartmentId, input.toDepartmentId].filter((x): x is string => x !== null).sort();
   const locked = new Map<string, { id: string; name: string; allocatedPaise: number }>();
   for (const id of ids) {
@@ -112,9 +147,9 @@ export async function transferBudgetIn(tx: Tx, actor: Actor, input: TransferInpu
   }
 
   // Moving out of reserve: check the reserve can cover it (the one hard block, 21.4).
+  // Safe to read now: the fest row was locked above, so nothing else is allocating.
   if (input.fromDepartmentId === null) {
-    const [fest] = await tx.select({ totalBudgetPaise: fests.totalBudgetPaise })
-      .from(fests).where(eq(fests.id, actor.festId));
+    const fest = await lockFestForAllocation(tx, actor.festId);
     const allocated = await sumAllocations(tx, actor.festId);
     if (allocated > fest.totalBudgetPaise) {
       throw overAllocation("The reserve does not cover this transfer", {
