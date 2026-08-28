@@ -1223,6 +1223,83 @@ rows.push({
 });
 await hit("GET", "/team", { as: techMember, expect: 404, label: "/team (member refused)" });
 
+section("Evidence, once submitted");
+/*
+ * The receipts a reviewer looked at are the receipts on the record afterwards.
+ * Over HTTP because the presign → upload → complete round trip is where the gap
+ * was: the permission question is answered when the URL is issued and the bytes
+ * arrive minutes later.
+ */
+const frozenClaim = await hit("POST", "/api/v1/reimbursements", {
+  as: finance,
+  body: {
+    line_item_id: lineItemId, expense_type_id: expenseTypeId,
+    description: "Extension boards for the green room",
+    transaction_on: "2026-11-21", amount_paise: 120000,
+    payee_name: "Finance HOD", payee_upi_id: "smoke@upi",
+    attachment_ids: [await receiptFor()], submit: false,
+  },
+  label: "/api/v1/reimbursements (draft, for the freeze)",
+});
+const frozenId = required("freeze claim id", String(frozenClaim.json?.id ?? ""));
+
+// While it is a draft it is still theirs to change.
+const draftLink = await hit("POST", "/api/v1/attachments", {
+  as: finance,
+  body: {
+    kind: "LINK", entity_type: "REIMBURSEMENT", entity_id: frozenId, purpose: "RECEIPT",
+    url: "https://example.com/second-receipt.pdf", label: "Second receipt",
+  },
+  label: "/api/v1/attachments (draft accepts a link)",
+});
+
+// An upload begun now, and completed after submission, must not bind.
+const inFlight = await hit("POST", "/api/v1/attachments/presign", {
+  as: finance,
+  body: {
+    entity_type: "REIMBURSEMENT", entity_id: frozenId, purpose: "RECEIPT",
+    file_name: "late.jpg", mime_type: "image/jpeg", size_bytes: 1024,
+  },
+  label: "/api/v1/attachments/presign (bound to the draft)",
+});
+const inFlightUrl = String(inFlight.json?.upload_url ?? "");
+if (inFlightUrl) {
+  await fetch(inFlightUrl.startsWith("http") ? inFlightUrl : `${BASE}${inFlightUrl}`, {
+    method: "PUT", body: new Uint8Array(randomBytes(1024)),
+  });
+}
+
+await hit("POST", `/api/v1/reimbursements/${frozenId}/transitions`, {
+  as: finance, body: { action: "SUBMIT" },
+  label: "/api/v1/reimbursements/{id}/transitions SUBMIT (the freeze starts here)",
+});
+
+await hit("POST", `/api/v1/attachments/${inFlight.json?.attachment_id}/complete`, {
+  as: finance, expect: [400, 422],
+  label: "/api/v1/attachments/{id}/complete (submitted in the meantime)",
+});
+await hit("POST", "/api/v1/attachments", {
+  as: finance, expect: [400, 422],
+  body: {
+    kind: "LINK", entity_type: "REIMBURSEMENT", entity_id: frozenId, purpose: "RECEIPT",
+    url: "https://example.com/third-receipt.pdf", label: "Third receipt",
+  },
+  label: "/api/v1/attachments (submitted, refused)",
+});
+await hit("DELETE", `/api/v1/attachments/${draftLink.json?.id}`, {
+  as: finance, expect: [400, 422],
+  label: "/api/v1/attachments/{id} (submitted, cannot be pulled)",
+});
+
+// And sending it back hands it over again, which is the sanctioned correction.
+await hit("POST", `/api/v1/reimbursements/${frozenId}/transitions`, {
+  as: techHodEarly, body: { action: "SEND_BACK", reason: "The second receipt is unreadable" },
+  label: "/api/v1/reimbursements/{id}/transitions SEND_BACK",
+});
+await hit("DELETE", `/api/v1/attachments/${draftLink.json?.id}`, {
+  as: finance, label: "/api/v1/attachments/{id} (sent back, so it can be)",
+});
+
 section("Reimbursement export");
 // Excel for the screen you are looking at. The scope is the file's, not the
 // caller's request — a Member asking for the fest gets their own claims.
