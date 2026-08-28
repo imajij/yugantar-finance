@@ -152,14 +152,33 @@ describe("segregation of duties (PRD 5.2)", () => {
     }
   });
 
-  test("only Management records money moving", () => {
+  test("only Management moves vendor money", () => {
     for (const action of ["RECORD_ADVANCE", "RECORD_BALANCE", "RECORD_REFUND"] as const) {
       for (const t of VENDOR_TRANSITIONS.filter((x) => x.action === action)) {
         expect(t.roles, action).toEqual(["MANAGEMENT"]);
       }
     }
-    for (const t of REIMBURSEMENT_TRANSITIONS.filter((x) => x.action === "RECORD_PAYMENT")) {
-      expect(t.roles).toEqual(["MANAGEMENT"]);
+  });
+
+  /**
+   * Reimbursement payment has exactly one documented exception, and this pins it to
+   * exactly that shape.
+   *
+   * 5.2 pays a Management user's own claim from a *different* Management user, and
+   * where the fest has only one, from the Finance HOD with a note. So Finance is on
+   * the table — and nobody else is, `NOT_SUBMITTER` still holds, and the narrowing
+   * to that one case lives in `can` (`reimbursement.recordPayment`), which is where
+   * 18.2 rule 6 says segregation belongs.
+   *
+   * If this fails, the question to ask is whether a *third* role just gained the
+   * ability to move money out, not whether the assertion is inconvenient.
+   */
+  test("reimbursement payment is Management's, with only 5.2's Finance fallback", () => {
+    const paying = REIMBURSEMENT_TRANSITIONS.filter((x) => x.action === "RECORD_PAYMENT");
+    expect(paying.length).toBeGreaterThan(0);
+    for (const t of paying) {
+      expect([...t.roles].sort()).toEqual(["FINANCE_HOD", "MANAGEMENT"]);
+      expect(t.actor).toContain("NOT_SUBMITTER");
     }
   });
 });

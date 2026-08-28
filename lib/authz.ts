@@ -46,6 +46,16 @@ export interface Resource {
    * forgets to look it up is refused rather than admitted.
    */
   isChannelMember?: boolean;
+  /**
+   * Whether a *second* Management user exists who could record this payment.
+   *
+   * 5.2 pays a Management user's own claim from a different Management user, and
+   * falls back to the Finance HOD only when there is no such person. That is a fact
+   * about the fest's staffing rather than about the record, so it is looked up and
+   * handed in, like a submitter's id. Left undefined it reads as "there is one", so
+   * a caller who forgets keeps the strict rule rather than opening the fallback.
+   */
+  hasPeerPayer?: boolean;
 }
 
 export type Action =
@@ -291,8 +301,23 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
       return management;
 
     case "reimbursement.recordPayment":
-      // Management records payment, and never for their own request (5.2).
-      return management && resource.submitterId !== actor.id;
+      // Never your own, whoever you are (5.2).
+      if (resource.submitterId === actor.id) return false;
+      if (management) return true;
+      /*
+       * The documented fallback (5.2). A Management user's own claim is paid by a
+       * different Management user; where the fest has only one, the Finance HOD
+       * records it instead, with a note saying so.
+       *
+       * Without this the claim is unpayable: the sole person holding the paying
+       * role is the one person disqualified from using it, and no amount of
+       * filling seats fixes it. The note is the compensating control — the same
+       * two people are still involved, and the audit log says why the usual pair
+       * was not available.
+       */
+      return finance
+        && resource.submitterRole === "MANAGEMENT"
+        && resource.hasPeerPayer === false;
 
     case "vendor.manage":
       return finance || hod;

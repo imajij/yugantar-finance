@@ -38,6 +38,9 @@ export const VENDOR_TRANSITIONS: readonly T[] = [
   // Balance = 0 closes straight from DELIVERED; the service checks the balance milestone is zero.
   { from: "DELIVERED", action: "CLOSE", to: "CLOSED", roles: ["FINANCE_HOD"] },
 
+  // CLOSED is the usual landing, and only when nothing is left owing: a request with
+  // a third milestone still unpaid stays here until that one is paid too, because
+  // CLOSED drops it out of Committed entirely.
   { from: "BALANCE_APPROVED", action: "RECORD_BALANCE", to: "CLOSED", roles: ["MANAGEMENT"], requires: ["milestone_id", "paid_paise", "paid_at", "payment_reference"] },
 
   { from: "CANCELLED", action: "RECORD_REFUND", to: "SAME", roles: ["MANAGEMENT"], requires: ["amount_paise", "received_at", "reference"] },
