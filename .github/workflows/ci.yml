@@ -1,0 +1,177 @@
+# Everything that has to be true before a commit is trusted.
+#
+# Until now this ran only when somebody remembered: 820 tests, 307 HTTP calls and a
+# five-width render sweep, all of them local. `vercel-build` is
+# `tsx db/migrate.mts && next build` — no test, no typecheck, no lint — so a red
+# commit deployed, and it applied its migrations on the way in.
+#
+# Two jobs rather than one, so a lint error does not sit behind a browser download,
+# and so the slow half can be made non-blocking later without touching the fast half.
+#
+#   check — lint, types, and the whole suite against a real Postgres
+#   walk  — build it, run it, and use it: the HTTP walk and the render sweep
+#
+# The setup steps are duplicated between them on purpose. A composite action would
+# save eight lines and cost anybody reading this file the ability to see what
+# actually happens.
+#
+# **This is not yet a gate.** GitHub will not stop a failing commit reaching `master`
+# until somebody turns it on: Settings → Branches → add a rule for `master`, require
+# "check" and "walk" to pass. Worth doing before this becomes the source of truth,
+# because the deploy runs migrations first and a broken build leaves a migrated
+# database behind it.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A superseded run tells you about a commit nobody is looking at any more.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, types, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        # Matches what the app is developed against. Production is Neon — if that
+        # is on a different major, this should follow it rather than local.
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: yugantar
+        ports: ["5432:5432"]
+        # The steps below start the moment the container is up, and `pg_isready`
+        # is the difference between that and the moment it accepts connections.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # The pnpm store only — never `.next`. A build cache carries inlined
+          # `NEXT_PUBLIC_*` values and anything the proxy bundle read at build time,
+          # so a cached one would quietly test the environment of whoever filled the
+          # cache rather than this run's. Found the hard way.
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The same file the dev server and every infra script read, so CI and a laptop
+      # are configured one way rather than two. R2, Clerk and Resend are all absent:
+      # uploads fall back to local disk, sign-in to emailed links, and mail to the
+      # log — which is what the tests exercise anyway.
+      #
+      # `UPLOAD_URL_SECRET` is not optional here even though R2 is. `next start`
+      # runs in production mode, and the local-disk backend refuses to sign an
+      # upload URL with a hard-coded development key rather than degrade quietly —
+      # so without it every upload in the smoke walk is a 503.
+      - name: Write .env.local
+        run: |
+          cat > .env.local <<'ENV'
+          DATABASE_URL=postgres://postgres:postgres@localhost:5432/yugantar
+          APP_URL=http://localhost:3000
+          ALLOWED_EMAIL_DOMAIN=sst.scaler.com,scaler.com
+          ENV
+          echo "CRON_SECRET=$(openssl rand -hex 32)" >> .env.local
+          echo "UPLOAD_URL_SECRET=$(openssl rand -hex 32)" >> .env.local
+
+      - run: pnpm db:migrate
+
+      # Lint and types before the suite: both are seconds, and a type error makes
+      # every test failure below it noise.
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  walk:
+    name: Smoke walk and render sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        # Matches what the app is developed against. Production is Neon — if that
+        # is on a different major, this should follow it rather than local.
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: yugantar
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Identical to the other job's, deliberately — see the note there.
+      - name: Write .env.local
+        run: |
+          cat > .env.local <<'ENV'
+          DATABASE_URL=postgres://postgres:postgres@localhost:5432/yugantar
+          APP_URL=http://localhost:3000
+          ALLOWED_EMAIL_DOMAIN=sst.scaler.com,scaler.com
+          ENV
+          echo "CRON_SECRET=$(openssl rand -hex 32)" >> .env.local
+          echo "UPLOAD_URL_SECRET=$(openssl rand -hex 32)" >> .env.local
+
+      - run: pnpm db:migrate
+
+      # A production build, because that is what gets deployed and `next dev`
+      # forgives things it does not.
+      - run: pnpm build
+
+      - name: Start the server
+        run: |
+          set -a && . ./.env.local && set +a
+          pnpm start > /tmp/server.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf -o /dev/null http://localhost:3000/sign-in && exit 0
+            sleep 2
+          done
+          echo "the server never came up:"; cat /tmp/server.log; exit 1
+
+      # `--keep` leaves the fest it built behind, which is what the sweep then has
+      # real rows to render. Without it every screen is an empty state and the
+      # sweep passes without testing anything.
+      - run: pnpm smoke --keep
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - run: pnpm responsive
+
+      - name: Server log
+        if: failure()
+        run: tail -100 /tmp/server.log
