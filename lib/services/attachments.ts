@@ -14,7 +14,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import { attachments } from "@/db/schema";
 import { ApiError, notFound } from "@/lib/api";
-import { can } from "@/lib/authz";
+import { can, type Action } from "@/lib/authz";
 import { VIEW_ACTION, resolveEntity, type EntityType } from "@/lib/entities";
 import type { SessionUser } from "@/lib/session";
 import { deleteObject, getObject, MAX_FILE_BYTES, objectExists, sha256, signedDownloadUrl } from "@/lib/storage";
@@ -81,15 +81,60 @@ async function assertCanRemove(actor: SessionUser, row: AttachmentRow): Promise<
     throw new ApiError("FORBIDDEN", "Only the person who uploaded a file can remove it");
   }
 
-  // A receipt behind an approved payment is part of the record now.
+  // Taking evidence off a record is editing it, and is allowed exactly as long as
+  // editing it is. Same gate as adding, so the set cannot change in one direction
+  // and not the other.
   if (row.entityType && row.entityId) {
-    const resource = await resolveEntity(actor.festId, row.entityType as EntityType, row.entityId);
-    const frozen = ["APPROVED", "PAID", "ON_HOLD", "CLOSED", "DECLINED", "BALANCE_APPROVED", "ADVANCE_PAID", "DELIVERED"];
-    if (resource.status && frozen.includes(resource.status)) {
-      throw new ApiError("VALIDATION_ERROR", `Files cannot be removed once the record is ${resource.status}`);
-    }
+    await assertRecordStillOpen(actor, row.entityType as EntityType, row.entityId, "removed from");
   }
 }
+
+/**
+ * Evidence is fixed from the moment it is handed over.
+ *
+ * The old rule froze at APPROVED, which left the window that matters wide open: a
+ * claim sitting in SUBMITTED or HOD_ENDORSED is precisely the one somebody is
+ * reading, and the receipt they endorsed could be swapped out from under them
+ * before Finance ever saw it. And the freeze only covered *removal* — anyone could
+ * still add to a record that was already PAID, so the file set behind a payment was
+ * never actually settled.
+ *
+ * Both directions now answer the same question, and it is not a new one: `can`
+ * already knows when a record is the submitter's to change (DRAFT and SENT_BACK,
+ * nothing else). A correction after submission goes back through send-back and
+ * resubmit, which bumps `version` and tells the reviewer the record moved — which is
+ * the whole point of having that flow.
+ */
+async function assertRecordStillOpen(
+  actor: SessionUser, type: EntityType, entityId: string, verb: string,
+): Promise<void> {
+  const editable: Partial<Record<EntityType, Action>> = {
+    REIMBURSEMENT: "reimbursement.edit",
+    VENDOR_REQUEST: "vendorRequest.edit",
+  };
+  const action = editable[type];
+  if (!action) return;
+
+  const resource = await resolveEntity(actor.festId, type, entityId);
+  if (can(actor, action, resource)) return;
+
+  // Distinguish "not yours" from "not any more", because they need different things
+  // done about them and a single message would send people to the wrong place.
+  if (resource.submitterId === actor.id && resource.status) {
+    throw new ApiError(
+      "VALIDATION_ERROR",
+      `This is ${humanState(resource.status)}, so its files cannot be ${verb} it. `
+      + "Ask for it to be sent back if the evidence needs correcting — that way whoever "
+      + "reviewed it knows it changed.",
+      { status: resource.status },
+    );
+  }
+  throw new ApiError("FORBIDDEN", `You cannot change the files on that record`);
+}
+
+const humanState = (status: string) =>
+  ({ SUBMITTED: "submitted", HOD_ENDORSED: "endorsed", APPROVED: "approved", PAID: "paid" }[status]
+    ?? `${status.toLowerCase().replace(/_/g, " ")}`);
 
 /**
  * PRD 20.2 step 3 — verify the object landed, hash it for F1, and (v1.1) kick off OCR.
@@ -109,6 +154,20 @@ export async function completeUpload(actor: SessionUser, id: string) {
   }
   if (!row.storageKey || row.storageKey === "pending") {
     throw new ApiError("VALIDATION_ERROR", "That attachment has no upload URL");
+  }
+
+  /*
+   * Checked again, before any of the work below, because the parent may have moved
+   * on since the URL was issued.
+   *
+   * `presign` names the parent up front so the permission question is answered
+   * before a bearer URL exists — but that answer is minutes old by the time the
+   * bytes land, and a claim submitted in between would quietly gain a receipt
+   * nobody reviewed. The upload into the bucket cannot be taken back; binding it to
+   * the record can, and the orphan sweep collects what is left.
+   */
+  if (row.entityType && row.entityId) {
+    await assertRecordStillOpen(actor, row.entityType as EntityType, row.entityId, "added to");
   }
 
   const meta = await objectExists(row.storageKey);
@@ -210,13 +269,22 @@ export async function assertCanAttachTo(actor: SessionUser, type: EntityType, id
     return;
   }
   const resource = await resolveEntity(actor.festId, type, id);
+  /*
+   * `|| resource.submitterId === actor.id` used to sit on the two money records
+   * here, and it defeated the whole check: `reimbursement.edit` already means
+   * "yours, and still DRAFT or SENT_BACK", and the fallback handed it back to the
+   * submitter in every state after that. A claim that was already PAID could still
+   * be given another receipt.
+   */
   const allowed =
     type === "LINE_ITEM" ? can(actor, "lineItem.document.manage", resource)
-    : type === "REIMBURSEMENT" ? can(actor, "reimbursement.edit", resource) || resource.submitterId === actor.id
-    : type === "VENDOR_REQUEST" ? can(actor, "vendorRequest.create", resource) || resource.submitterId === actor.id
+    : type === "REIMBURSEMENT" ? can(actor, "reimbursement.edit", resource)
+    : type === "VENDOR_REQUEST" ? can(actor, "vendorRequest.edit", resource)
     : type === "TICKET" ? can(actor, "ticket.view", resource)
     : type === "INCOME_ENTRY" ? can(actor, "income.manage", resource)
     : false;
+  // Says which of the two it is — "not yours" and "too late" are different problems.
+  if (!allowed) await assertRecordStillOpen(actor, type, id, "added to");
   if (!allowed) throw new ApiError("FORBIDDEN", "You cannot attach files to that record");
 }
 
