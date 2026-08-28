@@ -1223,6 +1223,33 @@ rows.push({
 });
 await hit("GET", "/team", { as: techMember, expect: 404, label: "/team (member refused)" });
 
+section("Reimbursement export");
+// Excel for the screen you are looking at. The scope is the file's, not the
+// caller's request — a Member asking for the fest gets their own claims.
+const xlsx = await hit("GET", "/api/v1/exports/reimbursements?format=xlsx", {
+  as: finance, label: "/api/v1/exports/reimbursements (xlsx)", raw: true,
+});
+rows.push({
+  group, method: "GET", path: "the download is a real workbook", as: "finance",
+  status: xlsx.status, expected: "content",
+  ok: xlsx.headers.get("content-type")?.includes("spreadsheetml") === true
+    && xlsx.headers.get("content-disposition")?.includes(".xlsx") === true,
+  note: String(xlsx.headers.get("content-disposition") ?? "").slice(0, 44),
+});
+const memberCsv = await hit("GET", "/api/v1/exports/reimbursements?format=csv", {
+  as: techMember, label: "/api/v1/exports/reimbursements (member)",
+});
+rows.push({
+  group, method: "GET", path: "a member's file holds only their own claims", as: "tech-member",
+  status: memberCsv.status, expected: "content",
+  // The Finance HOD's own claim is in this fest and must not be in their file.
+  ok: memberCsv.status === 200 && !memberCsv.text.includes("smoke@upi"),
+  note: "own claims only",
+});
+await hit("GET", "/api/v1/exports/reimbursements?format=html", {
+  as: finance, expect: [400, 422], label: "/api/v1/exports/reimbursements (html refused)",
+});
+
 section("Comments, flags, audit, notifications");
 await hit("POST", "/api/v1/comments", {
   as: finance, body: { entity_type: "REIMBURSEMENT", entity_id: claimId, body: "Checked against the quote." },
