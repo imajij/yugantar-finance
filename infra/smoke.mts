@@ -1226,6 +1226,70 @@ rows.push({
 });
 await hit("GET", "/team", { as: techMember, expect: 404, label: "/team (member refused)" });
 
+section("A claim belongs to one department");
+/*
+ * The line item says whose budget a claim spends; the department has to follow it.
+ * Over HTTP because the consequence is a routing one — who endorses it, whose queue
+ * it lands in — and that only shows up in the responses.
+ */
+const secondDept = await hit("POST", "/api/v1/departments", {
+  as: finance,
+  body: { name: "Stage Crew", slug: `crew-${randomBytes(3).toString("hex")}`, allocated_paise: 0 },
+  label: "/api/v1/departments (somewhere to move a claim to)",
+});
+const secondDeptId = required("second department id", String(secondDept.json?.id ?? ""));
+// Funded out of Tech rather than the reserve, which by this point in the walk is
+// mostly spoken for — and a transfer between two departments cannot exceed anything.
+await hit("POST", "/api/v1/budget-transfers", {
+  as: finance,
+  body: {
+    from_department_id: techId, to_department_id: secondDeptId,
+    amount_paise: 900000, reason: "Rigging is its own crew now",
+  },
+  label: "/api/v1/budget-transfers (funding the second department)",
+});
+const secondItem = await hit("POST", `/api/v1/departments/${secondDeptId}/line-items`, {
+  // Under the ₹10,000 document threshold, so it needs no quotation to receive a
+  // claim — this section is about which department the claim lands in, not 7.1.
+  as: finance, body: { name: "Rigging", planned_paise: 900000 },
+  label: "/api/v1/departments/{id}/line-items (second department)",
+});
+const secondItemId = required("second line item id", String(secondItem.json?.id ?? ""));
+
+const drifting = await hit("POST", "/api/v1/reimbursements", {
+  as: finance,
+  body: {
+    line_item_id: lineItemId, expense_type_id: expenseTypeId,
+    description: "Rope and shackles for the rigging",
+    transaction_on: "2026-11-21", amount_paise: 90000,
+    payee_name: "Finance HOD", payee_upi_id: "smoke@upi",
+    attachment_ids: [await receiptFor()], submit: false,
+  },
+  label: "/api/v1/reimbursements (draft against Tech)",
+});
+const driftingId = required("drifting claim id", String(drifting.json?.id ?? ""));
+
+const moved = await hit("PATCH", `/api/v1/reimbursements/${driftingId}`, {
+  as: finance, body: { line_item_id: secondItemId },
+  label: "/api/v1/reimbursements/{id} (charged to another department)",
+});
+rows.push({
+  group, method: "PATCH", path: "the department moved with the line item", as: "finance",
+  status: moved.status, expected: "content",
+  ok: moved.json?.departmentId === secondDeptId || moved.json?.department_id === secondDeptId,
+  note: String(moved.json?.departmentId ?? moved.json?.department_id ?? "?").slice(0, 8),
+});
+
+// And the department it left has no business endorsing it any more.
+await hit("POST", `/api/v1/reimbursements/${driftingId}/transitions`, {
+  as: finance, body: { action: "SUBMIT" },
+  label: "/api/v1/reimbursements/{id}/transitions SUBMIT (after the move)",
+});
+await hit("POST", `/api/v1/reimbursements/${driftingId}/transitions`, {
+  as: techHodEarly, expect: 403, body: { action: "ENDORSE" },
+  label: "/api/v1/reimbursements/{id}/transitions ENDORSE (old department refused)",
+});
+
 section("Idempotency");
 /*
  * Over HTTP, where a double-click actually happens. The key is claimed before the
