@@ -150,7 +150,7 @@ export function Allocate({
           disabled={busy || target === null || delta === 0 || reason.trim().length < 3}
           onClick={save}
           className="rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
         >
           {busy ? "Saving…" : "Save"}
         </button>

@@ -75,8 +75,8 @@ export default async function IncomePage() {
             <span className="min-w-0 flex-1 text-[14px]">{TYPE_LABEL[t.type] ?? t.type}</span>
             <div className="grid grid-cols-3 gap-4 sm:w-[320px] sm:shrink-0">
               <Figure label="Pledged" paise={t.pledgedPaise} />
-              <Figure label="Received" paise={t.receivedPaise} tone="var(--yg-lime)" />
-              <Figure label="Expected" paise={t.expectedPaise} tone="var(--yg-yellow)" />
+              <Figure label="Received" paise={t.receivedPaise} tone="var(--yg-accent)" />
+              <Figure label="Expected" paise={t.expectedPaise} tone="var(--yg-accent)" />
             </div>
           </div>
         ))}
@@ -143,7 +143,7 @@ export default async function IncomePage() {
                   )}
                 </div>
                 <div className="text-right text-sm">
-                  <p><Amount paise={e.receivedPaise} className="text-lime" /> of <Amount paise={e.pledgedPaise} /></p>
+                  <p><Amount paise={e.receivedPaise} className="text-accent" /> of <Amount paise={e.pledgedPaise} /></p>
                   {e.outstandingPaise > 0 && e.status !== "WRITTEN_OFF" && (
                     <p className="text-xs text-text-muted"><Amount paise={e.outstandingPaise} /> outstanding</p>
                   )}

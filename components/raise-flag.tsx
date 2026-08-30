@@ -137,7 +137,7 @@ export function RaiseConcern({
           disabled={busy || text.trim().length < 10}
           onClick={submit}
           className="rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
         >
           {busy ? "Raising…" : "Raise it"}
         </button>

@@ -51,7 +51,7 @@ export function availableTone(t: FiveNumbers): string {
   const share = t.allocatedPaise > 0 ? t.availablePaise / t.allocatedPaise : 1;
   if (share < 0.08) return "var(--flag-high-fg)";
   if (share < 0.18) return "var(--state-waiting-fg)";
-  return "var(--yg-lime)";
+  return "var(--yg-accent)";
 }
 
 /**
@@ -228,7 +228,7 @@ export function AvailableCard({
   const style = { background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" };
 
   return href
-    ? <a href={href} className={`${className} hover:border-lime`} style={style}>{body}</a>
+    ? <a href={href} className={`${className} hover:border-accent`} style={style}>{body}</a>
     : <div className={className} style={style}>{body}</div>;
 }
 

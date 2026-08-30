@@ -73,7 +73,7 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
   return (
     <>
       <p className="mb-3 flex items-center gap-2 text-[12.5px] text-text-muted">
-        <Link href="/budget" style={{ color: "var(--yg-pink)" }}>Budget</Link>
+        <Link href="/budget" style={{ color: "var(--yg-accent)" }}>Budget</Link>
         <ChevronRight size={13} aria-hidden />
         {dept.name}
       </p>
@@ -185,7 +185,7 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
                   <div className="flex flex-wrap items-center gap-2.5">
                     <Link
                       href={`/budget/${dept.id}/line-items/${i.id}`}
-                      className="text-[14px] font-medium hover:text-lime"
+                      className="text-[14px] font-medium hover:text-accent"
                     >
                       {i.name}
                     </Link>

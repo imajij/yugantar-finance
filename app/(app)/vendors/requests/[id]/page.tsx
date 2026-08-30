@@ -73,7 +73,7 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
         <p className="text-lg">{r.description}</p>
         <dl className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-2">
           <Row label="Vendor">
-            <Link href={`/vendors/${r.vendorId}`} style={{ color: "var(--yg-pink)" }}>{r.vendor.name}</Link>
+            <Link href={`/vendors/${r.vendorId}`} style={{ color: "var(--yg-accent)" }}>{r.vendor.name}</Link>
           </Row>
           <Row label="Line item">{r.lineItem?.name}</Row>
           <Row label="Requested">
@@ -117,7 +117,7 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
                 <td className="py-2 text-right">
                   {m.paidPaise === null
                     ? <span className="text-xs text-text-muted">unpaid</span>
-                    : <Amount paise={m.paidPaise} className="text-lime" />}
+                    : <Amount paise={m.paidPaise} className="text-accent" />}
                 </td>
                 <td className="tnum py-2 text-right text-xs text-text-muted">{m.paymentReference ?? "—"}</td>
               </tr>
@@ -157,7 +157,7 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
                   href={`/api/v1/attachments/${f.id}/url?redirect=1`}
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: "var(--yg-pink)" }}
+                  style={{ color: "var(--yg-accent)" }}
                 >
                   {f.name}
                 </a>

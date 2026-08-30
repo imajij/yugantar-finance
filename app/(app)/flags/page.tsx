@@ -99,7 +99,7 @@ export default async function FlagsPage({
             href={query({ status: s })}
             className="rounded-full px-3 py-1.5"
             style={s === status
-              ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
+              ? { background: "var(--yg-accent)", color: "var(--yg-on-accent)" }
               : { background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
           >
             {s.toLowerCase()}
@@ -112,7 +112,7 @@ export default async function FlagsPage({
             href={query({ severity: severity === s ? undefined : s })}
             className="rounded-full px-3 py-1.5"
             style={severity === s
-              ? { background: "var(--yg-pink)", color: "var(--yg-on-accent)" }
+              ? { background: "var(--yg-accent)", color: "var(--yg-on-accent)" }
               : { background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
           >
             {s.toLowerCase()}
@@ -125,7 +125,7 @@ export default async function FlagsPage({
             href={query({ source: source === s.key ? undefined : s.key })}
             className="rounded-full px-3 py-1.5"
             style={source === s.key
-              ? { background: "var(--yg-sky)", color: "var(--yg-on-accent)" }
+              ? { background: "var(--yg-info)", color: "var(--yg-on-accent)" }
               : { background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
           >
             {s.label}
@@ -138,7 +138,7 @@ export default async function FlagsPage({
             href={query({ entity_type: entityType === t ? undefined : t })}
             className="rounded-full px-3 py-1.5"
             style={entityType === t
-              ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
+              ? { background: "var(--yg-accent)", color: "var(--yg-on-accent)" }
               : { background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
           >
             {t.toLowerCase().replace("_", " ")}
@@ -171,7 +171,7 @@ export default async function FlagsPage({
                         {row.severity.toLowerCase()} · {row.raised_by_name ? "raised by hand" : row.rule}
                       </FlagChip>
                       {href ? (
-                        <Link href={href} className="text-sm" style={{ color: "var(--yg-pink)" }}>
+                        <Link href={href} className="text-sm" style={{ color: "var(--yg-accent)" }}>
                           {row.human_id}
                         </Link>
                       ) : (

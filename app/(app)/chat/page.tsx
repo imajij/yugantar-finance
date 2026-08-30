@@ -75,14 +75,14 @@ export default async function ChatIndex({
                 {c.mentions > 0 ? (
                   <span
                     className="tnum shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold"
-                    style={{ background: "var(--yg-pink)", color: "var(--yg-on-accent)" }}
+                    style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
                   >
                     {c.mentions}
                   </span>
                 ) : c.unread > 0 ? (
                   <span
                     className="tnum shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold"
-                    style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+                    style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
                   >
                     {c.unread > 99 ? "99+" : c.unread}
                   </span>

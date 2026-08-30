@@ -77,7 +77,7 @@ export function NewIncomeForm({ departments }: { departments: { id: string; name
       </div>
       <button type="submit" disabled={busy}
         className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
-        style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}>
+        style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}>
         {busy ? "Saving…" : "Record"}
       </button>
       {error && <p className="text-sm" style={{ color: "var(--flag-high-fg)" }}>{error}</p>}
@@ -120,7 +120,7 @@ export function IncomeActions({
         {!writtenOff && outstandingPaise > 0 && (
           <button onClick={() => setOpen(open === "tranche" ? null : "tranche")}
             className="rounded-full px-3.5 py-1.5 text-xs font-medium"
-            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}>
+            style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}>
             Record money received
           </button>
         )}
@@ -162,7 +162,7 @@ export function IncomeActions({
             className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)", color: "var(--yg-text)" }} />
           <button type="submit" disabled={busy}
             className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
-            style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}>
+            style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}>
             {busy ? "Saving…" : "Save"}
           </button>
         </form>

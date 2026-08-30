@@ -106,7 +106,7 @@ export default async function LineItemPage({
   return (
     <div className="max-w-3xl">
       <p className="mb-2 text-sm">
-        <Link href={`/budget/${deptId}`} style={{ color: "var(--yg-pink)" }}>← {dept?.name}</Link>
+        <Link href={`/budget/${deptId}`} style={{ color: "var(--yg-accent)" }}>← {dept?.name}</Link>
       </p>
       <PageTitle
         action={
@@ -177,7 +177,7 @@ export default async function LineItemPage({
                     target="_blank"
                     rel="noreferrer"
                     className="truncate text-[13.5px]"
-                    style={{ color: "var(--yg-pink)" }}
+                    style={{ color: "var(--yg-accent)" }}
                   >
                     {f.name}
                   </a>
@@ -186,7 +186,7 @@ export default async function LineItemPage({
                 {f.quoted != null && (
                   <span
                     className="tnum shrink-0 text-[13px]"
-                    style={{ color: f.quoted === lowest ? "var(--yg-lime)" : "var(--yg-text-muted)" }}
+                    style={{ color: f.quoted === lowest ? "var(--yg-accent)" : "var(--yg-text-muted)" }}
                   >
                     <Amount paise={f.quoted} />
                   </span>
@@ -227,7 +227,7 @@ export default async function LineItemPage({
           <ul className="mt-3 space-y-2 text-sm">
             {claims.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center justify-between gap-2">
-                <Link href={`/requests/${c.id}`} className="min-w-0" style={{ color: "var(--yg-pink)" }}>
+                <Link href={`/requests/${c.id}`} className="min-w-0" style={{ color: "var(--yg-accent)" }}>
                   <span className="tnum text-xs text-text-muted">{c.humanId}</span> {c.description}
                 </Link>
                 <span className="flex items-center gap-2">
@@ -238,7 +238,7 @@ export default async function LineItemPage({
             ))}
             {purchases.map((p) => (
               <li key={p.id} className="flex flex-wrap items-center justify-between gap-2">
-                <Link href={`/vendors/requests/${p.id}`} className="min-w-0" style={{ color: "var(--yg-pink)" }}>
+                <Link href={`/vendors/requests/${p.id}`} className="min-w-0" style={{ color: "var(--yg-accent)" }}>
                   <span className="tnum text-xs text-text-muted">{p.humanId}</span> {p.who} — {p.description}
                 </Link>
                 <span className="flex items-center gap-2">

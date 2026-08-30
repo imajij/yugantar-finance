@@ -173,7 +173,7 @@ export function NewRequestForm({
           <span
             key={n}
             className="h-1 flex-1 rounded-full"
-            style={{ background: n <= step ? "var(--yg-lime)" : "var(--yg-surface-2)" }}
+            style={{ background: n <= step ? "var(--yg-accent)" : "var(--yg-surface-2)" }}
           />
         ))}
       </div>
@@ -194,7 +194,7 @@ export function NewRequestForm({
           >
             <span
               className="flex size-[76px] items-center justify-center rounded-full"
-              style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+              style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
             >
               {uploading ? <Loader2 size={32} className="yg-spin" aria-hidden /> : <Camera size={32} aria-hidden />}
             </span>
@@ -235,7 +235,7 @@ export function NewRequestForm({
               className="flex items-baseline gap-2 rounded-[18px] px-4 py-3.5"
               style={{
                 background: "var(--yg-surface)",
-                border: `1px solid ${amountPaise && amountPaise > 0 ? "var(--yg-lime)" : "var(--yg-surface-2)"}`,
+                border: `1px solid ${amountPaise && amountPaise > 0 ? "var(--yg-accent)" : "var(--yg-surface-2)"}`,
               }}
             >
               <span className="tnum text-[26px] text-text-muted">₹</span>
@@ -264,7 +264,7 @@ export function NewRequestForm({
                 className="flex items-center justify-between gap-3 text-left"
               >
                 <span className="text-[14px] font-medium">{selected?.name ?? "Choose one"}</span>
-                <span className="flex items-center gap-1.5 text-[12px]" style={{ color: "var(--yg-sky)" }}>
+                <span className="flex items-center gap-1.5 text-[12px]" style={{ color: "var(--yg-info)" }}>
                   Change <ChevronDown size={14} aria-hidden />
                 </span>
               </button>
@@ -273,7 +273,7 @@ export function NewRequestForm({
                 <>
                   <AvailableInline totals={{ ...selected, allocatedPaise: selected.plannedPaise }} />
                   <p className="text-[12px] text-text-soft">
-                    <span className="tnum" style={{ color: remaining !== null && remaining < 0 ? "var(--flag-high-fg)" : "var(--yg-lime)" }}>
+                    <span className="tnum" style={{ color: remaining !== null && remaining < 0 ? "var(--flag-high-fg)" : "var(--yg-accent)" }}>
                       {formatPaise(remaining ?? selected.availablePaise)}
                     </span>{" "}
                     {remaining !== null && remaining < 0 ? "over this line item after the claim" : "available after this claim"}
@@ -316,7 +316,7 @@ export function NewRequestForm({
                     className="flex h-[var(--row-h)] items-center rounded-full px-4 text-[13px]"
                     style={
                       on
-                        ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
+                        ? { background: "var(--yg-accent)", color: "var(--yg-on-accent)" }
                         : { border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }
                     }
                   >
@@ -479,7 +479,7 @@ function ReceiptList({
           Uploaded{receipts.length > 1 ? ` · ${receipts.length} pages` : ""}
         </span>
       </span>
-      <label className="tap cursor-pointer" style={{ color: "var(--yg-pink)" }}>
+      <label className="tap cursor-pointer" style={{ color: "var(--yg-accent)" }}>
         <Plus size={18} aria-hidden />
         <span className="sr-only">Add another page</span>
         <input

@@ -92,7 +92,7 @@ export default async function VendorPage({ params }: { params: Promise<{ id: str
         <div className="space-y-2">
           {requests.map((r) => (
             <Link key={r.id} href={`/vendors/requests/${r.id}`} className="block">
-              <Card className="hover:border-lime">
+              <Card className="hover:border-accent">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2">
@@ -121,7 +121,7 @@ function Stat({ label, paise, tone }: { label: string; paise: number; tone?: boo
   return (
     <Card>
       <p className="font-display text-xs tracking-wide text-text-muted uppercase">{label}</p>
-      <p className="tnum mt-2 text-xl" style={{ color: tone && paise > 0 ? "var(--yg-yellow)" : "var(--yg-text)" }}>
+      <p className="tnum mt-2 text-xl" style={{ color: tone && paise > 0 ? "var(--yg-accent)" : "var(--yg-text)" }}>
         <Amount paise={paise} />
       </p>
     </Card>

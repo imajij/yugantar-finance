@@ -133,7 +133,7 @@ export function ChannelSidebar({
               disabled={busy || name.trim().length < 2}
               onClick={create}
               className="rounded-lg px-2.5 text-xs font-medium disabled:opacity-40"
-              style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+              style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
             >
               Add
             </button>
@@ -247,14 +247,14 @@ function Row({
         {channel.mentions > 0 ? (
           <span
             className="tnum rounded-full px-1.5 text-[11px] font-semibold"
-            style={{ background: "var(--yg-pink)", color: "var(--yg-on-accent)" }}
+            style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
           >
             {channel.mentions}
           </span>
         ) : channel.unread > 0 && !oversight ? (
           <span
             className="tnum rounded-full px-1.5 text-[11px] font-semibold"
-            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+            style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
           >
             {channel.unread > 99 ? "99+" : channel.unread}
           </span>

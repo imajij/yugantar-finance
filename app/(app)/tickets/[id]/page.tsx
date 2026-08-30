@@ -112,7 +112,7 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
           {t.cycle && <Row label="Cycle">{t.cycle}</Row>}
           {t.parent_human_id && (
             <Row label="Sub-ticket of">
-              <Link href={`/tickets/${t.parentId}`} className="hover:text-lime">
+              <Link href={`/tickets/${t.parentId}`} className="hover:text-accent">
                 <span className="tnum">{t.parent_human_id}</span> {t.parent_title}
               </Link>
             </Row>
@@ -207,7 +207,7 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
                 >
                   {stateLabel(c.status)}
                 </span>
-                <Link href={`/tickets/${c.id}`} className="min-w-0 truncate hover:text-lime">
+                <Link href={`/tickets/${c.id}`} className="min-w-0 truncate hover:text-accent">
                   <span className="tnum mr-1.5 text-xs text-text-muted">{c.humanId}</span>
                   {c.title}
                 </Link>

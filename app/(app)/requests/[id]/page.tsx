@@ -108,7 +108,7 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
                   href={`/api/v1/attachments/${r.id}/url?redirect=1`}
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: "var(--yg-pink)" }}
+                  style={{ color: "var(--yg-accent)" }}
                 >
                   {r.name}
                 </a>

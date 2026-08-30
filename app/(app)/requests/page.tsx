@@ -81,7 +81,7 @@ export default async function RequestsPage() {
             <Link
               href="/requests/new"
               className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium"
-              style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
+              style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
             >
               <Plus size={15} aria-hidden /> New request
             </Link>
@@ -96,7 +96,7 @@ export default async function RequestsPage() {
           icon={<Receipt size={24} aria-hidden />}
           title="No reimbursements yet"
           action={
-            <Link href="/requests/new" className={buttonClass("primary")} style={buttonStyle("primary")}>
+            <Link href="/requests/new" className={buttonClass()} style={buttonStyle("primary")}>
               <Camera size={16} aria-hidden /> Photograph a receipt
             </Link>
           }
@@ -116,7 +116,7 @@ export default async function RequestsPage() {
             <Link
               key={r.id}
               href={`/requests/${r.id}`}
-              className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 hover:border-lime sm:flex-row sm:items-center sm:gap-4"
+              className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 hover:border-accent sm:flex-row sm:items-center sm:gap-4"
               style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
             >
               <div className="flex min-w-0 flex-1 flex-col gap-1.5">

@@ -170,7 +170,7 @@ export function Conversation({
             department channel is private to the department; this is the sentence
             that stops them being wrong about it later.
           */}
-          <p className="mt-1.5 flex items-center gap-2 text-[12px]" style={{ color: "var(--yg-sky)" }}>
+          <p className="mt-1.5 flex items-center gap-2 text-[12px]" style={{ color: "var(--yg-info)" }}>
             <Eye size={14} aria-hidden />
             Administrators can read this channel. Every time one opens a channel they
             are not in, it is recorded in the audit log.
@@ -362,7 +362,7 @@ function MessageRow({
                         <Link
                           href={href}
                           className="block rounded-lg px-2 py-1"
-                          style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-pink)" }}
+                          style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-accent)" }}
                         >
                           {inner}
                         </Link>
@@ -420,7 +420,7 @@ function MessageRow({
             type="button"
             onClick={onReply}
             className="mt-1 text-[11px]"
-            style={{ color: "var(--yg-sky)" }}
+            style={{ color: "var(--yg-info)" }}
           >
             {m.replyCount} {m.replyCount === 1 ? "reply" : "replies"}
           </button>
@@ -745,7 +745,7 @@ function Composer({
           disabled={busy || (!body.trim() && files.length === 0 && links.length === 0)}
           onClick={send}
           className="tap shrink-0 rounded-full disabled:opacity-40"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
           aria-label="Send"
         >
           <Send size={17} aria-hidden />

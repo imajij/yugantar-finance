@@ -168,7 +168,7 @@ export function AskForBudget({
           disabled={busy || target === null || delta === 0 || reason.trim().length < 10}
           onClick={submit}
           className="rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
         >
           {busy ? "Sending…" : "Send to Finance"}
         </button>
@@ -256,7 +256,7 @@ export function DecideAllocation({
         title={decision === "APPROVE" ? `Set ${departmentName} to ${formatPaise(requestedPaise)}?` : `Decline ${departmentName}'s request?`}
         consequence={
           decision === "APPROVE"
-            ? <>This moves <span style={{ color: "var(--yg-sky)" }}>{formatPaise(Math.abs(delta))}</span>{" "}
+            ? <>This moves <span style={{ color: "var(--yg-info)" }}>{formatPaise(Math.abs(delta))}</span>{" "}
                 {delta > 0 ? "out of Reserve" : "back to Reserve"} and records the transfer. The arithmetic is
                 checked now, not when they asked — if Reserve no longer covers it, this will be refused.</>
             : <>{departmentName} stays at {formatPaise(currentPaise)}. {requestedBy} is notified and reads

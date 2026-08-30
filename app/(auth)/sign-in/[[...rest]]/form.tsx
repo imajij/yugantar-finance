@@ -6,7 +6,7 @@ import { Mail } from "lucide-react";
 const INPUT =
   "w-full rounded-lg px-3.5 py-2.5 text-sm bg-[var(--yg-bg)] border border-[var(--yg-surface-2)] "
   + "text-[var(--yg-text)] placeholder:text-[var(--yg-text-muted)] focus:outline-none "
-  + "focus:border-[var(--yg-lime)]";
+  + "focus:border-[var(--yg-accent)]";
 
 /**
  * Ask for a sign-in link.
@@ -61,7 +61,7 @@ export function SignInForm({
         className="mt-10 w-full rounded-xl p-6 text-center"
         style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
       >
-        <Mail size={22} aria-hidden className="mx-auto text-lime" />
+        <Mail size={22} aria-hidden className="mx-auto text-accent" />
         <h2 className="mt-3 text-sm font-medium text-text">Check your inbox</h2>
         <p className="mt-2 text-sm text-text-muted">
           If <span className="text-text-soft">{email}</span> has been invited to this fest, a
@@ -70,7 +70,7 @@ export function SignInForm({
         {!deliversEmail && (
           <p className="mt-3 rounded-lg p-3 text-xs text-text-muted" style={{ background: "var(--yg-bg)" }}>
             No mail provider is configured on this deployment, so the link was written to the
-            server log instead. Set <code className="text-lime">RESEND_API_KEY</code> to send it
+            server log instead. Set <code className="text-accent">RESEND_API_KEY</code> to send it
             for real.
           </p>
         )}
@@ -78,7 +78,7 @@ export function SignInForm({
           type="button"
           onClick={() => setState("idle")}
           className="mt-4 text-sm"
-          style={{ color: "var(--yg-pink)" }}
+          style={{ color: "var(--yg-accent)" }}
         >
           Use a different address
         </button>
@@ -109,7 +109,7 @@ export function SignInForm({
         type="submit"
         disabled={state === "sending" || email.trim().length < 5}
         className="mt-4 w-full rounded-lg px-4 py-2.5 text-sm font-medium disabled:opacity-40"
-        style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
+        style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
       >
         {state === "sending" ? "Sending…" : "Email me a sign-in link"}
       </button>

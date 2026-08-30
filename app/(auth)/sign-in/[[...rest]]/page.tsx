@@ -32,11 +32,10 @@ export default async function SignInPage({
       <div className="landing-nav h-1.5 w-full" />
 
       <main className="mx-auto flex max-w-md flex-col items-center px-6 py-16 sm:py-20">
-        <p className="font-display text-sm tracking-[0.3em] text-lime uppercase">Yugaantar &rsquo;26</p>
-        <h1
-          className="font-display mt-4 text-center text-4xl leading-tight"
-          style={{ color: "var(--yg-yellow-title)" }}
-        >
+        <p className="font-display text-sm tracking-[0.3em] text-accent uppercase">Yugaantar &rsquo;26</p>
+        {/* Plain, and smaller. A coloured 36px wordmark was the loudest thing in
+            the product on the one screen that is nobody's destination. */}
+        <h1 className="mt-3 text-center text-[26px] leading-tight font-semibold">
           Finance &amp; Operations
         </h1>
         <p className="mt-4 text-center text-text-soft">

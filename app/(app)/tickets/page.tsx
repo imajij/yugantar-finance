@@ -77,7 +77,7 @@ export default async function TicketsPage({
             <Link
               href="/tickets/new"
               className="rounded-full px-4 py-2 text-sm font-medium"
-              style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
+              style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
             >
               New ticket
             </Link>
