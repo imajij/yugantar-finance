@@ -156,7 +156,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                   key={item.href}
                   href={item.href}
                   label={item.label}
-                  icon={item.icon}
+                  icon={<item.icon size={16} />}
                   hot={item.hot}
                   count={item.badge ? counts[item.badge] : 0}
                 />
@@ -166,7 +166,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
           <div className="flex flex-col gap-px">
             <p className="meta-label px-2 pb-1">You</p>
-            <NavLink href="/notifications" label="Notifications" icon={Bell} count={unread} />
+            <NavLink href="/notifications" label="Notifications" icon={<Bell size={16} />} count={unread} />
           </div>
         </nav>
 
@@ -232,7 +232,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           style={{ background: "var(--yg-surface)", borderTop: "1px solid var(--yg-surface-2)" }}
           aria-label="Primary"
         >
-          {tabs.map((tab) => <TabLink key={tab.href} {...tab} />)}
+          {tabs.map(({ href, label, icon: Icon }) => (
+            <TabLink key={href} href={href} label={label} icon={<Icon size={18} />} />
+          ))}
         </nav>
       </div>
     </div>

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 /**
  * A row of the sidebar, and the one that knows where you are.
@@ -15,13 +15,18 @@ import type { LucideIcon } from "lucide-react";
  * Matching is prefix-based on the segment, so `/requests/new` and
  * `/requests/{id}` both light up Reimbursements. Exact matching would go dark the
  * moment you opened anything, which is precisely when you want the map.
+ *
+ * `icon` is a rendered element, not a component. A Lucide icon is a `forwardRef`
+ * component and components cannot cross the server-to-client boundary — the layout
+ * renders it and hands over the result. TypeScript accepts either happily, so this
+ * is a comment rather than a type.
  */
 export function NavLink({
-  href, label, icon: Icon, count = 0, hot = false, onNavigate,
+  href, label, icon, count = 0, hot = false, onNavigate,
 }: {
   href: string;
   label: string;
-  icon: LucideIcon;
+  icon: ReactNode;
   count?: number;
   /** An amber badge is a queue with your name on it, not a tally. */
   hot?: boolean;
@@ -30,7 +35,7 @@ export function NavLink({
   const active = useIsActive(href);
   return (
     <Link href={href} className="nav-item" data-active={active} onClick={onNavigate}>
-      <Icon size={16} className="shrink-0" aria-hidden />
+      <span className="flex shrink-0 items-center" aria-hidden>{icon}</span>
       <span className="flex-1 truncate">{label}</span>
       {count > 0 && (
         <span
@@ -51,8 +56,8 @@ export function NavLink({
 
 /** The bottom bar on a phone. Same question, a shape that suits a thumb. */
 export function TabLink({
-  href, label, icon: Icon,
-}: { href: string; label: string; icon: LucideIcon }) {
+  href, label, icon,
+}: { href: string; label: string; icon: ReactNode }) {
   const active = useIsActive(href);
   return (
     <Link
@@ -65,7 +70,7 @@ export function TabLink({
         className="flex h-7 w-11 items-center justify-center rounded-[var(--r-control)]"
         style={{ background: active ? "var(--yg-surface-2)" : "transparent" }}
       >
-        <Icon size={18} aria-hidden />
+        <span aria-hidden>{icon}</span>
       </span>
       {label}
     </Link>
