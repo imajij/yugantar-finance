@@ -69,7 +69,7 @@ export default async function BudgetPage() {
         }
         action={
           can(user, "budgetReview.view", { festId: user.festId }) && (
-            <Link href="/budget/review" className={buttonClass("ghost")} style={buttonStyle("ghost")}>
+            <Link href="/budget/review" className={buttonClass()} style={buttonStyle("ghost")}>
               Review line items
             </Link>
           )
@@ -175,7 +175,7 @@ export default async function BudgetPage() {
             >
               <div className="flex min-w-0 flex-col gap-2">
                 <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-                  <Link href={`/budget/${d.id}`} className="text-[14.5px] font-medium hover:text-lime">
+                  <Link href={`/budget/${d.id}`} className="text-[14.5px] font-medium hover:text-accent">
                     {d.name}
                   </Link>
                   <span className="tnum text-[16px] font-semibold" style={{ color: availableTone(t) }}>

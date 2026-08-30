@@ -97,7 +97,7 @@ export function Labels({
             if (await send("/api/v1/ticket-labels", "POST", { name: name.trim(), color })) setName("");
           }}
           className="rounded-full px-3 py-1.5 text-xs font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
         >
           Add
         </button>
@@ -220,7 +220,7 @@ export function Projects({
             }
           }}
           className="rounded-full px-3 py-1.5 text-xs font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
         >
           Add
         </button>
@@ -322,7 +322,7 @@ export function Cycles({
             }
           }}
           className="rounded-full px-3 py-1.5 text-xs font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
         >
           Add
         </button>
@@ -338,13 +338,13 @@ export function Cycles({
             className="flex flex-wrap items-center justify-between gap-3 rounded-xl px-3 py-2.5"
             style={{
               background: "var(--yg-surface)",
-              border: `1px solid ${c.is_current ? "var(--yg-lime)" : "var(--yg-surface-2)"}`,
+              border: `1px solid ${c.is_current ? "var(--yg-accent)" : "var(--yg-surface-2)"}`,
             }}
           >
             <div>
               <p className="text-sm">
                 {c.name}
-                {c.is_current && <span className="ml-2 text-xs text-lime">current</span>}
+                {c.is_current && <span className="ml-2 text-xs text-accent">current</span>}
               </p>
               <p className="tnum text-xs text-text-muted">
                 {c.starts_on} → {c.ends_on} · {c.done_count}/{c.ticket_count} done
@@ -514,7 +514,7 @@ export function Templates({
           />
         </div>
       ) : (
-        <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-pink)" }}>
+        <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-accent)" }}>
           + New template
         </button>
       )}
@@ -674,7 +674,7 @@ function TemplateForm({
         <button
           type="submit" disabled={busy}
           className="rounded-full px-4 py-1.5 text-xs font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
         >
           {template ? "Save" : "Create template"}
         </button>

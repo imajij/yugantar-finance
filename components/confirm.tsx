@@ -81,7 +81,7 @@ function Dialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [ready, busy, text, onConfirm, onCancel]);
 
-  const confirmBg = tone === "destructive" ? "var(--flag-high-fg)" : "var(--yg-yellow)";
+  const confirmBg = tone === "destructive" ? "var(--flag-high-fg)" : "var(--yg-accent)";
 
   return (
     <div
@@ -113,7 +113,7 @@ function Dialog({
             <div className="flex items-baseline justify-between gap-3">
               <label htmlFor="confirm-reason" className="text-[12.5px]">
                 {reason.label}{" "}
-                <span style={{ color: "var(--yg-pink)" }}>— required, permanent</span>
+                <span style={{ color: "var(--yg-accent)" }}>— required, permanent</span>
               </label>
               <span className="tnum text-[11px] text-text-muted">{text.length} / {max}</span>
             </div>
@@ -128,7 +128,7 @@ function Dialog({
               className="min-h-[86px] rounded-[var(--r-control)] px-4 py-3.5 text-[13.5px] leading-relaxed outline-none"
               style={{
                 background: "var(--yg-surface)",
-                border: `1px solid ${text.trim().length >= min ? "var(--yg-surface-2)" : "var(--yg-pink)"}`,
+                border: `1px solid ${text.trim().length >= min ? "var(--yg-surface-2)" : "var(--yg-accent)"}`,
                 color: "var(--yg-text)",
               }}
             />

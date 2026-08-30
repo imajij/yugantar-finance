@@ -124,7 +124,7 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
       <button
         type="submit" disabled={busy || totalPaise <= 0}
         className="rounded-full px-5 py-2.5 text-sm font-medium disabled:opacity-50"
-        style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
+        style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
       >
         {busy ? "Sending…" : "Submit for approval"}
       </button>

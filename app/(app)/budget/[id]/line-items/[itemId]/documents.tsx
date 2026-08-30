@@ -113,7 +113,7 @@ export function AddDocument({ lineItemId, canManage }: { lineItemId: string; can
             className="flex h-9 items-center gap-1.5 rounded-full px-4 text-[12.5px]"
             style={
               kind === k
-                ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
+                ? { background: "var(--yg-accent)", color: "var(--yg-on-accent)" }
                 : { border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }
             }
           >

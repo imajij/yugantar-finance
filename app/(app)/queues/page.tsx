@@ -149,7 +149,7 @@ async function Queue({
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
                   <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Link href={`/requests/${r.id}`} className="tnum text-[11.5px] text-text-muted hover:text-lime">
+                      <Link href={`/requests/${r.id}`} className="tnum text-[11.5px] text-text-muted hover:text-accent">
                         {r.humanId}
                       </Link>
                       <StateChip state={r.status} />
@@ -159,7 +159,7 @@ async function Queue({
                         </FlagChip>
                       )}
                     </div>
-                    <Link href={`/requests/${r.id}`} className="text-[14px] hover:text-lime">
+                    <Link href={`/requests/${r.id}`} className="text-[14px] hover:text-accent">
                       {r.description}
                     </Link>
                     <span className="text-[12px] text-text-muted">

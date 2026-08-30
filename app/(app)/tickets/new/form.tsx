@@ -246,7 +246,7 @@ export function TicketForm({
       <button
         type="submit" disabled={busy}
         className="rounded-full px-5 py-2.5 text-sm font-medium disabled:opacity-50"
-        style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}
+        style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
       >
         {busy ? "Sending…" : "Send request"}
       </button>
@@ -271,7 +271,7 @@ function TemplateChip({
       type="button" aria-pressed={on} onClick={onClick} title={title}
       className="rounded-full px-3 py-1.5 text-xs"
       style={on
-        ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)", border: "1px solid var(--yg-lime)" }
+        ? { background: "var(--yg-accent)", color: "var(--yg-on-accent)", border: "1px solid var(--yg-accent)" }
         : { border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
     >
       {children}

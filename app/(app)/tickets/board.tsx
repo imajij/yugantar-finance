@@ -496,7 +496,7 @@ export function Board(props: BoardProps) {
             className="flex h-[var(--row-h)] items-center rounded-full px-4 text-[13px]"
             style={
               scope === s.key
-                ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
+                ? { background: "var(--yg-accent)", color: "var(--yg-on-accent)" }
                 : { border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }
             }
           >
@@ -698,7 +698,7 @@ export function Board(props: BoardProps) {
           style={{ border: "1px dashed var(--yg-surface-2)" }}
         >
           Nothing here.{" "}
-          <Link href="/tickets/new" className="text-lime">Ask a department for something</Link>
+          <Link href="/tickets/new" className="text-accent">Ask a department for something</Link>
           {" "}or widen the filters.
         </div>
       ) : layout === "board" ? (
@@ -709,7 +709,7 @@ export function Board(props: BoardProps) {
               className="flex w-72 shrink-0 flex-col rounded-[var(--r-shell)] p-3"
               style={{
                 background: dropTarget === g.key ? "var(--yg-surface-2)" : "var(--yg-surface)",
-                border: `1px solid ${dropTarget === g.key ? "var(--yg-lime)" : "var(--yg-surface-2)"}`,
+                border: `1px solid ${dropTarget === g.key ? "var(--yg-accent)" : "var(--yg-surface-2)"}`,
               }}
               onDragOver={(e) => {
                 if (!g.category || !dragging) return;
@@ -851,7 +851,7 @@ export function Board(props: BoardProps) {
           aria-label={`${selected.size} tickets selected`}
         >
           <span className="flex items-center gap-2 px-2 text-[13px]">
-            <SquareCheckBig size={15} style={{ color: "var(--yg-sky)" }} aria-hidden />
+            <SquareCheckBig size={15} style={{ color: "var(--yg-info)" }} aria-hidden />
             <span className="tnum">{selected.size}</span> selected
           </span>
 
@@ -959,7 +959,7 @@ function Row({
 
   // Focus is a ring, selection is a fill. Conflating them is why multi-select in
   // most tools is confusing: you cannot tell what Enter will act on.
-  const edge = taken ? "var(--yg-sky)" : focused ? "var(--yg-lime)" : "var(--yg-surface-2)";
+  const edge = taken ? "var(--yg-info)" : focused ? "var(--yg-accent)" : "var(--yg-surface-2)";
   const frame = card ? "rounded-[var(--r-card)] p-[15px]" : "px-4 py-3";
   const style = card
     ? {
@@ -970,7 +970,7 @@ function Row({
     : {
         background: taken ? "var(--yg-surface-2)" : focused ? "var(--yg-surface-2)" : "var(--yg-surface)",
         borderBottom: "1px solid var(--yg-surface-2)",
-        boxShadow: focused && !taken ? "inset 2px 0 0 var(--yg-lime)" : undefined,
+        boxShadow: focused && !taken ? "inset 2px 0 0 var(--yg-accent)" : undefined,
         opacity: pending ? 0.55 : 1,
       };
 
@@ -989,7 +989,7 @@ function Row({
       {dropMarker && (
         <span
           className="absolute -top-[5px] right-0 left-0 h-0.5 rounded-full"
-          style={{ background: "var(--yg-lime)" }}
+          style={{ background: "var(--yg-accent)" }}
           aria-hidden
         />
       )}
@@ -1066,7 +1066,7 @@ function Row({
         <Link
           href={`/tickets/${t.id}`}
           onClick={(e) => e.stopPropagation()}
-          className={`${card ? "mt-1.5 block" : "min-w-0 flex-1 truncate"} text-sm hover:text-lime`}
+          className={`${card ? "mt-1.5 block" : "min-w-0 flex-1 truncate"} text-sm hover:text-accent`}
         >
           {t.parent_human_id && (
             <span className="tnum mr-1 text-xs text-text-muted">{t.parent_human_id} ›</span>

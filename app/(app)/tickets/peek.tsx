@@ -126,7 +126,7 @@ export function Peek({
         <Link
           href={`/tickets/${ticket.id}`}
           className="flex h-[var(--row-h)] items-center justify-center gap-2 rounded-full text-[13.5px] font-bold"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
         >
           Open {ticket.human_id}
         </Link>

@@ -79,7 +79,7 @@ async function MemberOverview({ user }: { user: SessionUser }) {
             : "Nothing of yours is in the queue."
         }
         action={
-          <Link href="/requests/new" className={buttonClass("hero")} style={buttonStyle("hero")}>
+          <Link href="/requests/new" className={buttonClass()} style={buttonStyle("hero")}>
             <Camera size={17} aria-hidden />
             Claim a receipt
           </Link>
@@ -93,7 +93,7 @@ async function MemberOverview({ user }: { user: SessionUser }) {
           icon={<Receipt size={24} aria-hidden />}
           title="Nothing claimed yet"
           action={
-            <Link href="/requests/new" className={buttonClass("primary")} style={buttonStyle("primary")}>
+            <Link href="/requests/new" className={buttonClass()} style={buttonStyle("primary")}>
               <Camera size={16} aria-hidden /> Photograph a receipt
             </Link>
           }
@@ -106,7 +106,7 @@ async function MemberOverview({ user }: { user: SessionUser }) {
         <section className="flex flex-col gap-3">
           <SectionHeading
             aside={
-              <Link href="/requests" className="text-[12.5px]" style={{ color: "var(--yg-pink)" }}>
+              <Link href="/requests" className="text-[12.5px]" style={{ color: "var(--yg-accent)" }}>
                 All of yours →
               </Link>
             }
@@ -118,7 +118,7 @@ async function MemberOverview({ user }: { user: SessionUser }) {
               <Link
                 key={r.id}
                 href={`/requests/${r.id}`}
-                className="flex flex-col gap-2 rounded-[var(--r-card)] p-4 hover:border-lime sm:flex-row sm:items-center sm:gap-4"
+                className="flex flex-col gap-2 rounded-[var(--r-card)] p-4 hover:border-accent sm:flex-row sm:items-center sm:gap-4"
                 style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
               >
                 <span className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -138,18 +138,18 @@ async function MemberOverview({ user }: { user: SessionUser }) {
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <Link
           href="/tickets"
-          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-lime"
+          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-accent"
           style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
         >
-          <CircleDot size={18} style={{ color: "var(--yg-lime)" }} aria-hidden />
+          <CircleDot size={18} style={{ color: "var(--yg-accent)" }} aria-hidden />
           <span className="text-[13.5px]">Ask {user.departmentName}&rsquo;s head for something</span>
         </Link>
         <Link
           href="/chat"
-          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-lime"
+          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-accent"
           style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
         >
-          <MessagesSquare size={18} style={{ color: "var(--yg-lime)" }} aria-hidden />
+          <MessagesSquare size={18} style={{ color: "var(--yg-accent)" }} aria-hidden />
           <span className="text-[13.5px]">{user.departmentName}&rsquo;s channels</span>
         </Link>
       </div>
@@ -227,7 +227,7 @@ async function FestOverview({ user }: { user: SessionUser }) {
         }
         action={
           waiting > 0 && (
-            <Link href={queue.href} className={buttonClass("hero")} style={buttonStyle("hero")}>
+            <Link href={queue.href} className={buttonClass()} style={buttonStyle("hero")}>
               <CheckCheck size={17} aria-hidden />
               {queue.verb === "pay" ? `Pay ${waiting}` : `Approve ${waiting}`}
             </Link>
@@ -276,7 +276,7 @@ async function FestOverview({ user }: { user: SessionUser }) {
                 <li key={q.id}>
                   <Link
                     href={q.kind === "REIMBURSEMENT" ? `/requests/${q.id}` : `/vendors/requests/${q.id}`}
-                    className="flex items-center gap-3 rounded-[var(--r-control)] p-[11px_14px] hover:border-lime"
+                    className="flex items-center gap-3 rounded-[var(--r-control)] p-[11px_14px] hover:border-accent"
                     style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
                   >
                     <span
@@ -318,7 +318,7 @@ async function FestOverview({ user }: { user: SessionUser }) {
             {nearCap.map((t) => (
               <li key={t.departmentId} className="flex flex-col gap-1.5">
                 <div className="flex justify-between gap-3">
-                  <Link href={`/budget/${t.departmentId}`} className="text-[13px] hover:text-lime">
+                  <Link href={`/budget/${t.departmentId}`} className="text-[13px] hover:text-accent">
                     {t.name}
                   </Link>
                   <span className="tnum text-[12.5px]" style={{ color: availableTone(t) }}>
@@ -369,7 +369,7 @@ async function FestOverview({ user }: { user: SessionUser }) {
             })}
           </ul>
           {flags.length > 0 && (
-            <Link href="/flags" className="mt-3 inline-block text-[12.5px]" style={{ color: "var(--yg-pink)" }}>
+            <Link href="/flags" className="mt-3 inline-block text-[12.5px]" style={{ color: "var(--yg-accent)" }}>
               All flags →
             </Link>
           )}
@@ -395,7 +395,7 @@ async function FestOverview({ user }: { user: SessionUser }) {
             ))}
           </ul>
           {can(user, "audit.view", { festId: user.festId }) && (
-            <p className="mt-3 flex items-center gap-2 text-[12px]" style={{ color: "var(--yg-sky)" }}>
+            <p className="mt-3 flex items-center gap-2 text-[12px]" style={{ color: "var(--yg-info)" }}>
               <Shield size={14} aria-hidden />
               You see the full log as an administrator
             </p>
@@ -404,7 +404,7 @@ async function FestOverview({ user }: { user: SessionUser }) {
       </div>
 
       <div className="mt-8">
-        <SectionHeading aside={<Link href="/budget" className="text-[12.5px]" style={{ color: "var(--yg-pink)" }}>All departments →</Link>}>
+        <SectionHeading aside={<Link href="/budget" className="text-[12.5px]" style={{ color: "var(--yg-accent)" }}>All departments →</Link>}>
           Departments
         </SectionHeading>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -458,7 +458,7 @@ async function DepartmentOverview({ user }: { user: SessionUser }) {
             : `What ${user.departmentName} has left, and what it is committed to.`
         }
         action={
-          <Link href="/requests/new" className={buttonClass("hero")} style={buttonStyle("hero")}>
+          <Link href="/requests/new" className={buttonClass()} style={buttonStyle("hero")}>
             <Camera size={17} aria-hidden />
             Claim a receipt
           </Link>
@@ -480,18 +480,18 @@ async function DepartmentOverview({ user }: { user: SessionUser }) {
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <Link
           href={`/budget/${user.departmentId}`}
-          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-lime"
+          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-accent"
           style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
         >
-          <Wallet size={18} style={{ color: "var(--yg-lime)" }} aria-hidden />
+          <Wallet size={18} style={{ color: "var(--yg-accent)" }} aria-hidden />
           <span className="text-[13.5px]">Line items — what is left in each pot</span>
         </Link>
         <Link
           href="/requests"
-          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-lime"
+          className="flex items-center gap-3 rounded-[var(--r-card)] p-4 hover:border-accent"
           style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
         >
-          <Receipt size={18} style={{ color: "var(--yg-lime)" }} aria-hidden />
+          <Receipt size={18} style={{ color: "var(--yg-accent)" }} aria-hidden />
           <span className="text-[13.5px]">
             {waiting > 0 ? `${waiting} to endorse` : "Your reimbursements"}
           </span>

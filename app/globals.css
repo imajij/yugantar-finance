@@ -1,73 +1,106 @@
 @import "tailwindcss";
 
 /*
- * Yugaantar brand tokens — PRD 9.1, read from yugaantar.org.
- * Dark theme only in MVP (21.4). Emails and PDF exports are light regardless.
+ * The design system.
+ *
+ * Rebuilt around one idea: this is a tool somebody reads a hundred rows of at two
+ * in the morning during fest week, not a poster. The old palette — lime, yellow and
+ * pink on deep navy, a display face on every heading, 20px radii, 44px everything —
+ * announced itself on every screen and made the actual content the quietest thing
+ * on it. What replaced it is the grammar Linear uses, and for Linear's reasons:
+ *
+ *   - Near-black neutrals, so content is the only thing with colour.
+ *   - One accent, used sparingly. Colour that means something cannot also be
+ *     decoration.
+ *   - Small radii and tight type. Density is legibility once there are hundreds of
+ *     rows; air between six of them is just scrolling.
+ *   - Status colour lives in status, nowhere else.
+ *
+ * Token *names* are semantic, so a future palette is this file and nothing else.
  */
 :root {
-  /* Surfaces */
-  --yg-bg:           #06061f;  /* landing background; sign-in screen */
-  --yg-bg-app:       #13141f;  /* app background */
-  --yg-surface:      #1a1b2e;  /* cards, sidebar, table rows */
-  --yg-surface-2:    #2a2b3d;  /* borders, dividers, hover, avatars */
+  /* ------------------------------------------------------------- surfaces */
+  --yg-bg:           #08090a;  /* the canvas, and the sign-in screen */
+  --yg-bg-app:       #08090a;
+  --yg-surface:      #0f1011;  /* sidebar, cards, rows */
+  --yg-surface-2:    #1c1d20;  /* borders, dividers, hover */
+  --yg-surface-3:    #232427;  /* pressed, selected, menus */
 
-  /* Brand accents */
-  --yg-lime:         #d2fc3c;  /* logo, fest name, active nav, primary actions */
-  --yg-yellow:       #eece00;  /* the single most important CTA on a screen */
-  --yg-yellow-title: #ffd500;  /* title artwork only */
-  --yg-pink:         #f5449e;  /* secondary buttons, links */
-  --yg-sky:          #7fd5ff;  /* highlighted text */
-  --yg-violet:       #5119db;  /* nav gradient start (landing only) */
-  --yg-crimson:      #b12a36;  /* nav gradient end (landing only) */
+  /*
+   * One accent, and it is the only saturated thing in the chrome. Everything that
+   * used to be lime, yellow or pink is this — emphasis is now weight and fill,
+   * not hue, which is what stops three "look at me" colours competing on one screen.
+   */
+  --yg-accent:       #5e6ad2;
+  --yg-accent-hover: #6b76d9;
+  --yg-info:         #4ea7fc;
+  --yg-on-accent:    #ffffff;
 
-  /* Text */
-  --yg-text:         #ffffff;
-  --yg-text-soft:    #c0c0c0;
-  --yg-text-muted:   #a0a0b0;
-  --yg-on-accent:    #06061f;
+  /* ---------------------------------------------------------------- text */
+  --yg-text:         #f7f8f8;
+  --yg-text-soft:    #d0d3d8;
+  --yg-text-muted:   #8a8f98;
+  --yg-text-faint:   #62666d;
+  --yg-outline:      #34363b;  /* the dashed remainder on a derivation bar */
 }
 
 /*
- * Semantic state colours (9.1). Brand colours never encode a state.
- * Always paired with a text label — never colour alone (rule 3, and 14 accessibility).
+ * Semantic state colours. Brand colour never encodes a state, and now there is no
+ * brand colour to confuse it with. Always paired with a label — never colour alone.
+ *
+ * Backgrounds are tints of their own foreground rather than flat blocks, so a chip
+ * sits on the surface instead of punching a hole in it.
  */
 :root {
-  --state-waiting-fg:  #f5c542;  --state-waiting-bg:  #3d2f0a;  /* DRAFT, SUBMITTED, HOD_ENDORSED, OPEN, NEEDS_INFO, Pending */
-  --state-moving-fg:   #7fd5ff;  --state-moving-bg:   #0e2a3d;  /* ACCEPTED, IN_PROGRESS, ADVANCE_PAID, DELIVERED */
-  --state-decided-fg:  #d2fc3c;  --state-decided-bg:  #263a0a;  /* APPROVED, BALANCE_APPROVED, DONE, Committed */
-  --state-done-fg:     #90ee90;  --state-done-bg:     #1f4d1f;  /* PAID, CLOSED, Spent */
-  --state-bad-fg:      #ee9090;  --state-bad-bg:      #4d1f1f;  /* DECLINED, REJECTED, CANCELLED, WITHDRAWN */
-  --state-stuck-fg:    #b39dff;  --state-stuck-bg:    #241452;  /* ON_HOLD, BLOCKED, SENT_BACK */
+  --state-waiting-fg:  #e2b340;  --state-waiting-bg:  #2a2110;  /* DRAFT, SUBMITTED, HOD_ENDORSED, OPEN, Pending */
+  --state-moving-fg:   #4ea7fc;  --state-moving-bg:   #10202e;  /* ACCEPTED, IN_PROGRESS, ADVANCE_PAID, DELIVERED */
+  --state-decided-fg:  #8b93e8;  --state-decided-bg:  #1a1b2c;  /* APPROVED, BALANCE_APPROVED, DONE, Committed */
+  --state-done-fg:     #4cb782;  --state-done-bg:     #10251c;  /* PAID, CLOSED, Spent */
+  --state-bad-fg:      #eb5757;  --state-bad-bg:      #2a1414;  /* DECLINED, REJECTED, CANCELLED, WITHDRAWN */
+  --state-stuck-fg:    #b48fe8;  --state-stuck-bg:    #201830;  /* ON_HOLD, BLOCKED, SENT_BACK */
 
-  --flag-high-fg:      #ee9090;  --flag-high-bg:      #4d1f1f;
-  --flag-medium-fg:    #f5c542;  --flag-medium-bg:    #3d2f0a;
-  --flag-low-fg:       #a0a0b0;  --flag-low-bg:       #2a2b3d;
+  --flag-high-fg:      #eb5757;  --flag-high-bg:      #2a1414;
+  --flag-medium-fg:    #e2b340;  --flag-medium-bg:    #2a2110;
+  --flag-low-fg:       #8a8f98;  --flag-low-bg:       #1c1d20;
+
+  /* ------------------------------------------------------------ structure */
 
   /*
-   * The redesign's structural scale. The colour tokens above are unchanged —
-   * what the redesign changes is structure: one typographic scale, one density
-   * scale, three levels of emphasis, and real air inside containers.
+   * Type. 13px body, because the unit of this interface is a row and there are
+   * hundreds of them. Headings are barely larger than body and carry their weight
+   * in weight — a 32px title over a dense list is a poster stapled to a ledger.
    */
+  --text-title:   19px;
+  --text-heading: 14px;
+  --text-body:    13px;
+  --text-support: 12px;
+  --text-meta:    11px;
 
-  /* Type. Body is 15px, not 14: the design target is a phone at night. */
-  --text-title:   32px;   /* page title, Reem Kufi */
-  --text-heading: 20px;   /* section heading, Reem Kufi */
-  --text-body:    15px;   /* the default */
-  --text-support: 13px;   /* supporting text and table cells */
-  --text-meta:    11px;   /* uppercase metadata label, Reem Kufi, 0.16em */
+  /*
+   * Density. A 32px row, which is Linear's, and a 44px floor wherever a thumb is
+   * the pointer — see the coarse-pointer override below. The old 44px everywhere
+   * was right about phones and wrong about the desk it is mostly used from.
+   */
+  --row-h:        32px;
+  --pad-card:     16px;
+  --gap-section:  16px;
 
-  /* Density. Rows 44, sections 24 apart, cards 28 inside. */
-  --row-h:        44px;   /* also the tap-target floor — never smaller */
-  --pad-card:     28px;
-  --gap-section:  24px;
+  /* Radii. Small, and smaller inside. */
+  --r-shell:     8px;
+  --r-card:      6px;
+  --r-control:   5px;
+}
 
-  /* Radii, largest container to smallest control. */
-  --r-shell:     20px;
-  --r-card:      16px;
-  --r-control:   14px;
-
-  /* The dashed remainder on a five-numbers bar: allocated but not yet claimed. */
-  --yg-outline:  #4a4b63;
+/*
+ * A thumb is not a mouse. Everything that is a target grows where the pointer is
+ * coarse, which is phones and tablets and nothing else — so the desk keeps its
+ * density and fest week keeps its tap targets.
+ */
+@media (pointer: coarse) {
+  :root {
+    --row-h:    40px;
+    --text-body: 14px;
+  }
 }
 
 @theme inline {
@@ -75,51 +108,62 @@
   --color-bg-app: var(--yg-bg-app);
   --color-surface: var(--yg-surface);
   --color-surface-2: var(--yg-surface-2);
+  --color-surface-3: var(--yg-surface-3);
 
-  --color-lime: var(--yg-lime);
-  --color-brand-yellow: var(--yg-yellow);
-  --color-brand-pink: var(--yg-pink);
-  --color-sky: var(--yg-sky);
-  --color-violet: var(--yg-violet);
-  --color-crimson: var(--yg-crimson);
-
+  --color-accent: var(--yg-accent);
+  --color-info: var(--yg-info);
   --color-outline: var(--yg-outline);
+
   --color-text: var(--yg-text);
   --color-text-soft: var(--yg-text-soft);
   --color-text-muted: var(--yg-text-muted);
+  --color-text-faint: var(--yg-text-faint);
   --color-on-accent: var(--yg-on-accent);
 
-  /* UI text; headings; amounts and references (9.1 typography) */
-  --font-sans: var(--font-lexend), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-reem-kufi), var(--font-lexend), ui-sans-serif, sans-serif;
-  --font-mono: var(--font-source-code-pro), ui-monospace, "Cascadia Code", monospace;
+  /* `font-display` still resolves — there is simply no display face any more. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-face), ui-monospace, "SF Mono", monospace;
 }
 
 body {
   background: var(--yg-bg-app);
   color: var(--yg-text);
   font-family: var(--font-sans);
-  /* 15px base, per the redesign's scale. Tailwind's text-* utilities still win. */
   font-size: var(--text-body);
-  line-height: 1.6;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /*
- * The uppercase metadata label — above one of the five numbers, over a column, at
- * the head of a nav group. Reem Kufi, wide tracking, muted.
+ * The micro-label above a figure, over a column, at the head of a nav group. It
+ * used to be a display face at 0.16em, which at 11px reads as decoration; this is
+ * the same idea said quietly.
  */
 .meta-label {
-  font-family: var(--font-display);
   font-size: var(--text-meta);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: 0.03em;
   color: var(--yg-text-muted);
 }
 
-/*
- * The tap-target floor (44px) around a 16px glyph. Fest week happens on phones,
- * one-handed, at night; a 28px icon button is a miss waiting to happen.
- */
+/* A row of the sidebar, a menu item, a filter chip: the one interactive idiom. */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--row-h);
+  padding: 0 8px;
+  border-radius: var(--r-control);
+  font-size: var(--text-body);
+  color: var(--yg-text-muted);
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.nav-item:hover { background: var(--yg-surface-2); color: var(--yg-text); }
+.nav-item[data-active="true"] { background: var(--yg-surface-2); color: var(--yg-text); font-weight: 500; }
+
+/* A square target around a small glyph — 28 on a desk, 40 under a thumb. */
 .tap {
   min-width: var(--row-h);
   min-height: var(--row-h);
@@ -136,33 +180,45 @@ body {
 }
 
 @keyframes yg-spin { to { transform: rotate(360deg); } }
-
-.yg-spin {
-  animation: yg-spin 0.7s linear infinite;
-}
+.yg-spin { animation: yg-spin 0.7s linear infinite; }
 
 @media (prefers-reduced-motion: reduce) {
   .yg-spin { animation: none; }
+  * { transition: none !important; }
 }
 
-/* Amounts, UTRs, ticket IDs, table dates: tabular and right-aligned (9.1 rule 4). */
+/* Amounts, UTRs, ticket ids, table dates: tabular, so columns of them line up. */
 .tnum {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
+  font-size: 0.95em;
 }
 
-/* Chrome stays restrained inside the app; the sign-in screen gets the landing treatment (rule 5). */
+/* Kept for the sign-in screen, which is the one place a flourish belongs. */
 .landing-nav {
-  background: linear-gradient(90deg, var(--yg-violet), var(--yg-crimson));
+  background: linear-gradient(90deg, var(--yg-accent), var(--yg-info));
 }
+
+/*
+ * A scrollbar you can see but do not look at. The default on a dark ground is a
+ * bright bar down the side of every list.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--yg-surface-3) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--yg-surface-3); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #34363b; }
 
 ::selection {
-  background: var(--yg-lime);
-  color: var(--yg-on-accent);
+  background: color-mix(in srgb, var(--yg-accent) 40%, transparent);
+  color: var(--yg-text);
 }
 
 :focus-visible {
-  outline: 2px solid var(--yg-lime);
-  outline-offset: 2px;
+  outline: 2px solid var(--yg-accent);
+  outline-offset: 1px;
 }

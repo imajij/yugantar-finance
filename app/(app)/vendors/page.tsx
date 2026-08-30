@@ -56,7 +56,7 @@ export default async function VendorsPage() {
                 Add vendor
               </Link>
               <Link href="/vendors/requests/new" className="rounded-full px-4 py-2 text-sm font-medium"
-                style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}>
+                style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}>
                 New payment request
               </Link>
             </div>
@@ -86,7 +86,7 @@ export default async function VendorsPage() {
               <Link
                 key={v.id}
                 href={`/vendors/${v.id}`}
-                className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 hover:border-lime sm:flex-row sm:items-center sm:gap-4"
+                className="flex flex-col gap-3 rounded-[var(--r-card)] p-4 hover:border-accent sm:flex-row sm:items-center sm:gap-4"
                 style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
               >
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -103,7 +103,7 @@ export default async function VendorsPage() {
                   <Figure
                     label="Outstanding"
                     paise={e?.outstandingPaise ?? 0}
-                    tone={e && e.outstandingPaise > 0 ? "var(--yg-yellow)" : undefined}
+                    tone={e && e.outstandingPaise > 0 ? "var(--yg-accent)" : undefined}
                   />
                 </div>
               </Link>
@@ -119,7 +119,7 @@ export default async function VendorsPage() {
         <div className="space-y-2">
           {open.map((r) => (
             <Link key={r.id} href={`/vendors/requests/${r.id}`} className="block">
-              <Card className="hover:border-lime">
+              <Card className="hover:border-accent">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2">

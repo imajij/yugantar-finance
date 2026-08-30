@@ -100,7 +100,7 @@ export default async function AdminPage() {
         <h2 className="font-display text-sm">People</h2>
         <p className="mt-1 text-xs text-text-muted">
           Inviting, deactivating and moving people between departments happens on{" "}
-          <Link href="/team" className="underline underline-offset-2" style={{ color: "var(--yg-pink)" }}>
+          <Link href="/team" className="underline underline-offset-2" style={{ color: "var(--yg-accent)" }}>
             Team
           </Link>
           . <span className="tnum">{people.length}</span> {people.length === 1 ? "person" : "people"}{" "}

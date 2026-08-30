@@ -91,7 +91,7 @@ export default async function CloseOutPage() {
             <ul className="mt-3 space-y-1 text-sm">
               {blockers.map((b) => (
                 <li key={b.label}>
-                  <Link href={b.href} style={{ color: "var(--yg-pink)" }}>
+                  <Link href={b.href} style={{ color: "var(--yg-accent)" }}>
                     <span className="tnum">{b.n}</span> {b.label}
                   </Link>
                 </li>
@@ -121,7 +121,7 @@ export default async function CloseOutPage() {
                     {...(format === "print" ? { target: "_blank", rel: "noreferrer" } : {})}
                     className="flex h-9 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-medium"
                     style={i === 0
-                      ? { background: "var(--yg-lime)", color: "var(--yg-on-accent)" }
+                      ? { background: "var(--yg-accent)", color: "var(--yg-on-accent)" }
                       : { background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
                   >
                     {format === "print" ? <Printer size={13} aria-hidden /> : <Download size={13} aria-hidden />}

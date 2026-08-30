@@ -113,7 +113,7 @@ export function Relations({
                 <span className="rounded-full px-2 py-0.5 text-xs font-medium" style={chipStyle(r.status)}>
                   {stateLabel(r.status)}
                 </span>
-                <Link href={`/tickets/${r.id}`} className="min-w-0 flex-1 truncate hover:text-lime">
+                <Link href={`/tickets/${r.id}`} className="min-w-0 flex-1 truncate hover:text-accent">
                   <span className="tnum mr-1.5 text-xs text-text-muted">{r.human_id}</span>
                   {r.title}
                 </Link>
@@ -143,7 +143,7 @@ export function Relations({
           <button
             type="submit" disabled={busy}
             className="rounded-full px-3.5 py-1.5 text-sm font-medium disabled:opacity-50"
-            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+            style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
           >
             Link
           </button>
@@ -153,7 +153,7 @@ export function Relations({
           </button>
         </form>
       ) : (
-        <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-pink)" }}>
+        <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-accent)" }}>
           + Link another ticket
         </button>
       ))}

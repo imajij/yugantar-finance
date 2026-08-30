@@ -80,11 +80,11 @@ export default async function AuditPage({
         </select>
         <input name="q" defaultValue={f.q ?? ""} placeholder="Action contains…" className={FILTER} />
         <button type="submit" className="rounded-full px-4 py-2 text-sm"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}>
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}>
           Filter
         </button>
         {(f.entity_type || f.actor || f.q) && (
-          <Link href="/audit" className="text-sm" style={{ color: "var(--yg-pink)" }}>Clear</Link>
+          <Link href="/audit" className="text-sm" style={{ color: "var(--yg-accent)" }}>Clear</Link>
         )}
       </form>
 
@@ -131,7 +131,7 @@ export default async function AuditPage({
                     <span className="text-text-soft">{e.actor ?? "System"}</span>{" "}
                     <span className="tnum text-[12.5px]">{e.action}</span>{" "}
                     {href ? (
-                      <Link href={href} style={{ color: "var(--yg-pink)" }}>
+                      <Link href={href} style={{ color: "var(--yg-accent)" }}>
                         {e.entityType.toLowerCase().replace("_", " ")}
                       </Link>
                     ) : (
@@ -151,7 +151,7 @@ export default async function AuditPage({
 
       {more && (
         <p className="mt-4 text-sm">
-          <Link href={qs({ before: pageRows[pageRows.length - 1].createdAt.toISOString() })} style={{ color: "var(--yg-pink)" }}>
+          <Link href={qs({ before: pageRows[pageRows.length - 1].createdAt.toISOString() })} style={{ color: "var(--yg-accent)" }}>
             Older →
           </Link>
         </p>

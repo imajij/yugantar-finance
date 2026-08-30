@@ -236,12 +236,12 @@ export function People({
           )}
           <button type="submit" disabled={busy}
             className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
-            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}>
+            style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}>
             Invite
           </button>
         </form>
       ) : (
-        <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-pink)" }}>
+        <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-accent)" }}>
           {team ? "+ Add a team member" : "+ Invite someone"}
         </button>
       )}
@@ -353,7 +353,7 @@ export function Thresholds({ values }: { values: Record<string, number> }) {
 
       <button type="submit" disabled={busy}
         className="mt-4 rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
-        style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}>
+        style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}>
         {busy ? "Saving…" : "Save thresholds"}
       </button>
 
@@ -469,7 +469,7 @@ export function Departments({ departments }: { departments: Dept[] }) {
           />
           <button type="submit" disabled={busy}
             className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
-            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}>
+            style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}>
             Add department
           </button>
           <button type="button" onClick={() => setAdding(false)} className="text-sm text-text-muted">
@@ -477,14 +477,14 @@ export function Departments({ departments }: { departments: Dept[] }) {
           </button>
         </form>
       ) : (
-        <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-pink)" }}>
+        <button onClick={() => setAdding(true)} className="mt-3 text-sm" style={{ color: "var(--yg-accent)" }}>
           + Add a department
         </button>
       )}
 
       <p className="mt-3 text-xs text-text-muted">
         New departments start with nothing allocated. Move money to them from Reserve on the{" "}
-        <Link href="/budget" style={{ color: "var(--yg-pink)" }}>budget screen</Link> — every transfer
+        <Link href="/budget" style={{ color: "var(--yg-accent)" }}>budget screen</Link> — every transfer
         carries a reason and is logged.
         {budgetDepts.length === 0 && " Add your first department to get started."}
       </p>
@@ -536,7 +536,7 @@ export function FestBudget({
         </label>
         <button type="submit" disabled={busy || !changed}
           className="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-40"
-          style={{ background: "var(--yg-yellow)", color: "var(--yg-on-accent)" }}>
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}>
           Save
         </button>
       </form>

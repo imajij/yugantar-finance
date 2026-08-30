@@ -1,13 +1,29 @@
 import type { Metadata } from "next";
-import { Lexend, Reem_Kufi_Fun, Source_Code_Pro } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { clerkConfigured, clerkPublishableKey } from "@/lib/clerk";
 import "./globals.css";
 
-// PRD 9.1 typography — the three faces the fest site already loads.
-const lexend = Lexend({ subsets: ["latin"], weight: ["400", "500", "700"], variable: "--font-lexend" });
-const reemKufi = Reem_Kufi_Fun({ subsets: ["latin"], weight: ["400", "700"], variable: "--font-reem-kufi" });
-const sourceCodePro = Source_Code_Pro({ subsets: ["latin"], weight: ["400", "600"], variable: "--font-source-code-pro" });
+/*
+ * One face, loaded variable.
+ *
+ * The fest site's Lexend and Reem Kufi were doing the opposite of the job here: a
+ * display face on every heading makes a tool look like a poster, and a poster is
+ * exactly what you do not want to read a hundred rows of at two in the morning.
+ * Inter is the workhorse this interface actually needs — it was drawn for small
+ * sizes on screens, and its intermediate weights are what let a heading read as a
+ * heading at 15px without shouting.
+ *
+ * Mono is for the things that have to line up: amounts, UTRs, human ids.
+ */
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  // Four weights and no more: body, the half-step that makes a row title read as
+  // one, section headings, and page titles.
+  weight: ["400", "500", "600"],
+});
+const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-mono-face" });
 
 export const metadata: Metadata = {
   title: "Yugaantar Finance & Operations",
@@ -17,7 +33,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const shell = (
-    <html lang="en" className={`${lexend.variable} ${reemKufi.variable} ${sourceCodePro.variable}`}>
+    <html lang="en" className={`${inter.variable} ${mono.variable}`}>
       <body>{children}</body>
     </html>
   );

@@ -78,7 +78,7 @@ export default async function BudgetReviewPage({
           <section key={dept.id}>
             <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="font-display text-lg">
-                <Link href={`/budget/${dept.id}`} className="hover:text-lime">{dept.name}</Link>
+                <Link href={`/budget/${dept.id}`} className="hover:text-accent">{dept.name}</Link>
               </h2>
               <p className="text-xs text-text-muted">
                 <Amount paise={planned} /> planned across {itemCount} line item{itemCount === 1 ? "" : "s"}
@@ -114,7 +114,7 @@ export default async function BudgetReviewPage({
                     {rows.map((i) => (
                       <tr key={i.id} style={{ borderTop: "1px solid var(--yg-surface-2)" }}>
                         <td className="px-4 py-3">
-                          <Link href={`/budget/${dept.id}/line-items/${i.id}`} style={{ color: "var(--yg-pink)" }}>
+                          <Link href={`/budget/${dept.id}/line-items/${i.id}`} style={{ color: "var(--yg-accent)" }}>
                             {i.name}
                           </Link>
                           {i.status === "CLOSED" && <StateChip state={i.status} />}

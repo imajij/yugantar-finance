@@ -1,12 +1,15 @@
 /**
- * The handful of primitives every screen needs, following PRD 9.1:
- * lime = primary, yellow = the one most important action, pink = secondary and links,
- * semantic palette for states, amounts always tabular and right-aligned.
+ * The handful of primitives every screen needs.
  *
- * The redesign changes their structure, not their meaning: one density scale (rows
- * 44px, cards 28px inside, sections 24px apart), three container radii, and a 44px
- * floor under anything you tap. Which state is which colour is untouched — that
- * mapping appears in exports and in an audit, and it is not a styling decision.
+ * Emphasis used to be carried by hue — lime for primary, yellow for the one most
+ * important action, pink for secondary — which meant three saturated colours
+ * competing on every screen and none of them meaning anything. It is carried by
+ * *fill* now: solid accent for the one action a screen exists for, a quiet filled
+ * surface for ordinary ones, and a bare outline for everything else. One accent,
+ * used rarely enough that it still reads as emphasis when it appears.
+ *
+ * Which state is which colour is untouched — that mapping appears in exports and in
+ * an audit, and it is not a styling decision.
  */
 import type { ComponentProps, ReactNode } from "react";
 import { chipStyle, flagStyle, stateLabel } from "@/lib/state-chip";
@@ -22,7 +25,7 @@ export function Card({
 }) {
   return (
     <div
-      className={`rounded-[var(--r-shell)] ${tight ? "p-[18px]" : "p-5 sm:p-[var(--pad-card)]"} ${className}`}
+      className={`rounded-[var(--r-shell)] ${tight ? "p-3" : "p-4 sm:p-[var(--pad-card)]"} ${className}`}
       style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
     >
       {children}
@@ -30,33 +33,39 @@ export function Card({
   );
 }
 
-/** A section heading inside a page. 20px Reem Kufi, with an optional count beside it. */
+/** A section heading inside a page. Barely larger than body; the weight does the work. */
 export function SectionHeading({
   children, aside,
 }: { children: ReactNode; aside?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 className="font-display text-[var(--text-heading)]">{children}</h2>
+      <h2 className="text-[var(--text-heading)] font-medium">{children}</h2>
       {aside}
     </div>
   );
 }
 
 /**
- * Buttons. Three tones, one height.
+ * Buttons. Four tones, one height, one radius.
  *
- * `primary` is lime and belongs to the ordinary main action. `hero` is yellow and
- * is the single most important action on a screen — if two things on one screen are
- * yellow, one of them is wrong (9.1 rule 2). `ghost` is everything else.
+ * The hierarchy is fill, not hue. `hero` is the single action a screen exists for
+ * and is the only solid accent on it — if two things on one screen are solid
+ * accent, one of them is wrong. `primary` is an ordinary main action and sits on a
+ * quiet filled surface. `ghost` is an outline. `destructive` is the one place a
+ * second colour is allowed, because "delete" should not look like "save".
  */
 type Tone = "hero" | "primary" | "ghost" | "destructive";
 
-const TONES: Record<Tone, { background: string; color: string; border?: string }> = {
-  hero: { background: "var(--yg-yellow)", color: "var(--yg-on-accent)" },
-  primary: { background: "var(--yg-lime)", color: "var(--yg-on-accent)" },
-  destructive: { background: "var(--flag-high-fg)", color: "var(--yg-on-accent)" },
+const TONES: Record<Tone, { background: string; color: string; border: string }> = {
+  hero: { background: "var(--yg-accent)", color: "var(--yg-on-accent)", border: "1px solid var(--yg-accent)" },
+  primary: { background: "var(--yg-surface-2)", color: "var(--yg-text)", border: "1px solid var(--yg-surface-3)" },
+  destructive: { background: "transparent", color: "var(--flag-high-fg)", border: "1px solid var(--flag-high-bg)" },
   ghost: { background: "transparent", color: "var(--yg-text-soft)", border: "1px solid var(--yg-surface-2)" },
 };
+
+const SHAPE =
+  "h-[var(--row-h)] items-center justify-center gap-1.5 rounded-[var(--r-control)] "
+  + "px-3 text-[var(--text-body)] font-medium transition-colors";
 
 export function Button({
   tone = "ghost", className = "", children, ...rest
@@ -65,7 +74,7 @@ export function Button({
   return (
     <button
       {...rest}
-      className={`flex h-[var(--row-h)] items-center justify-center gap-2 rounded-full px-5 text-[13.5px] disabled:opacity-40 ${tone === "ghost" ? "" : "font-bold"} ${className}`}
+      className={`flex ${SHAPE} disabled:opacity-40 ${className}`}
       style={{ background: t.background, color: t.color, border: t.border }}
     >
       {children}
@@ -73,9 +82,14 @@ export function Button({
   );
 }
 
-/** The same, as a link. Next's `Link` wraps it at the call site. */
-export function buttonClass(tone: Tone = "ghost"): string {
-  return `inline-flex h-[var(--row-h)] items-center justify-center gap-2 rounded-full px-5 text-[13.5px] ${tone === "ghost" ? "" : "font-bold"}`;
+/**
+ * The same, as a link. Next's `Link` wraps it at the call site.
+ *
+ * No tone: every button is the same shape now, and only `buttonStyle` differs.
+ * That is the point of moving emphasis from hue to fill.
+ */
+export function buttonClass(): string {
+  return `inline-flex ${SHAPE}`;
 }
 
 export function buttonStyle(tone: Tone = "ghost"): React.CSSProperties {
@@ -94,8 +108,7 @@ export function IconButton({
       {...rest}
       aria-label={label}
       title={label}
-      className={`tap shrink-0 text-text-muted hover:text-text disabled:opacity-40 ${className}`}
-      style={{ border: "1px solid var(--yg-surface-2)" }}
+      className={`tap shrink-0 text-text-muted transition-colors hover:bg-surface-2 hover:text-text disabled:opacity-40 ${className}`}
     >
       {children}
     </button>
@@ -119,10 +132,10 @@ export function StatCard({
   return (
     <Card tight>
       <p className="meta-label">{label}</p>
-      <p className="tnum mt-2.5 text-[26px] leading-none font-semibold" style={{ color }}>
+      <p className="tnum mt-1.5 text-[20px] leading-none font-medium" style={{ color }}>
         {formatPaise(paise)}
       </p>
-      {hint && <p className="mt-2 text-[12px] text-text-muted">{hint}</p>}
+      {hint && <p className="mt-1.5 text-[var(--text-support)] text-text-muted">{hint}</p>}
     </Card>
   );
 }
@@ -138,10 +151,10 @@ export function StateChip({ state }: { state: string }) {
   const style = chipStyle(state);
   return (
     <span
-      className="inline-flex items-center gap-[7px] rounded-full py-[5px] pr-3 pl-2.5 text-[12px] font-medium"
+      className="inline-flex items-center gap-1.5 rounded-[var(--r-control)] px-1.5 py-0.5 text-[var(--text-meta)] font-medium"
       style={style}
     >
-      <span className="size-[7px] shrink-0 rounded-full" style={{ background: style.color }} aria-hidden />
+      <span className="size-[6px] shrink-0 rounded-full" style={{ background: style.color }} aria-hidden />
       {stateLabel(state)}
     </span>
   );
@@ -151,10 +164,10 @@ export function FlagChip({ severity, children }: { severity: "HIGH" | "MEDIUM" |
   const style = flagStyle(severity);
   return (
     <span
-      className="inline-flex items-center gap-[7px] rounded-full py-[5px] pr-3 pl-2.5 text-[12px] font-medium"
+      className="inline-flex items-center gap-1.5 rounded-[var(--r-control)] px-1.5 py-0.5 text-[var(--text-meta)] font-medium"
       style={style}
     >
-      <span className="size-[7px] shrink-0 rounded-full" style={{ background: style.color }} aria-hidden />
+      <span className="size-[6px] shrink-0 rounded-full" style={{ background: style.color }} aria-hidden />
       {children}
     </span>
   );
@@ -177,7 +190,7 @@ export function UtilizationBar({ pct }: { pct: number }) {
           className="h-full rounded-full"
           style={{
             width: `${Math.min(pct, 100)}%`,
-            background: over ? "var(--state-bad-fg)" : "var(--yg-lime)",
+            background: over ? "var(--state-bad-fg)" : "var(--yg-accent)",
           }}
         />
       </div>
@@ -197,12 +210,12 @@ export function PageTitle({
   children, subtitle, action,
 }: { children: ReactNode; subtitle?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="mb-[var(--gap-section)] flex flex-wrap items-start justify-between gap-4">
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <h1 className="font-display text-[26px] leading-tight sm:text-[var(--text-title)]">{children}</h1>
-        {subtitle && <p className="text-[13.5px] text-text-muted">{subtitle}</p>}
+    <div className="mb-[var(--gap-section)] flex flex-wrap items-center justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <h1 className="text-[var(--text-title)] leading-tight font-semibold">{children}</h1>
+        {subtitle && <p className="text-[var(--text-support)] text-text-muted">{subtitle}</p>}
       </div>
-      {action && <div className="flex flex-wrap items-center gap-2.5">{action}</div>}
+      {action && <div className="flex flex-wrap items-center gap-2">{action}</div>}
     </div>
   );
 }
@@ -224,18 +237,18 @@ export function Empty({
 }) {
   return (
     <div
-      className="flex flex-col items-center gap-3 rounded-[var(--r-card)] px-6 py-8 text-center"
-      style={{ background: "var(--yg-bg-app)", border: "1px dashed var(--yg-surface-2)" }}
+      className="flex flex-col items-center gap-2.5 rounded-[var(--r-card)] px-6 py-10 text-center"
+      style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
     >
       {icon && (
         <span
-          className="flex size-14 items-center justify-center rounded-full"
-          style={{ background: "var(--yg-surface-2)", color: "var(--yg-lime)" }}
+          className="flex size-10 items-center justify-center rounded-[var(--r-card)]"
+          style={{ background: "var(--yg-surface-2)", color: "var(--yg-text-muted)" }}
         >
           {icon}
         </span>
       )}
-      {title && <p className="font-display text-[17px]">{title}</p>}
+      {title && <p className="text-[var(--text-heading)] font-medium">{title}</p>}
       <div className="max-w-[42ch] text-[13px] leading-relaxed text-text-muted">{children}</div>
       {action && <div className="mt-1">{action}</div>}
     </div>

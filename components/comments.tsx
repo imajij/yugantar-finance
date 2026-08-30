@@ -76,7 +76,7 @@ export function CommentThread({
         <button
           type="submit" disabled={busy || !body.trim()}
           className="mt-2 rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50"
-          style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+          style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
         >
           {busy ? "Posting…" : "Post"}
         </button>

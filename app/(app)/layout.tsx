@@ -10,6 +10,7 @@ import { unreadCount } from "@/lib/services/notifications";
 import { unreadTotal } from "@/lib/services/chat";
 import { openFlagCounts } from "@/lib/services/flags";
 import { SignOutButton } from "@/components/sign-out";
+import { NavLink, TabLink } from "@/components/nav-link";
 
 /** Every page here reads the session cookie, so none of them may be prerendered. */
 export const dynamic = "force-dynamic";
@@ -82,9 +83,6 @@ const TABS: { href: string; label: string; icon: typeof Home; action: Action }[]
   { href: "/chat", label: "Chat", icon: MessagesSquare, action: "fest.view" },
 ];
 
-const initials = (name: string) =>
-  name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
-
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await getSession();
   if (!user) redirect("/sign-in");
@@ -120,66 +118,62 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex h-dvh overflow-hidden">
       {/* ------------------------------------------------------------ sidebar */}
+      {/*
+        The sidebar, at Linear's density: a 32px row, a 16px glyph, and enough of
+        them on screen at once to be a map rather than a menu you scroll. Identity
+        sits at the top where the workspace does, not buried at the bottom.
+      */}
       <aside
-        className="hidden w-[244px] shrink-0 flex-col gap-[22px] overflow-y-auto overscroll-contain p-[22px_14px] md:flex"
+        className="hidden w-[220px] shrink-0 flex-col overflow-y-auto overscroll-contain p-2 md:flex"
         style={{ background: "var(--yg-surface)", borderRight: "1px solid var(--yg-surface-2)" }}
       >
-        <Link href="/dashboard" className="flex items-center gap-2.5 px-2">
+        <Link
+          href="/dashboard"
+          className="mb-2 flex items-center gap-2 rounded-[var(--r-control)] p-1.5 transition-colors hover:bg-surface-2"
+        >
           <span
-            className="font-display flex size-8 items-center justify-center rounded-[11px] text-[19px] font-bold"
-            style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+            className="flex size-6 shrink-0 items-center justify-center rounded-[var(--r-control)] text-[12px] font-semibold"
+            style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
             aria-hidden
           >
             Y
           </span>
-          <span className="font-display text-[14px]">Yugaantar &rsquo;26</span>
+          <span className="flex min-w-0 flex-col leading-tight">
+            <span className="truncate text-[var(--text-body)] font-medium">Yugaantar &rsquo;26</span>
+            <span className="truncate text-[var(--text-meta)] text-text-muted">
+              {user.name}
+              {user.isSuperAdmin ? " · admin" : ""}
+            </span>
+          </span>
         </Link>
 
-        <nav className="flex flex-col gap-[22px]">
+        <nav className="flex flex-col gap-4">
           {groups.map((group) => (
-            <div key={group.label} className="flex flex-col gap-[3px]">
-              <p
-                className="font-display px-2.5 pb-[7px] text-[10px] tracking-[0.18em] text-text-muted uppercase"
-              >
-                {group.label}
-              </p>
+            <div key={group.label} className="flex flex-col gap-px">
+              <p className="meta-label px-2 pb-1">{group.label}</p>
               {group.items.map((item) => (
-                <NavLink key={item.href} item={item} count={item.badge ? counts[item.badge] : 0} />
+                <NavLink
+                  key={item.href}
+                  href={item.href}
+                  label={item.label}
+                  icon={item.icon}
+                  hot={item.hot}
+                  count={item.badge ? counts[item.badge] : 0}
+                />
               ))}
             </div>
           ))}
 
-          <div className="flex flex-col gap-[3px]">
-            <p className="font-display px-2.5 pb-[7px] text-[10px] tracking-[0.18em] text-text-muted uppercase">
-              You
-            </p>
-            <NavLink
-              item={{ href: "/notifications", label: "Notifications", icon: Bell, action: "fest.view" }}
-              count={unread}
-            />
+          <div className="flex flex-col gap-px">
+            <p className="meta-label px-2 pb-1">You</p>
+            <NavLink href="/notifications" label="Notifications" icon={Bell} count={unread} />
           </div>
         </nav>
 
-        <div className="mt-auto flex flex-col gap-2.5">
-          <div
-            className="flex items-center gap-2.5 rounded-[var(--r-control)] p-2.5"
-            style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}
-          >
-            <span
-              className="flex size-[30px] shrink-0 items-center justify-center rounded-full text-[12px] font-bold"
-              style={{ background: "var(--yg-pink)", color: "var(--yg-on-accent)" }}
-              aria-hidden
-            >
-              {initials(user.name)}
-            </span>
-            <div className="flex min-w-0 flex-col">
-              <span className="truncate text-[12.5px]">{user.name}</span>
-              <span className="text-[10.5px] text-text-muted">
-                {user.departmentName} · {user.role.replace("_", " ").toLowerCase()}
-                {user.isSuperAdmin ? " · admin" : ""}
-              </span>
-            </div>
-          </div>
+        <div className="mt-auto pt-4">
+          <p className="px-2 pb-1 text-[var(--text-meta)] text-text-faint">
+            {user.departmentName} · {user.role.replace("_", " ").toLowerCase()}
+          </p>
           <SignOutButton withClerk={clerkConfigured()} />
         </div>
       </aside>
@@ -191,23 +185,23 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           className="shrink-0 md:hidden"
           style={{ background: "var(--yg-surface)", borderBottom: "1px solid var(--yg-surface-2)" }}
         >
-          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+          <div className="flex items-center justify-between gap-3 px-3 py-2">
             <Link href="/dashboard" className="flex items-center gap-2">
               <span
-                className="font-display flex size-7 items-center justify-center rounded-[10px] text-[16px] font-bold"
-                style={{ background: "var(--yg-lime)", color: "var(--yg-on-accent)" }}
+                className="flex size-6 items-center justify-center rounded-[var(--r-control)] text-[12px] font-semibold"
+                style={{ background: "var(--yg-accent)", color: "var(--yg-on-accent)" }}
                 aria-hidden
               >
                 Y
               </span>
-              <span className="font-display text-[14px]">Yugaantar &rsquo;26</span>
+              <span className="text-[var(--text-body)] font-medium">Yugaantar &rsquo;26</span>
             </Link>
             <Link href="/notifications" className="tap relative text-text-soft" aria-label="Notifications">
-              <Bell size={19} aria-hidden />
+              <Bell size={18} aria-hidden />
               {unread > 0 && (
                 <span
                   className="absolute top-1.5 right-1.5 size-2 rounded-full"
-                  style={{ background: "var(--yg-lime)" }}
+                  style={{ background: "var(--yg-accent)" }}
                   aria-label={`${unread} unread`}
                 />
               )}
@@ -238,46 +232,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           style={{ background: "var(--yg-surface)", borderTop: "1px solid var(--yg-surface-2)" }}
           aria-label="Primary"
         >
-          {tabs.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className="flex min-w-[var(--row-h)] flex-col items-center gap-1 py-1 text-[10px] text-text-muted"
-            >
-              <span className="flex h-9 w-[var(--row-h)] items-center justify-center rounded-xl">
-                <Icon size={18} aria-hidden />
-              </span>
-              {label}
-            </Link>
-          ))}
+          {tabs.map((tab) => <TabLink key={tab.href} {...tab} />)}
         </nav>
       </div>
     </div>
-  );
-}
-
-function NavLink({ item, count }: { item: NavItem; count: number }) {
-  const { href, label, icon: Icon, hot } = item;
-  return (
-    <Link
-      href={href}
-      className="flex h-10 items-center gap-[11px] rounded-xl px-2.5 text-[13.5px] text-text-soft hover:bg-surface-2 hover:text-text"
-    >
-      <Icon size={16} className="shrink-0" aria-hidden />
-      <span className="flex-1 truncate">{label}</span>
-      {count > 0 && (
-        <span
-          className="tnum rounded-full px-2 py-0.5 text-[11px]"
-          style={
-            hot
-              ? { background: "var(--flag-medium-bg)", color: "var(--flag-medium-fg)" }
-              : { background: "var(--yg-surface-2)", color: "var(--yg-text-muted)" }
-          }
-          aria-label={`${count} waiting`}
-        >
-          {count > 99 ? "99+" : count}
-        </span>
-      )}
-    </Link>
   );
 }
