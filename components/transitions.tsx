@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Button } from "@/components/ui";
+import { Button, Required } from "@/components/ui";
 import { ConfirmWithReason, Spinner } from "@/components/confirm";
 import { ErrorNote } from "@/components/feedback";
 
@@ -188,7 +188,12 @@ export function TransitionActions({ endpoint, actions, extraFields = {}, options
         >
           {fieldsFor(inlineOpen).map((f) => (
             <div key={f}>
-              <label htmlFor={f} className="text-[13px] text-text-soft">{PROMPT[f] ?? f}</label>
+              {/* Every field the state machine asks for here is one it will not
+                  proceed without, so the mark is unconditional. */}
+              <label htmlFor={f} className="flex items-baseline gap-2 text-[13px] text-text-soft">
+                {PROMPT[f] ?? f}
+                <Required />
+              </label>
               {options[f] ? (
                 <select
                   id={f} name={f} required

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Required } from "@/components/ui";
 
 const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "URGENT"] as const;
 
@@ -136,11 +137,11 @@ export function TicketForm({
       )}
 
     <form key={tpl?.id ?? "blank"} onSubmit={submit} className="space-y-4">
-      <Field label="What do you need?" hint="Short and specific — 80 characters.">
+      <Field label="What do you need?" hint="Short and specific — 80 characters." required>
         <input name="title" required minLength={5} maxLength={80} defaultValue={tpl?.title ?? ""} className={INPUT} />
       </Field>
 
-      <Field label="Details">
+      <Field label="Details" required>
         <textarea name="description" required minLength={5} maxLength={2000} rows={4}
           defaultValue={tpl?.body ?? ""} className={INPUT} />
       </Field>
@@ -148,7 +149,7 @@ export function TicketForm({
       {fixedTarget ? (
         <input type="hidden" name="target_department_id" value={departments[0]?.id ?? ""} />
       ) : (
-        <Field label="Which department?">
+        <Field label="Which department?" required>
           <select name="target_department_id" required className={INPUT}
             defaultValue={tpl?.target_department_id ?? ""}>
             <option value="" disabled>Choose a department</option>
@@ -158,7 +159,7 @@ export function TicketForm({
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Needed by" hint={tpl?.due_in_hours ? `The template suggests ${tpl.due_in_hours}h` : undefined}>
+        <Field label="Needed by" required hint={tpl?.due_in_hours ? `The template suggests ${tpl.due_in_hours}h` : undefined}>
           <input name="due_at" type="datetime-local" required className={INPUT}
             defaultValue={tpl?.due_in_hours ? localDateTime(tpl.due_in_hours) : ""} />
         </Field>
@@ -281,10 +282,15 @@ function TemplateChip({
 
 const INPUT = "mt-1 w-full rounded-lg px-3 py-2.5 text-sm bg-[var(--yg-bg-app)] border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({
+  label, hint, required, children,
+}: { label: string; hint?: string; required?: boolean; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-sm text-text-soft">{label}</label>
+      <label className="flex items-baseline gap-2 text-sm text-text-soft">
+        {label}
+        {required && <Required />}
+      </label>
       {children}
       {hint && <p className="mt-1 text-xs text-text-muted">{hint}</p>}
     </div>

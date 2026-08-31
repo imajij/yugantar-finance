@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Required } from "@/components/ui";
 
 const INPUT = "mt-1 w-full rounded-lg px-3 py-2.5 text-sm bg-[var(--yg-bg-app)] border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 
@@ -33,7 +34,7 @@ export function VendorForm() {
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      <Field label="Vendor name"><input name="name" required minLength={2} maxLength={120} className={INPUT} /></Field>
+      <Field label="Vendor name" required><input name="name" required minLength={2} maxLength={120} className={INPUT} /></Field>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Contact person"><input name="contact_name" maxLength={120} className={INPUT} /></Field>
@@ -72,10 +73,15 @@ export function VendorForm() {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({
+  label, hint, required, children,
+}: { label: string; hint?: string; required?: boolean; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-sm text-text-soft">{label}</label>
+      <label className="flex items-baseline gap-2 text-sm text-text-soft">
+        {label}
+        {required && <Required />}
+      </label>
       {children}
       {hint && <p className="mt-1 text-xs text-text-muted">{hint}</p>}
     </div>

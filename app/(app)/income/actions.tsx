@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Required } from "@/components/ui";
 
 const INPUT = "mt-1 w-full rounded-lg px-3 py-2.5 text-sm bg-[var(--yg-bg-app)] border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 
@@ -48,7 +49,7 @@ export function NewIncomeForm({ departments }: { departments: { id: string; name
     <form onSubmit={submit} className="mt-3 space-y-3">
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
-          <label className="text-sm text-text-soft">Source</label>
+          <label className="flex items-baseline gap-2 text-sm text-text-soft">Source <Required /></label>
           <input name="source_name" required minLength={2} maxLength={160} className={INPUT} />
         </div>
         <div>
@@ -60,7 +61,7 @@ export function NewIncomeForm({ departments }: { departments: { id: string; name
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         <div>
-          <label className="text-sm text-text-soft">Pledged (₹)</label>
+          <label className="flex items-baseline gap-2 text-sm text-text-soft">Pledged (₹) <Required /></label>
           <input name="pledged" type="number" step="0.01" min="0" required className={INPUT} />
         </div>
         <div>
