@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { formatPaise } from "@/lib/money";
+import { Required } from "@/components/ui";
 
 const INPUT = "mt-1 w-full rounded-lg px-3 py-2.5 text-sm bg-[var(--yg-bg-app)] border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 
@@ -67,18 +68,18 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      <Field label="Vendor">
+      <Field label="Vendor" required>
         <select name="vendor_id" required defaultValue="" className={INPUT}>
           <option value="" disabled>Choose a vendor</option>
           {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
         </select>
       </Field>
 
-      <Field label="What are they supplying?">
+      <Field label="What are they supplying?" required>
         <textarea name="description" required minLength={5} maxLength={1000} rows={3} className={INPUT} />
       </Field>
 
-      <Field label="Line item" hint={chosen ? `${formatPaise(chosen.availablePaise)} available` : undefined}>
+      <Field label="Line item" required hint={chosen ? `${formatPaise(chosen.availablePaise)} available` : undefined}>
         <select
           name="line_item_id" required value={lineItemId} className={INPUT}
           onChange={(e) => setLineItemId(e.target.value)}
@@ -90,7 +91,7 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
         </select>
       </Field>
 
-      <Field label="Total value (₹)">
+      <Field label="Total value (₹)" required>
         <input
           name="total_value" type="number" step="0.01" min="0.01" required
           value={total} onChange={(e) => setTotal(e.target.value)} className={INPUT}
@@ -144,10 +145,15 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({
+  label, hint, required, children,
+}: { label: string; hint?: string; required?: boolean; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-sm text-text-soft">{label}</label>
+      <label className="flex items-baseline gap-2 text-sm text-text-soft">
+        {label}
+        {required && <Required />}
+      </label>
       {children}
       {hint && <p className="mt-1 text-xs text-text-muted">{hint}</p>}
     </div>

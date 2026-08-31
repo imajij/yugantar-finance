@@ -173,6 +173,34 @@ export function FlagChip({ severity, children }: { severity: "HIGH" | "MEDIUM" |
   );
 }
 
+/**
+ * The mark next to a label you cannot leave blank.
+ *
+ * One definition, because "which of these do I actually have to fill in" is a
+ * question every form was leaving people to answer by pressing submit and reading
+ * the error. Several forms already said "Optional" in a hint; this is the other
+ * half, so both are stated rather than one inferred from the absence of the other.
+ *
+ * Hidden from screen readers by default, because a control carrying `required` or
+ * `aria-required` already announces itself and hearing "required" twice per field
+ * is worse than not seeing the word at all.
+ *
+ * `announce` is for the handful of places where no control can carry the attribute —
+ * a picker that is a `button`, where `aria-required` is not a supported property of
+ * the role. There the visible word is the only signal, so it has to be a spoken one.
+ */
+export function Required({ announce = false }: { announce?: boolean } = {}) {
+  return (
+    <span
+      className="text-[var(--text-meta)] font-normal"
+      style={{ color: "var(--yg-text-faint)" }}
+      aria-hidden={announce ? undefined : "true"}
+    >
+      required
+    </span>
+  );
+}
+
 /** Amounts are right-aligned and tabular wherever they appear in a table (9.1 rule 4). */
 export function Amount({ paise, className = "" }: { paise: number; className?: string }) {
   return <span className={`tnum tabular-nums ${className}`}>{formatPaise(paise)}</span>;

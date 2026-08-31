@@ -6,7 +6,7 @@ import {
   ArrowLeft, Camera, ChevronDown, Loader2, Plus, Receipt as ReceiptIcon, Send, X,
 } from "lucide-react";
 import { formatPaise, rupeesToPaise } from "@/lib/money";
-import { Button, IconButton } from "@/components/ui";
+import { Button, IconButton, Required } from "@/components/ui";
 import { ErrorNote, InfoNote } from "@/components/feedback";
 import { AvailableInline } from "@/components/five-numbers";
 
@@ -230,7 +230,7 @@ export function NewRequestForm({
           {receipts.length > 0 && <ReceiptList receipts={receipts} onAdd={upload} uploading={uploading} />}
 
           <section className="flex flex-col gap-2">
-            <label htmlFor="amount" className="meta-label">Amount you paid</label>
+            <label htmlFor="amount" className="meta-label">Amount you paid <Required /></label>
             <div
               className="flex items-baseline gap-2 rounded-[18px] px-4 py-3.5"
               style={{
@@ -248,12 +248,13 @@ export function NewRequestForm({
                 placeholder="0"
                 className="tnum w-full bg-transparent text-[34px] font-semibold outline-none"
                 aria-label="Amount in rupees"
+                aria-required="true"
               />
             </div>
           </section>
 
           <section className="flex flex-col gap-2">
-            <span className="meta-label">Against which line item</span>
+            <span className="meta-label">Against which line item <Required announce /></span>
             <div
               className="flex flex-col gap-2.5 rounded-[var(--r-card)] px-4 py-3.5"
               style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
@@ -363,7 +364,7 @@ export function NewRequestForm({
             <Prefilled label="Amount" value={formatPaise(amountPaise ?? 0)} mono />
             <Prefilled label="Line item" value={selected?.name ?? "—"} />
             <Prefilled label="Department" value={defaults.department} />
-            <Row label="Date on receipt">
+            <Row label="Date on receipt" required>
               <input
                 type="date"
                 value={transactionOn}
@@ -383,7 +384,7 @@ export function NewRequestForm({
                 aria-label="Merchant"
               />
             </Row>
-            <Row label="Paid by">
+            <Row label="Paid by" required>
               <input
                 value={payeeName}
                 onChange={(e) => setPayeeName(e.target.value)}
@@ -391,7 +392,7 @@ export function NewRequestForm({
                 aria-label="Payee name"
               />
             </Row>
-            <Row label="Pay back to" last>
+            <Row label="Pay back to" required last>
               <input
                 value={payeeUpiId}
                 onChange={(e) => setPayeeUpiId(e.target.value)}
@@ -496,13 +497,18 @@ function ReceiptList({
   );
 }
 
-function Row({ label, children, last }: { label: string; children: React.ReactNode; last?: boolean }) {
+function Row({
+  label, children, last, required,
+}: { label: string; children: React.ReactNode; last?: boolean; required?: boolean }) {
   return (
     <div
       className="flex items-center justify-between gap-3 py-3"
       style={last ? undefined : { borderBottom: "1px solid var(--yg-surface-2)" }}
     >
-      <span className="shrink-0 text-[12.5px] text-text-muted">{label}</span>
+      <span className="flex shrink-0 items-baseline gap-1.5 text-[12.5px] text-text-muted">
+        {label}
+        {required && <Required />}
+      </span>
       {children}
     </div>
   );

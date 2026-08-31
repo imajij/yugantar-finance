@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Pencil, Plus, RotateCcw, X } from "lucide-react";
 import { formatPaise } from "@/lib/money";
-import { Button, IconButton } from "@/components/ui";
+import { Button, IconButton, Required } from "@/components/ui";
 import { FileUpload, type Uploaded } from "@/components/file-upload";
 import { ConfirmWithReason } from "@/components/confirm";
 
@@ -75,23 +75,37 @@ function Form({
 
   return (
     <div className="space-y-2 rounded-xl p-3" style={{ background: "var(--yg-bg-app)", border: "1px solid var(--yg-surface-2)" }}>
+      {/*
+        Labelled rather than placeholder-only. A placeholder disappears the moment
+        you type, which is exactly when you want to know whether the field was one
+        you had to fill in — and the description below says "(optional)", so the
+        other two were being inferred from its absence.
+      */}
       <div className="grid gap-2 sm:grid-cols-[1fr_10rem]">
-        <input
-          autoFocus
-          value={f.name}
-          onChange={(e) => setF({ ...f, name: e.target.value })}
-          placeholder="What it is — “Sound system”"
-          className={FIELD}
-          aria-label="Line item name"
-        />
-        <input
-          value={f.planned}
-          inputMode="decimal"
-          onChange={(e) => setF({ ...f, planned: e.target.value })}
-          placeholder="Planned ₹"
-          className={`${FIELD} text-right tabular-nums`}
-          aria-label="Planned amount in rupees"
-        />
+        <label className="block">
+          <span className="meta-label">Name <Required /></span>
+          <input
+            autoFocus
+            value={f.name}
+            onChange={(e) => setF({ ...f, name: e.target.value })}
+            placeholder="What it is — “Sound system”"
+            className={`${FIELD} mt-1 w-full`}
+            aria-label="Line item name"
+            aria-required="true"
+          />
+        </label>
+        <label className="block">
+          <span className="meta-label">Planned <Required /></span>
+          <input
+            value={f.planned}
+            inputMode="decimal"
+            onChange={(e) => setF({ ...f, planned: e.target.value })}
+            placeholder="Planned ₹"
+            className={`${FIELD} mt-1 w-full text-right tabular-nums`}
+            aria-label="Planned amount in rupees"
+            aria-required="true"
+          />
+        </label>
       </div>
 
       <input

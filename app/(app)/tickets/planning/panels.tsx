@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
-import { IconButton } from "@/components/ui";
+import { IconButton, Required } from "@/components/ui";
 import { ConfirmWithReason } from "@/components/confirm";
 
 /**
@@ -587,7 +587,7 @@ function TemplateForm({
       }}
     >
       <div className="grid gap-2 sm:grid-cols-2">
-        <L label="Template name" hint="What it is called in the picker">
+        <L label="Template name" required hint="What it is called in the picker">
           <input name="name" required minLength={2} maxLength={60} defaultValue={template?.name ?? ""}
             placeholder="Van request" className={`${FIELD} w-full`} />
         </L>
@@ -686,10 +686,15 @@ function TemplateForm({
   );
 }
 
-function L({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function L({
+  label, hint, required, children,
+}: { label: string; hint?: string; required?: boolean; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="meta-label">{label}</span>
+      <span className="meta-label">
+        {label}
+        {required && <> <Required /></>}
+      </span>
       <span className="mt-1 block">{children}</span>
       {hint && <span className="mt-1 block text-[11px] text-text-muted">{hint}</span>}
     </label>
