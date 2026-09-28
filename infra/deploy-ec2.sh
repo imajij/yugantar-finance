@@ -162,27 +162,20 @@ EOF
 set -euo pipefail
 trap 'echo "NEON IMPORT FAILED. If it got past \"stopping the app\", the app is stopped; RDS has a snapshot from before." >&2' ERR
 
-# pg_dump refuses a server newer than itself, and Amazon Linux only packages up to
-# 17 while Neon runs 18. So: ask Neon its major version with whatever psql there
-# is, then install that major's client tools from the PostgreSQL project's own EL9
-# repository (restricted to those packages) and put them first on PATH.
-command -v psql >/dev/null || dnf install -y -q postgresql17
+# pg_dump refuses a server newer than itself. Amazon Linux packages each major as
+# its own postgresqlNN, and they conflict, so ask Neon its major with whatever psql
+# is there and swap the installed client for that major if it differs.
+# (An earlier version of this script added PGDG's EL9 repo; its build needs a
+# libldap Amazon Linux does not have, and dnf would keep trying it. Remove it.)
+rm -f /etc/yum.repos.d/pgdg*.repo
+command -v pg_dump >/dev/null || dnf install -y -q postgresql17
 MAJOR=$(psql "$SRC" -Atc 'show server_version_num' | cut -c1-2)
-PGBIN=/usr/pgsql-$MAJOR/bin
-if [ ! -x "$PGBIN/pg_dump" ]; then
-  echo "==> installing PostgreSQL $MAJOR client tools (PGDG)"
-  cat > /etc/yum.repos.d/pgdg$MAJOR.repo <<EOF
-[pgdg$MAJOR]
-name=PostgreSQL $MAJOR (PGDG, EL9)
-baseurl=https://download.postgresql.org/pub/repos/yum/$MAJOR/redhat/rhel-9-\$basearch
-enabled=1
-gpgcheck=1
-gpgkey=https://download.postgresql.org/pub/repos/yum/keys/PGDG-RPM-GPG-KEY-RHEL
-includepkgs=postgresql$MAJOR postgresql$MAJOR-libs
-EOF
-  dnf install -y -q postgresql$MAJOR
+HAVE=$(pg_dump --version | awk '{print $3}' | cut -d. -f1)
+if [ "$HAVE" != "$MAJOR" ]; then
+  echo "==> swapping PostgreSQL $HAVE client tools for $MAJOR"
+  dnf swap -y -q "$(rpm -qf --qf '%{NAME}' "$(command -v pg_dump)")" "postgresql$MAJOR"
+  hash -r
 fi
-export PATH="$PGBIN:$PATH"
 echo "==> pg_dump $(pg_dump --version | awk '{print $3}'), neon $(psql "$SRC" -Atc 'show server_version'), rds $(psql "$DST" -Atc 'show server_version')"
 
 # Every table in public with its exact row count, one per line.
