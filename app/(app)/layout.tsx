@@ -4,7 +4,7 @@ import {
   Archive, Bell, Camera, ClipboardList, CircleDot, FileText, Flag, Gauge, HandCoins,
   Home, MessagesSquare, ScrollText, Settings, Truck, Users, Wallet,
 } from "lucide-react";
-import { getSession, clerkConfigured } from "@/lib/session";
+import { getSession } from "@/lib/session";
 import { can, type Action } from "@/lib/authz";
 import { unreadCount } from "@/lib/services/notifications";
 import { unreadTotal } from "@/lib/services/chat";
@@ -174,7 +174,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <p className="px-2 pb-1 text-[var(--text-meta)] text-text-faint">
             {user.departmentName} · {user.role.replace("_", " ").toLowerCase()}
           </p>
-          <SignOutButton withClerk={clerkConfigured()} />
+          <SignOutButton />
         </div>
       </aside>
 

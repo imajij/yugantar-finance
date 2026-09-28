@@ -12,7 +12,7 @@
  * each is matched whole.
  */
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { allowedEmailDomains, describeAllowedDomains, emailDomainAllowed } from "@/lib/clerk";
+import { allowedEmailDomains, describeAllowedDomains, emailDomainAllowed } from "@/lib/email-domains";
 
 let saved: string | undefined;
 beforeEach(() => { saved = process.env.ALLOWED_EMAIL_DOMAIN; });

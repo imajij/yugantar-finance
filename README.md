@@ -13,7 +13,7 @@ list is deliberately not built — see [What is not built](#what-is-not-built).
 
 | Milestone | Delivers | State |
 |---|---|---|
-| M1 Foundation | Schema, `can()`, audit service, attachments, app shell, sign-in (Clerk *or* emailed links) | ✅ |
+| M1 Foundation | Schema, `can()`, audit service, attachments, app shell, sign-in by emailed links | ✅ |
 | M2 Budget | Fest total, allocations, transfers, line items, documents, the `v_*` views, dashboards, budget review, F13/F14 | ✅ |
 | M3 Reimbursements | Full 7.2 state machine, the three queues, F1–F6, comments, timelines, email | ✅ |
 | M4 Vendors & income | 7.3 state machine with milestones, exposure, F8/F9/F12, income ledger and tranches, cash position | ✅ |
@@ -112,11 +112,11 @@ Follows PRD 18.2 exactly. The ten rules, and where each one lives:
 
 ```
 app/
-  (auth)/                       sign-in (Clerk or a link) and the link callback
+  (auth)/                       sign-in (emailed link) and the link callback
   (app)/                        dashboard requests tickets budget vendors income
                                 queues flags notifications close-out audit admin
   api/v1/…                      route handlers: parse → can() → service → respond
-proxy.ts                        security headers (CSP) + Clerk session resolution
+proxy.ts                        security headers (CSP)
 lib/
   authz.ts  entities.ts         permissions; (type, id) → the resource `can` needs
   api.ts                        route wrapper: session, params, idempotency, errors
@@ -130,7 +130,7 @@ lib/
   storage.ts  email.tsx         R2 (SigV4, no SDK) or local disk; Resend
   auth.ts  session.ts           sign-in links and sessions; who the caller is
   env.ts                        reading config, where blank means unset
-  clerk.ts  rate-limit.ts       identity linking and invitations; fixed-window limits
+  email-domains.ts  rate-limit.ts  who may be invited; fixed-window limits
   xlsx.ts  test-support.ts      a minimal XLSX writer; the audit-guard escape hatch
 emails/                         the notification template (dark, table-based HTML)
 jobs/                           cron logic, called by app/api/v1/cron/*
@@ -148,11 +148,10 @@ Five deliberate deviations from the PRD, each noted at the point of use:
   it signs you into is its own small trust problem. Built for email clients rather
   than browsers — `bgcolor` attributes alongside CSS, everything inline, an explicit
   `color-scheme` so Apple Mail does not invert it. Exports stay light, as specified.
-- **Sign-in without Clerk.** PRD 13 names Google Workspace via Clerk, and that is
-  still the path wherever Clerk is configured. Emailed one-time links are the
-  alternative when it is not, so a deployment is usable before those keys exist —
-  same passwordless shape, same domain restriction, same invitation-only rule. See
-  [Signing in](#signing-in).
+- **Sign-in without Clerk.** PRD 13 names Google Workspace via Clerk. The fest
+  decided against Clerk, so sign-in is an emailed one-time link — same passwordless
+  shape, same domain restriction, same invitation-only rule. The `users.clerk_user_id`
+  column is left in place, unused. See [Signing in](#signing-in).
 - **A planning layer on work tickets.** PRD 7.7 describes tickets as cross-department
   asks and nothing more — "no subtasks, no dependencies, no sprints". A fest week
   generates hundreds of them, and five fixed tabs cannot organise that, so the board
@@ -343,23 +342,18 @@ them configured. All are wired and ready for credentials.
 
 | Service | Configured | Not configured |
 |---|---|---|
-| **Clerk** (`CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`) | Google sign-in restricted to `ALLOWED_EMAIL_DOMAIN`; `POST /webhooks/clerk` links a Clerk account to the INVITED row with that email — unknown emails are refused | A one-time link emailed to an already-invited address (`lib/auth.ts`), backed by a server-side session. See [Signing in](#signing-in) |
 | **Cloudflare R2** (`R2_*`) | Private bucket; presigned PUT for upload, presigned GET for reads, both 15 minutes. SigV4 signed in `lib/storage.ts` — no AWS SDK. See [Setting up R2](#setting-up-r2) | Files go to `./.uploads` with HMAC-signed URLs of the same shape and expiry. `UPLOAD_URL_SECRET` is required for this path in production |
 | **Resend** (`RESEND_API_KEY`, `EMAIL_FROM`) | Notifications are written in the same transaction as the write that caused them, then sent after the response commits (`after()`); failures retry on the `/cron/outbox` sweep | Rows stay unsent and the body is logged. The in-app inbox works either way |
 | **Anthropic** (`ANTHROPIC_API_KEY`) | — | Receipt OCR and the model-based flags are v1.1 (PRD 15). `attachments.ocr_json` exists, so adding them needs no migration |
 
 ### Signing in
 
-Two providers, never both offered at once, and the app is identical downstream of
-either — `lib/session.ts` resolves both to a row in `users` with a role and a
-department, and authorization runs on that.
-
-Where Clerk is configured it wins, exactly as PRD 18.1 specifies. Where it is not,
-sign-in is a one-time link (`lib/auth.ts`). What makes that safe:
+Sign-in is a one-time link emailed to an invited address (`lib/auth.ts`);
+`lib/session.ts` resolves it to a row in `users` with a role and a department, and
+authorization runs on that. What makes it safe:
 
 - **An invitation is the gate.** A link is only ever issued to an address that already
-  has a `users` row. Nobody signs themselves up — the same rule the Clerk webhook
-  enforces.
+  has a `users` row. Nobody signs themselves up.
 - **Only hashes are stored.** The token in the inbox is the secret; the database holds
   its SHA-256. A database dump grants nobody a login.
 - **One use, fifteen minutes.** Consumption is a conditional `UPDATE`, so the database
@@ -394,7 +388,6 @@ value. Restart the dev server after editing — env files are read at startup.
 | `APP_URL` | The address people actually reach the app on | Emailed links point at localhost |
 | `RESEND_API_KEY`, `EMAIL_FROM` | resend.com → API Keys; the from-address must be on a verified domain | Mail is logged, not sent — nobody you invite can sign in |
 | `R2_*` | Cloudflare → R2 → API → Manage API tokens ([full steps](#setting-up-r2)) | Files go to `./.uploads`, lost on redeploy |
-| `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | clerk.com → API Keys | Sign-in is an emailed link instead (both are fine) |
 | `CRON_SECRET` | `openssl rand -hex 32` | Every `/api/v1/cron/*` returns 403 |
 | `UPLOAD_URL_SECRET` | `openssl rand -hex 32` | Only needed when running **without** R2 in production |
 | `ANTHROPIC_API_KEY` | Nothing yet — OCR is v1.1 | No effect |

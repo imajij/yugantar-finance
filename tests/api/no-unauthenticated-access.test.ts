@@ -62,9 +62,9 @@ function bodyFor(path: string): unknown {
 }
 
 /**
- * What counts as "not served". A redirect is included because Clerk's middleware
- * answers an unauthenticated request that way, and 404 because some handlers refuse
- * by pretending the record is not there — both are refusals, and neither leaks.
+ * What counts as "not served". A redirect is included because a page answers an
+ * unauthenticated request by sending it to sign-in, and 404 because some handlers
+ * refuse by pretending the record is not there — both are refusals, and neither leaks.
  */
 const REFUSED_STATUS = new Set([301, 302, 307, 308, 400, 401, 403, 404, 422, 429]);
 
@@ -79,7 +79,6 @@ const PUBLIC_BY_DESIGN: Record<string, string> = {
   "/auth/sign-out": "clearing a session you may not have is harmless",
   "/attachments/upload": "the presigned URL's signature is the authority",
   "/attachments/download": "the presigned URL's signature is the authority",
-  "/webhooks/clerk": "the Svix signature is the authority",
 };
 
 const isPublic = (path: string) => Object.keys(PUBLIC_BY_DESIGN).some((p) => path === p);

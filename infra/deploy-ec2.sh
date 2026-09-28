@@ -3,6 +3,8 @@
 #
 #   infra/deploy-ec2.sh            # deploys the commit checked out here (must be pushed)
 #   infra/deploy-ec2.sh <sha|ref>  # deploys that commit instead
+#   SEED=1 infra/deploy-ec2.sh     # also runs db/seed.mts (a fresh, empty database only;
+#                                  # after the Neon import the fest already exists)
 #
 # The operator role may open a Session Manager shell but may not run SSM commands
 # or write to S3, so the code cannot be pushed to the host. Instead this builds one
@@ -50,6 +52,7 @@ aws sts get-caller-identity --query Arn --output text >/dev/null
 gh auth status >/dev/null 2>&1 || { echo "gh is not logged in: gh auth login" >&2; exit 1; }
 
 # ------------------------------------------------------------------ commit
+SEED="${SEED:-0}"
 REF="${1:-HEAD}"
 SHA=$(git rev-parse "$REF^{commit}")
 git fetch -q origin
@@ -58,7 +61,7 @@ echo "Deploying $(git log -1 --format='%h %s' "$SHA")"
 
 # ---------------------------------------------------------------- the .env
 # Service keys come from your local .env, which holds the real ones; .env.local (the
-# dev overrides, where Clerk, Resend and the R2 keys are blanked) only fills gaps such
+# dev overrides, where Resend and the R2 keys are blanked) only fills gaps such
 # as the bootstrap admin. Blank never counts. The database, URL and the two secrets
 # are production's own.
 DB_PASSWORD=$(cat "$SECRETS_DIR/db-password")
@@ -82,7 +85,6 @@ ENV_FILE=$(
     const local = { ...parse(".env.local"), ...parse(".env") };
     const copied = [
       "ALLOWED_EMAIL_DOMAIN", "EMAIL_FROM", "RESEND_API_KEY",
-      "CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_WEBHOOK_SECRET",
       "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "R2_ENDPOINT",
       "BOOTSTRAP_ADMIN_EMAIL", "BOOTSTRAP_ADMIN_NAME", "BOOTSTRAP_FEST_NAME", "BOOTSTRAP_FEST_SLUG",
     ];
@@ -105,6 +107,58 @@ TARBALL_URL=$(curl -fsS -o /dev/null -w '%{redirect_url}' \
   "https://api.github.com/repos/$REPO/tarball/$SHA")
 [ -n "$TARBALL_URL" ] || { echo "GitHub did not return a tarball link." >&2; exit 1; }
 
+# ------------------------------------------------------------ scheduled jobs
+# The host runs its own: every five minutes for the ticket SLA clock and the email
+# outbox (PRD 14 wants minutes), and everything once a day. They call the app on
+# localhost with CRON_SECRET, so nothing leaves the box. Rewritten on every deploy.
+CRON_SETUP=$(cat <<'CRON'
+cat > /usr/local/bin/yugaantar-cron <<'EOF'
+#!/bin/bash
+# yugaantar-cron <job>... — POSTs each /api/v1/cron/<job> on the local app.
+set -uo pipefail
+secret=$(sed -n 's/^CRON_SECRET="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' /opt/yugaantar/app/.env.production.local)
+failed=0
+for job in "$@"; do
+  if ! body=$(curl -sS --fail-with-body --max-time 300 -X POST \
+      -H "authorization: Bearer $secret" "http://127.0.0.1:3000/api/v1/cron/$job"); then
+    echo "$job failed: $body" >&2; failed=1
+  else
+    echo "$job: $body"
+  fi
+done
+exit $failed
+EOF
+chmod 755 /usr/local/bin/yugaantar-cron
+
+unit() { # name, schedule, jobs
+  cat > /etc/systemd/system/yugaantar-cron-$1.service <<EOF
+[Unit]
+Description=Yugaantar scheduled jobs ($1)
+After=yugaantar.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/yugaantar-cron $3
+EOF
+  cat > /etc/systemd/system/yugaantar-cron-$1.timer <<EOF
+[Unit]
+Description=Yugaantar scheduled jobs ($1)
+
+[Timer]
+OnCalendar=$2
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+}
+unit frequent '*:0/5' 'ticket-sla outbox'
+unit daily '*-*-* 02:30:00 UTC' 'all'
+systemctl daemon-reload
+systemctl enable --now yugaantar-cron-frequent.timer yugaantar-cron-daily.timer
+CRON
+)
+
 # ------------------------------------------------------ what runs on the host
 REMOTE=$(cat <<EOF
 set -euo pipefail
@@ -123,7 +177,7 @@ sudo -u yugaantar -H bash -c '
   cd /opt/yugaantar/app.new
   echo "==> install";  pnpm install --frozen-lockfile
   echo "==> migrate";  pnpm exec tsx --env-file=.env.production.local db/migrate.mts
-  echo "==> seed";     pnpm exec tsx --env-file=.env.production.local db/seed.mts
+  if [ "$SEED" = 1 ]; then echo "==> seed"; pnpm exec tsx --env-file=.env.production.local db/seed.mts; fi
   echo "==> build";    NODE_ENV=production pnpm build
 '
 
@@ -132,10 +186,12 @@ rm -rf app.old
 [ -d app ] && mv app app.old
 mv app.new app
 systemctl restart yugaantar
+echo '$(printf '%s\n' "$CRON_SETUP" | base64)' | base64 -d | bash
 for i in \$(seq 1 30); do
   curl -fs -o /dev/null http://127.0.0.1:3000/ && break; sleep 2
 done
 systemctl --no-pager --lines=5 status yugaantar | head -12 || true
+systemctl list-timers 'yugaantar-cron-*' --no-pager | head -4
 echo "==> public: \$(curl -s -o /dev/null -w '%{http_code}' $APP_URL/)"
 echo "DEPLOYED $SHA"
 EOF

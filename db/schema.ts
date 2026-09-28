@@ -114,6 +114,7 @@ export const departments = pgTable("departments", {
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   festId: uuid("fest_id").notNull().references(() => fests.id),
+  // Unused since Clerk was removed; kept rather than dropped so no migration touches user rows.
   clerkUserId: text("clerk_user_id").unique(),
   email: citext("email").notNull(),
   name: text("name").notNull(),
@@ -730,9 +731,9 @@ export const humanIdSequences = pgTable("human_id_sequences", {
 /**
  * Sign-in links (PRD 13, adapted).
  *
- * The spec calls for Clerk and Google Workspace, and Clerk still takes precedence
- * wherever it is configured. This is the path when it is not: a one-time link
- * emailed to an address that has already been invited.
+ * The spec calls for Clerk and Google Workspace; the fest decided against Clerk, so
+ * this is the only way in: a one-time link emailed to an address that has already
+ * been invited.
  *
  * Only the SHA-256 of the token is stored. A dump of this table is then worthless —
  * the link in someone's inbox is the secret, and the database only holds a fingerprint

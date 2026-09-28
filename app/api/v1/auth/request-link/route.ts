@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { errorResponse, toErrorResponse } from "@/lib/api";
 import { requestSignInLink } from "@/lib/auth";
-import { clerkConfigured } from "@/lib/clerk";
 import { consume } from "@/lib/rate-limit";
 
 const schema = z.object({ email: z.email().max(320) });
@@ -23,11 +22,6 @@ const schema = z.object({ email: z.email().max(320) });
  *   **Issuing is invitation-gated** inside the service. Nobody signs themselves up.
  */
 export async function POST(request: Request) {
-  if (clerkConfigured()) {
-    // Two live ways in is one too many. Clerk is the only door where it exists.
-    return errorResponse("NOT_FOUND", "Sign in with your college account instead");
-  }
-
   try {
     const body = await request.json().catch(() => null);
     const parsed = schema.safeParse(body);
