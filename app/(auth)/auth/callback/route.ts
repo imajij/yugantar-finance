@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, consumeSignInToken, createSession, sessionCookieOptions } from "@/lib/auth";
+import { appUrl } from "@/lib/email";
 
 /**
  * Where a sign-in link lands. Spends the token, opens a session, redirects in.
@@ -13,13 +14,17 @@ import { SESSION_COOKIE, consumeSignInToken, createSession, sessionCookieOptions
  *
  * The token never survives into the address bar: the redirect drops it, so it does
  * not end up in browser history or in a `Referer` header on the next request.
+ *
+ * Redirects are built on `APP_URL`, not `request.url`. Behind a reverse proxy the
+ * latter is the app server's own address (`localhost:3000`), and the browser would
+ * be sent there.
  */
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get("token");
   const consumed = token ? await consumeSignInToken(token) : null;
 
   if (!consumed) {
-    return NextResponse.redirect(new URL("/sign-in?error=link", request.url));
+    return NextResponse.redirect(new URL("/sign-in?error=link", appUrl()));
   }
 
   const { token: sessionToken, expiresAt } = await createSession(consumed.userId, {
@@ -28,5 +33,5 @@ export async function GET(request: NextRequest) {
   });
 
   (await cookies()).set(SESSION_COOKIE, sessionToken, sessionCookieOptions(expiresAt));
-  return NextResponse.redirect(new URL("/dashboard", request.url));
+  return NextResponse.redirect(new URL("/dashboard", appUrl()));
 }
