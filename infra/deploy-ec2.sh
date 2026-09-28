@@ -162,8 +162,28 @@ EOF
 set -euo pipefail
 trap 'echo "NEON IMPORT FAILED. If it got past \"stopping the app\", the app is stopped; RDS has a snapshot from before." >&2' ERR
 
-command -v pg_dump >/dev/null || dnf install -y -q postgresql17
-echo "==> neon $(psql "$SRC" -Atc 'show server_version'), rds $(psql "$DST" -Atc 'show server_version')"
+# pg_dump refuses a server newer than itself, and Amazon Linux only packages up to
+# 17 while Neon runs 18. So: ask Neon its major version with whatever psql there
+# is, then install that major's client tools from the PostgreSQL project's own EL9
+# repository (restricted to those packages) and put them first on PATH.
+command -v psql >/dev/null || dnf install -y -q postgresql17
+MAJOR=$(psql "$SRC" -Atc 'show server_version_num' | cut -c1-2)
+PGBIN=/usr/pgsql-$MAJOR/bin
+if [ ! -x "$PGBIN/pg_dump" ]; then
+  echo "==> installing PostgreSQL $MAJOR client tools (PGDG)"
+  cat > /etc/yum.repos.d/pgdg$MAJOR.repo <<EOF
+[pgdg$MAJOR]
+name=PostgreSQL $MAJOR (PGDG, EL9)
+baseurl=https://download.postgresql.org/pub/repos/yum/$MAJOR/redhat/rhel-9-\$basearch
+enabled=1
+gpgcheck=1
+gpgkey=https://download.postgresql.org/pub/repos/yum/keys/PGDG-RPM-GPG-KEY-RHEL
+includepkgs=postgresql$MAJOR postgresql$MAJOR-libs
+EOF
+  dnf install -y -q postgresql$MAJOR
+fi
+export PATH="$PGBIN:$PATH"
+echo "==> pg_dump $(pg_dump --version | awk '{print $3}'), neon $(psql "$SRC" -Atc 'show server_version'), rds $(psql "$DST" -Atc 'show server_version')"
 
 # Every table in public with its exact row count, one per line.
 counts() {
