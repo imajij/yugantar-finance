@@ -6,6 +6,10 @@
 #   infra/deploy-ec2.sh --migrate-from-neon  # also replaces RDS with Neon's data, once
 #   SEED=1 infra/deploy-ec2.sh               # also runs db/seed.mts (a fresh, empty database
 #                                            # only; after the Neon import the fest exists)
+#   infra/deploy-ec2.sh --verify             # only the post-deploy checks, against the live site
+#
+# Every deploy ends with those checks: DNS, the certificate, the redirects, that the
+# sign-in endpoints answer, and that the unauthenticated surface stays shut.
 #
 # The operator role may open a Session Manager shell but may not run SSM commands
 # or write to S3, so the code cannot be pushed to the host. Instead this builds one
@@ -31,13 +35,63 @@ export AWS_REGION="${AWS_REGION:-ap-south-1}"
 
 INSTANCE_ID=i-035bcc83bb735658c
 DB_INSTANCE=yugaantar-finance-db
-APP_URL=https://16-4-14-159.sslip.io
+ELASTIC_IP=16.4.14.159
+APP_HOST=internal.yugaantar.org
+APP_URL=https://$APP_HOST
+# The address the app was first served on. Kept, redirecting, so old links still land.
+OLD_HOST=16-4-14-159.sslip.io
 DB_HOST=yugaantar-finance-db.cp44wk22oekm.ap-south-1.rds.amazonaws.com
 DB_USER=yugaantar_admin
 DB_NAME=yugantar
 REPO=imajij/yugantar-finance
 
 cd "$(dirname "$0")/.."
+
+# ------------------------------------------------------------------ verify
+# What a person would otherwise click through after every deploy. Needs only curl,
+# dig and openssl, and never signs anybody in: it checks that each door answers the
+# way it should, not what is behind it.
+verify() {
+  local pass=0 fail=0
+  check() { # description, then a command that prints a detail and exits 0 on success
+    local detail
+    if detail=$("${@:2}" 2>&1); then pass=$((pass + 1)); echo "  ✓ $1${detail:+  ($detail)}"
+    else fail=$((fail + 1)); echo "  ✗ $1${detail:+  ($detail)}"; fi
+  }
+  # status and Location of a request, without following it
+  head_of() { curl -sS -o /dev/null --max-time 20 -w '%{http_code} %{redirect_url}' "$@"; }
+  expect() { # want, then curl args
+    local want=$1 got; shift
+    got=$(head_of "$@") || { echo "$got"; return 1; }
+    echo "$got"; [[ "$got" == $want ]]
+  }
+
+  echo
+  echo "Checking $APP_URL"
+  check "DNS: $APP_HOST → $ELASTIC_IP" bash -c "dig +short A $APP_HOST | tr '\n' ' '; dig +short A $APP_HOST | grep -qx $ELASTIC_IP"
+  check "no AAAA record pointing elsewhere" bash -c "a=\$(dig +short AAAA $APP_HOST); [ -z \"\$a\" ] || { echo \"\$a\"; false; }"
+  check "certificate valid for $APP_HOST" bash -c "
+    curl -sS -o /dev/null --max-time 20 https://$APP_HOST/sign-in &&
+    echo | openssl s_client -connect $APP_HOST:443 -servername $APP_HOST 2>/dev/null |
+      openssl x509 -noout -issuer -enddate | sed 's/.*O = //; s/, CN = .*//; s/notAfter=/until /' | tr '\n' ' '"
+  check "sign-in page loads"                   expect "200 "                                       "$APP_URL/sign-in"
+  check "http redirects to https"              expect "30[18] https://$APP_HOST/"                   "http://$APP_HOST/"
+  check "signed-out / goes to sign-in on $APP_HOST" expect "30[27] https://$APP_HOST/sign-in*"         "$APP_URL/"
+  check "a bad sign-in link comes back to $APP_HOST" expect "30[27] https://$APP_HOST/sign-in?error=link" "$APP_URL/auth/callback?token=deploy-check"
+  check "sign-in link endpoint answers"        bash -c "curl -sS --max-time 20 -X POST -H 'content-type: application/json' \
+      -d '{\"email\":\"deploy-check@example.com\"}' $APP_URL/api/v1/auth/request-link | grep -q '\"ok\":true' && echo ok"
+  check "API refuses without a session"        expect "40[13] *"                                  "$APP_URL/api/v1/me"
+  check "cron refuses without its token"       expect "403 "                                       -X POST "$APP_URL/api/v1/cron/outbox"
+  check "HSTS and CSP headers present"         bash -c "h=\$(curl -sSI --max-time 20 $APP_URL/sign-in); \
+      grep -qi '^strict-transport-security:' <<<\"\$h\" && grep -qi '^content-security-policy:' <<<\"\$h\" && echo both"
+  check "$OLD_HOST redirects to $APP_HOST"     expect "30[18] https://$APP_HOST/sign-in"          "https://$OLD_HOST/sign-in"
+
+  echo
+  if [ "$fail" = 0 ]; then echo "All $pass checks passed. $APP_URL"; else echo "$fail of $((pass + fail)) checks FAILED."; fi
+  [ "$fail" = 0 ]
+}
+
+for arg in "$@"; do [ "$arg" = --verify ] && { verify; exit $?; }; done
 
 # ------------------------------------------------------------ local secrets
 # Kept outside the repo, generated once, reused on every deploy so sessions,
@@ -71,6 +125,21 @@ for arg in "$@"; do
     *) REF="$arg" ;;
   esac
 done
+
+# ------------------------------------------------------------------ caddy
+# Served on APP_HOST, with the old sslip.io name redirecting to it. Validated on the
+# host before it replaces the running config; a bad one never gets loaded.
+CADDYFILE=$(cat <<EOF
+$APP_HOST {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3000
+}
+
+$OLD_HOST {
+	redir https://$APP_HOST{uri} permanent
+}
+EOF
+)
 
 # ------------------------------------------------------------------ commit
 SHA=$(git rev-parse "$REF^{commit}")
@@ -332,7 +401,22 @@ for i in \$(seq 1 30); do
 done
 systemctl --no-pager --lines=5 status yugaantar | head -12 || true
 systemctl list-timers 'yugaantar-cron-*' --no-pager | head -4
-echo "==> public: \$(curl -s -o /dev/null -w '%{http_code}' $APP_URL/)"
+
+echo "==> caddy"
+echo '$(printf '%s\n' "$CADDYFILE" | base64)' | base64 -d > /etc/caddy/Caddyfile.new
+/usr/local/bin/caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile.new
+if ! cmp -s /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile; then
+  mv /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
+  systemctl reload caddy
+  echo "    reloaded for $APP_HOST"
+else
+  rm -f /etc/caddy/Caddyfile.new
+fi
+# A new name needs its certificate issued before HTTPS answers; give it a minute.
+for i in \$(seq 1 30); do
+  curl -fs -o /dev/null https://$APP_HOST/sign-in && break; sleep 2
+done
+echo "==> public: \$(curl -s -o /dev/null -w '%{http_code}' $APP_URL/sign-in)"
 echo "DEPLOYED $SHA"
 EOF
 )
@@ -357,4 +441,6 @@ aws ssm start-session --target "$INSTANCE_ID"
 
 # Don't leave production secrets on the clipboard.
 printf '' | pbcopy
-echo "Clipboard cleared. App: $APP_URL"
+echo "Clipboard cleared."
+
+verify
