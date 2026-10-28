@@ -56,7 +56,7 @@ Today fest finances live in spreadsheets, WhatsApp groups, and physical receipts
 Flag any of these that are wrong — they shape the design.
 
 1. **Line items, not manual marking.** "Feed in a larger figure, break it down, HODs mark what's utilized" is modeled as: Finance HOD sets the fest total and department allocations; each allocation is broken into named line items (e.g. *Tech → Sound system ₹20,000*); every reimbursement and vendor payment is attached to a line item; utilization is **computed from transactions**, not typed in. HODs can additionally mark a line item **Closed** when no more spend is expected, which releases its unspent balance. This keeps the "mark as utilized" intent while making the numbers trustworthy.
-2. Both Finance HOD and Department HODs can create and edit line items; Finance HOD is the final authority, and the department cap cannot be exceeded. Line items can carry supporting documents (vendor quotations, web listings, screenshots) so Finance can see the basis for each number. They are optional by default, with a configurable amount above which at least one is required.
+2. Both Finance HOD and Department HODs can create and edit line items; Finance HOD is the final authority, and the department cap cannot be exceeded. Line items can carry supporting documents (vendor quotations, web listings, screenshots) so Finance can see the basis for each number. They are optional, with a configurable amount above which at least one is required — off by default.
 3. The platform serves one fest at a time. Every record carries a `fest_id` so it can be reused next year.
 4. Single currency (INR), single timezone (IST).
 5. Members can see their own department's line items and Available figure (read-only), so they don't spend money that isn't there. They cannot see other departments.
@@ -89,6 +89,7 @@ Flag any of these that are wrong — they shape the design.
 | Approve vendor request, release balance, cancel | — | — | ✓ | — |
 | Create / edit line items (own dept, within cap) | — | ✓ | ✓ (any dept) | — |
 | Close / reopen a line item | — | ✓ | ✓ | — |
+| Delete a line item (nothing charged against it) | — | ✓ (own dept) | ✓ | — |
 | Attach / remove supporting documents on line items | — | ✓ (own dept) | ✓ | — |
 | Mark a line item as reviewed | — | — | ✓ | — |
 | Set fest total, department allocations, reallocate | — | — | ✓ | — |
@@ -192,7 +193,7 @@ In-kind sponsorship is shown for completeness but never counts toward cash.
    - Links — web listings (an Amazon or IndiaMART page, a rental site). The URL plus an optional screenshot, because listings change.
    - Each document carries a label, a source (vendor or site), and the quoted amount, so Finance can compare the planned amount against its quotes at a glance. Three quotes for one item is the normal case.
    - Documents stay visible on the line item, in the department statement export, and on every request attached to that line item.
-   - A fest setting (`line_item_doc_threshold_paise`, default ₹10,000; 0 disables) sets the amount at or above which a line item must have at least one document before requests can attach to it. Below it, documents are optional.
+   - A fest setting (`line_item_doc_threshold_paise`, **default 0 — off**) sets the amount at or above which a line item must have at least one document before requests can attach to it. While it is 0, documents are optional at every amount: the gate fell on the person filing a claim rather than the person who planned the line item, and nothing they could do cleared it. Set it to an amount in paise to re-arm it for one fest; flag F13 and the budget-review ordering follow the same setting.
    - Finance HOD can mark a line item **Reviewed** after looking at its documents. Unreviewed items above the threshold are listed first on the Finance budget-review screen. Whether this should become a hard approval gate is open question 20.
 4. Finance HOD invites users by college email and assigns roles and departments.
 5. Finance HOD configures expense types and flag thresholds (sensible defaults provided).
@@ -334,6 +335,7 @@ Covers anything where money goes to an outside party in stages — sound/light r
 - **Within a department:** Dept HOD can add, rename, resize, or close line items as long as Σ line items ≤ allocation and no line item drops below its own Committed + Spent.
 - **Closing a line item:** no new requests can attach to it; its unspent balance returns to the department's unplanned buffer. Finance HOD can pull buffer back to Reserve. Closed items can be reopened by the HOD with a reason.
 - **Supporting documents** can be added or removed while a line item is open. Removal is soft (file retained, marked removed) and logged.
+- **Deleting a line item:** allowed only while nothing has been charged against it — no reimbursement request and no vendor request, whatever their state. The planned amount returns to the department's unplanned buffer, the row is kept (soft delete), open flags on it are dismissed as no longer applying, and the deletion is logged. Once anything is filed against it the delete is refused with `CONFLICT`; closing it is the way to retire an item that has history, because the five numbers read the line item and money that has moved cannot be made to disappear from them.
 - All of the above write audit events showing before and after values.
 
 ### 7.6 Comments
@@ -716,7 +718,7 @@ All exports are CSV and XLSX, filterable by date range, department, state, line 
 18. Light theme: needed at launch for faculty and college accounts, or v1.1? (Draft: v1.1; exports are light regardless.)
 19. Can Design share the vector source of the wordmark and a favicon mark?
 20. Should line items need Finance approval before they can receive requests (a hard review gate), or is the optional Reviewed mark plus the document threshold enough? (Draft: no gate.)
-21. Is ₹10,000 the right default for the supporting-document threshold?
+21. ~~Is ₹10,000 the right default for the supporting-document threshold?~~ Closed: the default is 0 (off). A missing quotation is Finance's to chase on the budget-review screen, not a refusal aimed at whoever is next to file a claim against the item.
 
 ## 18. Technical architecture
 
@@ -1333,7 +1335,7 @@ group by f.id, cash.received_paise, cash.pledged_paise, cash.expected_paise;
 ```json
 {
   "fest_days": ["2026-11-27", "2026-11-28", "2026-11-29"],
-  "line_item_doc_threshold_paise": 1000000,
+  "line_item_doc_threshold_paise": 0,
   "request_aging_amber_days": 3,
   "request_aging_red_days": 7,
   "ticket_auto_close_hours": 48,
@@ -1440,6 +1442,7 @@ One department (Tech, allocated ₹1,00,000) with one line item (Sound, planned 
 | POST | `/departments/{id}/line-items` | own H, F | `{ name, description?, planned_paise, default_expense_type_id?, attachment_ids? }`. `OVER_ALLOCATION` if Σ would exceed the department allocation |
 | GET | `/line-items/{id}` | as above | Totals, documents (with quoted amounts and lowest quote), attached requests, flags, timeline |
 | PATCH | `/line-items/{id}` | own H, F | Name, description, planned amount (cannot go below committed + spent), expense type |
+| DELETE | `/line-items/{id}` | own H, F | Soft delete, logged, optional `?reason=`. `CONFLICT` while any reimbursement or vendor request is charged against it, whatever its state — close it instead (7.5) |
 | POST | `/line-items/{id}/transitions` | own H, F (`MARK_REVIEWED`: F only) | Actions: `CLOSE` (reason), `REOPEN` (reason), `MARK_REVIEWED`, `UNMARK_REVIEWED` |
 | GET | `/line-items/{id}/documents` | as GET | Supporting documents, removed ones excluded unless `?include_removed=1` (F) |
 | POST | `/line-items/{id}/documents` | own H, F | Bind an uploaded file `{ attachment_id, label, source_name, quoted_amount_paise? }` or create a link `{ kind: "LINK", url, label, source_name, quoted_amount_paise?, screenshot_attachment_id? }`. Max 10 active. Re-evaluates F13 / F14 |
@@ -1653,9 +1656,9 @@ Each milestone ends with tests green, seed data loaded, and a short demo path in
 
 ### 21.4 Decisions already made (do not re-ask)
 
-- Line items are open on creation; there is no approval gate (open question 20 pending). The document threshold and flags F13 / F14 are the control.
+- Line items are open on creation; there is no approval gate (open question 20 pending). Flags F13 / F14 and the budget-review screen are the control; the document threshold is off by default (7.1, open question 21).
 - Finance and Core are departments (`kind`); Finance HODs and Management users belong to them.
-- Over-budget requests are flagged, never blocked. The only hard blocks are `OVER_ALLOCATION` (fest total, department allocation, line-item minimum) and the supporting-document threshold for attaching requests.
+- Over-budget requests are flagged, never blocked. The only hard blocks are `OVER_ALLOCATION` (fest total, department allocation, line-item minimum) and the supporting-document threshold for attaching requests — and that threshold ships at 0, so a deployment that never sets it has `OVER_ALLOCATION` as its only hard block.
 - Pending is subtracted from Available.
 - Payments are recorded, never executed.
 - Email is the only channel in MVP; in-app notifications are stored regardless so push can be added later without schema changes.

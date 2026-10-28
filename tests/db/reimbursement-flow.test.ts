@@ -296,6 +296,31 @@ test("a closed line item takes no new requests", async () => {
   }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
 });
 
+/**
+ * 7.1 — the supporting-document gate is a fest setting, and it ships at 0.
+ *
+ * This fest sets it, like the other fixtures, so both halves can be shown: while it
+ * is set a bare line item refuses claims, and at 0 — the seeded default — the same
+ * claim goes through. The gate fell on whoever filed next rather than on whoever
+ * planned the item, and nothing the filer could do cleared it; a missing quotation
+ * is now F13 and the budget-review screen's business, not a refusal.
+ */
+test("the document threshold refuses claims only while it is set", async () => {
+  const bare = await createLineItem(techHod, { departmentId: techId, name: "Undocumented", plannedPaise: R(20000) });
+
+  await expect(createReimbursement(member, baseRequest({
+    lineItemId: bare.id, attachmentIds: [await receipt(member)],
+  }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+  await db.execute(sql`
+    update fests set settings = settings || '{"line_item_doc_threshold_paise": 0}'::jsonb
+     where id = ${festId}`);
+
+  await expect(createReimbursement(member, baseRequest({
+    lineItemId: bare.id, attachmentIds: [await receipt(member)],
+  }))).resolves.toMatchObject({ status: "DRAFT", lineItemId: bare.id });
+});
+
 test("a request needs at least one receipt", async () => {
   await expect(createReimbursement(member, baseRequest({ attachmentIds: [] })))
     .rejects.toMatchObject({ code: "VALIDATION_ERROR" });

@@ -9,9 +9,9 @@
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { attachments, departments, expenseTypes, lineItems } from "@/db/schema";
+import { attachments, departments, expenseTypes, flags, lineItems } from "@/db/schema";
 import { assertCan, can, type Actor } from "@/lib/authz";
-import { ApiError, notFound, overAllocation } from "@/lib/api";
+import { ApiError, conflict, notFound, overAllocation } from "@/lib/api";
 import { assertLineItemTransition, type LineItemAction } from "@/lib/state-machines/line-item";
 import { satisfiesActorConstraints } from "@/lib/authz";
 import { lineItemTotals } from "@/lib/queries/budget";
@@ -174,6 +174,66 @@ export async function transitionLineItem(
   });
 }
 
+/**
+ * Deleting a line item (7.5). Soft, audited, and refused the moment anything has
+ * been charged against it.
+ *
+ * The refusal is not caution, it is arithmetic: `v_line_item_totals` excludes
+ * deleted rows, so removing an item that carries Committed or Spent money would
+ * take that money out of the department and fest totals while the payment it
+ * describes stays in the world. The five numbers would quietly stop adding up.
+ *
+ * Any request at all blocks it, not only the ones holding money — a draft or a
+ * rejected claim still points at this item from its own page and from the
+ * department statement, and a reference to a pot that no longer exists is worse
+ * than a pot nobody is using. Closing it is the way to retire one that has
+ * history (7.5); deleting is for the one typed in by mistake.
+ */
+export async function deleteLineItem(actor: Actor, id: string, reason?: string) {
+  return db.transaction(async (tx) => {
+    const before = await loadForWrite(tx, actor, id, "lineItem.delete");
+
+    const [{ claims, purchases }] = (await tx.execute<{ claims: string; purchases: string }>(sql`
+      select (select count(*) from reimbursement_requests
+               where line_item_id = ${id} and deleted_at is null) as claims,
+             (select count(*) from vendor_requests
+               where line_item_id = ${id} and deleted_at is null) as purchases
+    `)) as unknown as { claims: string; purchases: string }[];
+
+    const charged = Number(claims) + Number(purchases);
+    if (charged > 0) {
+      throw conflict(
+        `${before.name} has ${charged === 1 ? "a request" : `${charged} requests`} charged against it`
+        + " — close it instead, which stops new ones without hiding the old",
+        { reimbursement_requests: Number(claims), vendor_requests: Number(purchases) },
+      );
+    }
+
+    const now = new Date();
+    const [after] = await tx.update(lineItems)
+      .set({ deletedAt: now, updatedAt: now })
+      .where(eq(lineItems.id, id)).returning();
+
+    // Its open flags describe a line item that is no longer there. The same wording
+    // `lib/flags` uses when a condition goes away, because that is what happened —
+    // `evaluateLineItemFlags` cannot say it, having nothing left to read.
+    await tx.update(flags)
+      .set({ status: "DISMISSED", resolvedAt: now, resolutionNote: "No longer applies" })
+      .where(and(
+        eq(flags.entityType, "LINE_ITEM"), eq(flags.entityId, id), eq(flags.status, "OPEN"),
+      ));
+
+    await recordAudit(tx, {
+      festId: actor.festId, entityType: "LINE_ITEM", entityId: id, actorId: actor.id,
+      action: "line_item.delete",
+      before: { ...snapshot(before, AUDITED), deletedAt: null },
+      after: { ...snapshot(after, AUDITED), deletedAt: after.deletedAt },
+      reason: reason?.trim() || null,
+    });
+    return { ok: true, id };
+  });
+}
+
 /** 7.5 — removal is soft: the file is retained and marked removed, and it is logged. */
 export async function removeDocument(actor: Actor, lineItemId: string, attachmentId: string) {
   return db.transaction(async (tx) => {
@@ -246,7 +306,8 @@ async function assertExpenseTypeBelongsToFest(
 
 async function loadForWrite(
   tx: Tx, actor: Actor, id: string,
-  action: "lineItem.edit" | "lineItem.close" | "lineItem.markReviewed" | "lineItem.document.manage",
+  action: "lineItem.edit" | "lineItem.close" | "lineItem.delete" | "lineItem.markReviewed"
+    | "lineItem.document.manage",
 ) {
   const [row] = await tx.select().from(lineItems)
     .where(and(eq(lineItems.id, id), eq(lineItems.festId, actor.festId), isNull(lineItems.deletedAt)))
@@ -254,6 +315,29 @@ async function loadForWrite(
   if (!row) throw notFound("Line item");
   assertCan(actor, action, { festId: actor.festId, departmentId: row.departmentId });
   return row;
+}
+
+/**
+ * How many requests are charged against each of a department's line items, which is
+ * what decides whether deleting one is offered at all. Zero is not the same as "no
+ * money against it": a draft and a rejected claim hold nothing and still count, for
+ * the reason `deleteLineItem` refuses them.
+ */
+export async function chargedCountsForDepartment(
+  departmentId: string, festId: string,
+): Promise<Map<string, number>> {
+  const rows = (await db.execute<{ line_item_id: string; charged: string }>(sql`
+    select li.id as line_item_id,
+           (select count(*) from reimbursement_requests r
+             where r.line_item_id = li.id and r.deleted_at is null)
+           + (select count(*) from vendor_requests vr
+               where vr.line_item_id = li.id and vr.deleted_at is null) as charged
+      from line_items li
+     where li.department_id = ${departmentId}
+       and li.fest_id = ${festId}
+       and li.deleted_at is null
+  `)) as unknown as { line_item_id: string; charged: string }[];
+  return new Map(rows.map((r) => [String(r.line_item_id), Number(r.charged)]));
 }
 
 /** Used by the request forms: only OPEN items can receive new requests (7.5). */
@@ -435,6 +519,11 @@ export async function listDocuments(actor: Actor, lineItemId: string, opts: { in
  * Ordered so the items that need a decision come first: unreviewed items above the
  * document threshold, then anything whose planned amount sits above its lowest
  * quote (F14), then the rest. That ordering *is* the screen's purpose.
+ *
+ * `needs_documents` tracks the threshold rather than the absence of a document, so
+ * a fest with the threshold at 0 — the default (7.1) — reports nothing as needing
+ * one and falls through to the F14 ordering. Saying "needs documents" about every
+ * undocumented ₹50 item would be a requirement nobody has asked for.
  */
 export async function budgetReview(actor: Actor) {
   assertCan(actor, "budgetReview.view", { festId: actor.festId });
@@ -455,7 +544,8 @@ export async function budgetReview(actor: Actor) {
            docs.lowest_quote_paise,
            v.pending_paise, v.committed_paise, v.spent_paise, v.available_paise,
            threshold.value as doc_threshold_paise,
-           (li.planned_paise >= threshold.value and coalesce(docs.document_count, 0) = 0) as needs_documents,
+           (threshold.value > 0 and li.planned_paise >= threshold.value
+            and coalesce(docs.document_count, 0) = 0) as needs_documents,
            (docs.lowest_quote_paise is not null and li.planned_paise > docs.lowest_quote_paise) as above_lowest_quote,
            (select count(*)::int from flags f
              where f.entity_type = 'LINE_ITEM' and f.entity_id = li.id and f.status = 'OPEN') as open_flags
@@ -470,7 +560,8 @@ export async function budgetReview(actor: Actor) {
       ) threshold
      where li.fest_id = ${actor.festId} and li.deleted_at is null
      order by
-       (li.reviewed_at is null and li.planned_paise >= threshold.value
+       (li.reviewed_at is null and threshold.value > 0
+        and li.planned_paise >= threshold.value
         and coalesce(docs.document_count, 0) = 0) desc,
        (docs.lowest_quote_paise is not null and li.planned_paise > docs.lowest_quote_paise) desc,
        li.reviewed_at nulls first,

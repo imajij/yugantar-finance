@@ -14,6 +14,7 @@ import { LineItemActions, NewLineItem } from "./line-items";
 import { RaiseConcern } from "@/components/raise-flag";
 import { AskForBudget } from "../allocation-request";
 import { pendingFor } from "@/lib/services/allocations";
+import { chargedCountsForDepartment } from "@/lib/services/line-items";
 
 interface Settings { line_item_doc_threshold_paise?: number }
 
@@ -48,6 +49,12 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
 
   const editable = can(user, "lineItem.edit", { festId: user.festId, departmentId: dept.id });
   const creatable = can(user, "lineItem.create", { festId: user.festId, departmentId: dept.id });
+  // Deleting is offered for the ones nothing is filed against; the rest are closed,
+  // not deleted, which is what `deleteLineItem` refuses them with.
+  const removable = can(user, "lineItem.delete", { festId: user.festId, departmentId: dept.id });
+  const charged = removable && items.length
+    ? await chargedCountsForDepartment(dept.id, user.festId)
+    : new Map<string, number>();
   const buffer = (totals?.allocatedPaise ?? 0) - (totals?.plannedPaise ?? 0);
 
   // An HOD drives their own budget's size by asking; only Finance and
@@ -240,6 +247,7 @@ export default async function DepartmentBudgetPage({ params }: { params: Promise
                       status: i.status,
                     }}
                     expenseTypes={types}
+                    deletable={removable && (charged.get(i.id) ?? 0) === 0}
                   />
                 )}
               </div>

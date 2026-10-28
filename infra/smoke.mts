@@ -296,6 +296,21 @@ await hit("PATCH", `/api/v1/line-items/${lineItemId}/documents/${docId}`, {
 await hit("POST", `/api/v1/line-items/${lineItemId}/transitions`, {
   as: finance, body: { action: "MARK_REVIEWED" }, label: "/api/v1/line-items/{id}/transitions",
 });
+// Deleting one. Its own item, created for the purpose: nothing has been charged
+// against it, which is the only state a line item can be deleted in. The refusal
+// for one that *has* been charged is further down, once claims exist.
+const spareItem = await hit("POST", `/api/v1/departments/${techId}/line-items`, {
+  as: finance, body: { name: "Typed by mistake", planned_paise: 100000 },
+  label: "/api/v1/departments/{id}/line-items (one to delete)",
+});
+if (spareItem.json?.id) {
+  await hit("DELETE", `/api/v1/line-items/${spareItem.json.id}?reason=Entered%20twice`, {
+    as: finance, label: "/api/v1/line-items/{id} (delete)",
+  });
+  await hit("GET", `/api/v1/line-items/${spareItem.json.id}`, {
+    as: finance, expect: 404, label: "/api/v1/line-items/{id} (gone after delete)",
+  });
+}
 await hit("GET", "/api/v1/budget-review", { as: finance });
 
 section("Allocation requests");
@@ -474,6 +489,11 @@ const claim = await hit("POST", "/api/v1/reimbursements", {
   },
 });
 const claimId = required("reimbursement id", String(claim.json?.id ?? ""));
+// Now that something is charged against it, the line item cannot be deleted —
+// closing it is the way to retire one with history (7.5).
+await hit("DELETE", `/api/v1/line-items/${lineItemId}`, {
+  as: finance, expect: 409, label: "/api/v1/line-items/{id} (delete refused, claim attached)",
+});
 await hit("GET", "/api/v1/reimbursements", { as: finance });
 await hit("GET", `/api/v1/reimbursements/${claimId}`, { as: finance, label: "/api/v1/reimbursements/{id}" });
 

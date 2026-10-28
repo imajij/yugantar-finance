@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Pencil, Plus, RotateCcw, X } from "lucide-react";
+import { Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { formatPaise } from "@/lib/money";
 import { Button, IconButton, Required } from "@/components/ui";
 import { FileUpload, type Uploaded } from "@/components/file-upload";
@@ -244,17 +244,23 @@ export function NewLineItem({
 }
 
 export function LineItemActions({
-  item, expenseTypes,
+  item, expenseTypes, deletable = false,
 }: {
   item: {
     id: string; name: string; description: string | null;
     plannedPaise: number; defaultExpenseTypeId: string | null; status: string;
   };
   expenseTypes: ExpenseTypeOption[];
+  /**
+   * Offered only for an item nothing has been charged against, which the page knows
+   * and this component cannot see. The API refuses the rest anyway; the point of
+   * deciding it here is that a control which is going to fail is not shown at all.
+   */
+  deletable?: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
-  const [confirming, setConfirming] = useState<"CLOSE" | "REOPEN" | null>(null);
+  const [confirming, setConfirming] = useState<"CLOSE" | "REOPEN" | "DELETE" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -288,6 +294,19 @@ export function LineItemActions({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: confirming, reason }),
     });
+    setBusy(false);
+    if (!res.ok) {
+      setError(errorFrom(await res.json().catch(() => null)));
+      return;
+    }
+    setConfirming(null);
+    router.refresh();
+  }
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/v1/line-items/${item.id}`, { method: "DELETE" });
     setBusy(false);
     if (!res.ok) {
       setError(errorFrom(await res.json().catch(() => null)));
@@ -333,9 +352,33 @@ export function LineItemActions({
       >
         {closing ? <X size={16} aria-hidden /> : <RotateCcw size={16} aria-hidden />}
       </IconButton>
+      {deletable && (
+        <IconButton label={`Delete ${item.name}`} disabled={busy} onClick={() => setConfirming("DELETE")}>
+          <Trash2 size={16} aria-hidden />
+        </IconButton>
+      )}
 
       <ConfirmWithReason
-        open={confirming !== null}
+        open={confirming === "DELETE"}
+        title={`Delete “${item.name}”?`}
+        consequence={
+          <>Nothing has been charged against it, so it leaves the plan without taking any
+            money with it: {formatPaise(item.plannedPaise)} returns to the
+            department&rsquo;s unplanned buffer. The record is kept and the deletion is
+            logged. If anything is filed against it before you confirm, this is refused and
+            closing it is the way instead.</>
+        }
+        confirmLabel="Delete it"
+        cancelLabel="Keep it"
+        tone="destructive"
+        busy={busy}
+        error={error}
+        onConfirm={remove}
+        onCancel={() => { setConfirming(null); setError(null); }}
+      />
+
+      <ConfirmWithReason
+        open={confirming === "CLOSE" || confirming === "REOPEN"}
         title={closing ? `Close “${item.name}”?` : `Reopen “${item.name}”?`}
         consequence={
           closing

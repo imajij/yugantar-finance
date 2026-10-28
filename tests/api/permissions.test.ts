@@ -155,6 +155,15 @@ const CASES: Case[] = [
     allow: ["otherHod", "finance", "superAdmin"],
   },
   {
+    name: "DELETE /line-items/{id} — another department's",
+    load: () => import("@/app/api/v1/line-items/[id]/route") as Promise<Record<string, Handler>>,
+    method: "DELETE",
+    // Its own line item, because this one really deletes: an allowed caller that
+    // reaches the service takes the row with it, and nothing else points at this id.
+    options: (f) => ({ params: { id: f.disposableLineItemId } }),
+    allow: ["otherHod", "finance", "superAdmin"],
+  },
+  {
     name: "POST /line-items/{id}/documents — another department's",
     load: () => import("@/app/api/v1/line-items/[id]/documents/route") as Promise<Record<string, Handler>>,
     method: "POST",

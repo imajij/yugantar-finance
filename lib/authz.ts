@@ -71,8 +71,8 @@ export type Action =
   // writes — budget
   | "fest.manage" | "department.manage" | "budget.transfer"
   | "allocationRequest.create" | "allocationRequest.decide"
-  | "lineItem.create" | "lineItem.edit" | "lineItem.close" | "lineItem.markReviewed"
-  | "lineItem.document.manage"
+  | "lineItem.create" | "lineItem.edit" | "lineItem.close" | "lineItem.delete"
+  | "lineItem.markReviewed" | "lineItem.document.manage"
   // writes — money
   | "reimbursement.create" | "reimbursement.edit" | "reimbursement.endorse"
   | "reimbursement.approve" | "reimbursement.recordPayment" | "reimbursement.hold"
@@ -272,10 +272,15 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
     case "lineItem.create":
     case "lineItem.edit":
     case "lineItem.close":
+    case "lineItem.delete":
     case "lineItem.document.manage":
       // An administrator breaks down any department's allocation, the same way they
       // read any department's numbers. The department cap still binds them — it is
       // enforced under a row lock in the service, not by who they are.
+      //
+      // Deleting sits with creating because it is the undo of a typo, not a way out
+      // of a decision: a line item that has had anything charged against it is
+      // refused in the service, whoever asks, and closing it is the way instead.
       return finance || superAdmin || (hod && own);
 
     /* ---------------------------------------------------------------- money */

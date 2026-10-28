@@ -54,6 +54,11 @@ export interface Fixture {
   ticketId: string;
   lineItemId: string;
   otherLineItemId: string;
+  /**
+   * Also Logistics', and nothing else refers to it: the delete case is allowed to
+   * succeed, and whoever gets there first takes it with them.
+   */
+  disposableLineItemId: string;
   /** On the Finance department, so a Finance HOD can spend their own budget. */
   financeLineItemId: string;
   expenseTypeId: string;
@@ -162,6 +167,7 @@ export async function buildFixture(slugPrefix: string): Promise<Fixture> {
     ticketId,
     lineItemId: await lineItem(departments.tech, "Sound"),
     otherLineItemId: await lineItem(departments.logistics, "Chairs"),
+    disposableLineItemId: await lineItem(departments.logistics, "Spare"),
     financeLineItemId: await lineItem(departments.finance, "Office supplies"),
     expenseTypeId,
     vendorId,

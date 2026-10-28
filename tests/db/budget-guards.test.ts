@@ -10,9 +10,11 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ApiError } from "@/lib/api";
 import type { Actor } from "@/lib/authz";
-import { createLineItem, updateLineItem, transitionLineItem } from "@/lib/services/line-items";
+import {
+  createLineItem, deleteLineItem, transitionLineItem, updateLineItem,
+} from "@/lib/services/line-items";
 import { transferBudget, setTotalBudget } from "@/lib/services/budget";
-import { departmentTotals } from "@/lib/queries/budget";
+import { departmentTotals, lineItemTotals } from "@/lib/queries/budget";
 import { rupeesToPaise as R } from "@/lib/money";
 import { dropFests } from "@/lib/test-support";
 
@@ -122,6 +124,63 @@ test("closing needs a reason, and only Finance may mark an item reviewed", async
     .rejects.toMatchObject({ code: "FORBIDDEN" });
   await expect(transitionLineItem(finance, item.id, "MARK_REVIEWED", {}))
     .resolves.toMatchObject({ reviewedBy: finance.id });
+});
+
+test("an unused line item can be deleted, and the plan gets its amount back", async () => {
+  const item = await createLineItem(techHod, { departmentId: techId, name: "Typo", plannedPaise: R(100000) });
+  expect((await departmentTotals(techId))!.plannedPaise).toBe(R(100000));
+
+  await expect(deleteLineItem(techHod, item.id, "created twice by mistake")).resolves.toMatchObject({ ok: true });
+
+  // Gone from the plan, and gone from the views the five numbers are read from.
+  expect((await departmentTotals(techId))!.plannedPaise).toBe(0);
+  expect(await lineItemTotals(item.id)).toBeNull();
+
+  // Soft: the row is still there, and the deletion is in the audit trail with its reason.
+  const [row] = (await db.execute(sql`
+    select deleted_at from line_items where id = ${item.id}`)) as unknown as { deleted_at: Date | null }[];
+  expect(row.deleted_at).not.toBeNull();
+
+  const events = (await db.execute(sql`
+    select action, reason from audit_events
+    where entity_type = 'LINE_ITEM' and entity_id = ${item.id} order by created_at
+  `)) as unknown as { action: string; reason: string | null }[];
+  expect(events.map((e) => e.action)).toEqual(["line_item.create", "line_item.delete"]);
+  expect(events[1].reason).toBe("created twice by mistake");
+
+  // And it is gone for good: a second delete has nothing to find.
+  await expect(deleteLineItem(techHod, item.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+});
+
+test("a line item with anything charged against it is closed, not deleted", async () => {
+  const item = await createLineItem(techHod, { departmentId: techId, name: "Sound", plannedPaise: R(200000) });
+
+  // Not approved, not paid — a claim somebody declined, holding no money at all. It
+  // still points at this line item from its own page and from the export, so the
+  // delete is refused and closing is what is left.
+  await db.execute(sql`
+    insert into reimbursement_requests
+      (fest_id, human_id, department_id, line_item_id, expense_type_id, submitter_id,
+       description, transaction_on, amount_paise, payee_name, payee_upi_id, status)
+    values (${festId}, 'RB-0003', ${techId}, ${item.id}, ${expenseTypeId}, ${member.id},
+            'declined claim', '2026-11-27', ${R(1000)}, 'Payee', 'payee@upi', 'DECLINED')`);
+
+  await expect(deleteLineItem(techHod, item.id)).rejects.toMatchObject({
+    code: "CONFLICT",
+    details: { reimbursement_requests: 1, vendor_requests: 0 },
+  });
+
+  await expect(transitionLineItem(techHod, item.id, "CLOSE", { reason: "not going ahead" }))
+    .resolves.toMatchObject({ status: "CLOSED" });
+});
+
+test("only the department's own head, Finance or an administrator may delete", async () => {
+  const mine = await createLineItem(techHod, { departmentId: techId, name: "Mine", plannedPaise: R(1000) });
+  await expect(deleteLineItem(member, mine.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+  const theirs = await createLineItem(finance, { departmentId: logisticsId, name: "Theirs", plannedPaise: R(1000) });
+  await expect(deleteLineItem(techHod, theirs.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await expect(deleteLineItem(finance, theirs.id)).resolves.toMatchObject({ ok: true });
 });
 
 test("a transfer moves allocation and records history", async () => {
