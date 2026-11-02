@@ -196,6 +196,7 @@ export interface CallResult {
   message?: string;
   json: Record<string, unknown> | null;
   text: string;
+  headers: Headers;
 }
 
 export async function call(handler: Handler, opts: CallOptions = {}): Promise<CallResult> {
@@ -219,7 +220,7 @@ export async function call(handler: Handler, opts: CallOptions = {}): Promise<Ca
   }
 
   const error = (json?.error ?? null) as { code?: string; message?: string } | null;
-  return { status: response.status, code: error?.code, message: error?.message, json, text };
+  return { status: response.status, code: error?.code, message: error?.message, json, text, headers: response.headers };
 }
 
 /** `call`, as a specific user. The two always travel together. */

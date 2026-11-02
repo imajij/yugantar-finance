@@ -11,6 +11,7 @@ import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { dropFests } from "@/lib/test-support";
+import { billSignature } from "@/lib/storage";
 import { buildFixture, callAs, type Fixture, type Handler } from "./harness";
 
 const PREFIX = "apiflow-";
@@ -460,6 +461,75 @@ test("an unbound upload belongs to its uploader and nobody else", async () => {
   expect((await callAs(fx.users.member, url, { params: { id: attachmentId } })).status).toBe(200);
   // Not even Finance, who can see every record, can reach a file with no record yet.
   expect((await callAs(fx.users.finance, url, { params: { id: attachmentId } })).code).toBe("FORBIDDEN");
+});
+
+test("the in-app receipt link redirects its reader, and refuses a stranger", async () => {
+  const create = (await load("reimbursements")).POST;
+  const url = (await load("attachments/[id]/url")).GET;
+  const id = await receipt(fx.users.member.id);
+  await callAs(fx.users.member, create, { method: "POST", body: { ...newRequest(id), submit: true } });
+
+  const query = { redirect: "1" };
+  expect((await callAs(fx.users.otherMember, url, { params: { id }, query })).status).toBe(403);
+  expect((await callAs(null, url, { params: { id }, query })).status).toBe(401);
+
+  const mine = await callAs(fx.users.member, url, { params: { id }, query });
+  expect(mine.status).toBe(302);
+  expect(mine.headers.get("location")).toContain("sig=");
+});
+
+/* ---------------------------------------------------------- public bill links */
+
+test("a bill link opens for anyone holding it, with no session", async () => {
+  const create = (await load("reimbursements")).POST;
+  const bill = (await load("bills/[id]")).GET;
+  const id = await receipt(fx.users.member.id);
+  await callAs(fx.users.member, create, { method: "POST", body: { ...newRequest(id), submit: true } });
+
+  const opened = await callAs(null, bill, { params: { id }, query: { sig: billSignature(id) } });
+  expect(opened.status).toBe(302);
+  expect(opened.headers.get("location")).toContain("sig=");
+  expect(opened.headers.get("cache-control")).toBe("no-store");
+});
+
+test("a bill link needs its own signature", async () => {
+  const create = (await load("reimbursements")).POST;
+  const bill = (await load("bills/[id]")).GET;
+  const id = await receipt(fx.users.member.id);
+  await callAs(fx.users.member, create, { method: "POST", body: { ...newRequest(id), submit: true } });
+
+  // Knowing an id is not enough, and neither is a signature for a different file.
+  const attempts = [undefined, "nonsense", "0".repeat(64), billSignature(crypto.randomUUID())];
+  for (const sig of attempts) {
+    const result = await callAs(null, bill, { params: { id }, query: sig ? { sig } : {} });
+    expect(result.status, String(sig)).toBe(404);
+  }
+});
+
+test("a removed bill, or a deleted claim, stops opening", async () => {
+  const create = (await load("reimbursements")).POST;
+  const bill = (await load("bills/[id]")).GET;
+
+  const removed = await receipt(fx.users.member.id);
+  await callAs(fx.users.member, create, { method: "POST", body: { ...newRequest(removed), submit: true } });
+  await db.execute(sql`update attachments set removed_at = now() where id = ${removed}`);
+  expect((await callAs(null, bill, { params: { id: removed }, query: { sig: billSignature(removed) } })).status).toBe(404);
+
+  const orphaned = await receipt(fx.users.member.id);
+  const claim = await callAs(fx.users.member, create, { method: "POST", body: { ...newRequest(orphaned), submit: true } });
+  await db.execute(sql`update reimbursement_requests set deleted_at = now() where id = ${String(claim.json!.id)}`);
+  expect((await callAs(null, bill, { params: { id: orphaned }, query: { sig: billSignature(orphaned) } })).status).toBe(404);
+});
+
+test("the public route opens bills only: nothing else, even correctly signed", async () => {
+  const bill = (await load("bills/[id]")).GET;
+
+  // Unbound, then a line item's document: both real files, neither a bill.
+  const id = await receipt(fx.users.member.id);
+  expect((await callAs(null, bill, { params: { id }, query: { sig: billSignature(id) } })).status).toBe(404);
+
+  await db.execute(sql`update attachments set entity_type = 'LINE_ITEM', entity_id = ${fx.lineItemId} where id = ${id}`);
+  expect((await callAs(null, bill, { params: { id }, query: { sig: billSignature(id) } })).status).toBe(404);
 });
 
 test("a receipt cannot be bound to a second request", async () => {

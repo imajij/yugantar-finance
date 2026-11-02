@@ -12,7 +12,8 @@
  *     credentials appear.
  *
  * Neither backend ever produces a public URL (PRD 11). A URL is handed out only by
- * `GET /attachments/{id}/url`, which checks that the caller can see the parent record.
+ * `GET /attachments/{id}/url`, which checks that the caller can see the parent record,
+ * and `GET /bills/{id}`, which checks a signature from the reimbursement export.
  */
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -196,6 +197,25 @@ function sign(key: string, expiresAt: number): string {
 export function verifySignature(key: string, expiresAt: number, signature: string): boolean {
   if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return false;
   const expected = Buffer.from(sign(key, expiresAt));
+  const given = Buffer.from(signature);
+  return expected.length === given.length && timingSafeEqual(expected, given);
+}
+
+/**
+ * The signature on a reimbursement export's bill link. It never expires, because the
+ * spreadsheet it is written into does not. It can only be withdrawn for one bill by
+ * removing that bill; changing the secret below withdraws every link ever exported.
+ *
+ * Not `signingSecret()` alone: that one is unset on a deployment using R2, so the R2
+ * key stands in. The prefix keeps this signature from being valid as any other.
+ */
+export function billSignature(attachmentId: string): string {
+  const secret = env("UPLOAD_URL_SECRET") ?? env("R2_SECRET_ACCESS_KEY") ?? signingSecret();
+  return createHmac("sha256", secret).update(`public-bill:${attachmentId}`).digest("hex");
+}
+
+export function verifyBillSignature(attachmentId: string, signature: string): boolean {
+  const expected = Buffer.from(billSignature(attachmentId));
   const given = Buffer.from(signature);
   return expected.length === given.length && timingSafeEqual(expected, given);
 }

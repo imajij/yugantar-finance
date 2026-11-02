@@ -23,7 +23,9 @@ import { db } from "@/db";
 import { ApiError, notFound } from "@/lib/api";
 import { assertCan, canFestWide, type Actor } from "@/lib/authz";
 import { waitingOn } from "./reimbursements";
+import { appUrl } from "@/lib/email";
 import { formatPaise } from "@/lib/money";
+import { billSignature } from "@/lib/storage";
 import { buildXlsx, type Column, type Sheet } from "@/lib/xlsx";
 
 export type ExportKind =
@@ -153,6 +155,28 @@ const REIMBURSEMENT_COLUMNS: Column[] = [
 ];
 
 /**
+ * The address of a bill, written into a file that may be opened months from now by
+ * someone with no account here (PRD 11).
+ *
+ * **Whoever holds this link can open the bill**, so it is only ever written for rows
+ * `reimbursementScope` already lets this caller take away. It is not a signed storage
+ * URL, which would die in fifteen minutes. See `publicBillUrl`.
+ */
+const billLink = (attachmentId: string) =>
+  `${appUrl()}/api/v1/bills/${attachmentId}?sig=${billSignature(attachmentId)}`;
+
+/**
+ * One column per bill, as many as the busiest claim in this file has: a spreadsheet
+ * cell holds one link. Always at least one, so an empty file has the same shape.
+ */
+function billColumns(data: Record<string, unknown>[]): Column[] {
+  const most = Math.max(1, ...data.map((row) => (row.attachment_ids as string[]).length));
+  return Array.from({ length: most }, (_, i) => ({
+    key: `bill_${i + 1}`, header: `Bill ${i + 1}`, type: "link", linkText: "Open bill", width: 12,
+  }));
+}
+
+/**
  * How much of the ledger this caller may take away.
  *
  * The same three-way rule the Reimbursements screen renders from — fest-wide for
@@ -191,6 +215,9 @@ async function reimbursementRows(actor: Actor, f: Filters) {
            (select count(*)::int from attachments a
              where a.entity_type = 'REIMBURSEMENT' and a.entity_id = r.id
                and a.removed_at is null) as receipts,
+           (select coalesce(json_agg(a.id order by a.created_at, a.id), '[]'::json) from attachments a
+             where a.entity_type = 'REIMBURSEMENT' and a.entity_id = r.id
+               and a.removed_at is null) as attachment_ids,
            (select count(*)::int from flags fl
              where fl.entity_type = 'REIMBURSEMENT' and fl.entity_id = r.id and fl.status = 'OPEN') as open_flags
       from reimbursement_requests r
@@ -749,9 +776,16 @@ export async function runExport(actor: Actor, kind: ExportKind, format: ExportFo
           row.status as Parameters<typeof waitingOn>[0],
           row.submitter_role as Parameters<typeof waitingOn>[1],
         ),
+        ...Object.fromEntries(
+          (row.attachment_ids as string[]).map((id, i) => [`bill_${i + 1}`, billLink(id)]),
+        ),
       }));
       return deliver("reimbursements", format, [
-        { name: "Reimbursements", columns: REIMBURSEMENT_COLUMNS, rows: withWaiting },
+        {
+          name: "Reimbursements",
+          columns: [...REIMBURSEMENT_COLUMNS, ...billColumns(data)],
+          rows: withWaiting,
+        },
       ]);
     }
 

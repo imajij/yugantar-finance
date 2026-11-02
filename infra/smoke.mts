@@ -1459,6 +1459,20 @@ rows.push({
 await hit("GET", "/api/v1/exports/reimbursements?format=html", {
   as: finance, expect: [400, 422], label: "/api/v1/exports/reimbursements (html refused)",
 });
+// The bill links in the file open for anyone holding one, signed in or not, and for
+// nobody who has only the id.
+const ledger = await hit("GET", "/api/v1/exports/reimbursements?format=csv", {
+  as: finance, label: "/api/v1/exports/reimbursements (csv)",
+});
+const billLink = /\/api\/v1\/bills\/[0-9a-f-]{36}\?sig=[0-9a-f]{64}/.exec(ledger.text)?.[0] ?? "";
+const opened = await hit("GET", billLink, { expect: 302, label: "a bill link from the export (signed out)" });
+rows.push({
+  group, method: "GET", path: "a bill link leads to a signed storage URL", as: "anon",
+  status: opened.status, expected: "content",
+  ok: /sig=|X-Amz-Signature=/.test(opened.headers.get("location") ?? ""),
+  note: "signed location",
+});
+await hit("GET", billLink.split("?")[0], { expect: 404, label: "a bill link without its signature" });
 
 section("Comments, flags, audit, notifications");
 await hit("POST", "/api/v1/comments", {

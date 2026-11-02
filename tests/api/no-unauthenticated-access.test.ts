@@ -79,6 +79,7 @@ const PUBLIC_BY_DESIGN: Record<string, string> = {
   "/auth/sign-out": "clearing a session you may not have is harmless",
   "/attachments/upload": "the presigned URL's signature is the authority",
   "/attachments/download": "the presigned URL's signature is the authority",
+  "/bills/[id]": "the signature in the exported link is the authority; without it, a 404",
 };
 
 const isPublic = (path: string) => Object.keys(PUBLIC_BY_DESIGN).some((p) => path === p);

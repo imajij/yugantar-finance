@@ -4,7 +4,8 @@
  * The rule that shapes this file: **a file URL is only ever handed to someone who
  * can see the record it hangs off.** A presigned URL is a bearer token — whoever
  * holds it can fetch the receipt — so the permission check happens here, before
- * the URL exists, and the URL itself lives for fifteen minutes.
+ * the URL exists, and the URL itself lives for fifteen minutes. The one exception
+ * is `publicBillUrl`, whose link is deliberately usable by whoever holds it.
  *
  * Unbound attachments (uploaded, parent not created yet) belong to their uploader
  * and nobody else, which is what makes the "create with `attachment_ids`" flow in
@@ -12,12 +13,12 @@
  */
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { attachments } from "@/db/schema";
+import { attachments, reimbursementRequests } from "@/db/schema";
 import { ApiError, notFound } from "@/lib/api";
 import { can, type Action } from "@/lib/authz";
 import { VIEW_ACTION, resolveEntity, type EntityType } from "@/lib/entities";
 import type { SessionUser } from "@/lib/session";
-import { deleteObject, getObject, MAX_FILE_BYTES, objectExists, sha256, signedDownloadUrl } from "@/lib/storage";
+import { deleteObject, getObject, MAX_FILE_BYTES, objectExists, sha256, signedDownloadUrl, verifyBillSignature } from "@/lib/storage";
 import { canAttachToMessage, canSeeMessage } from "./chat";
 import { recordAudit } from "./audit";
 
@@ -206,6 +207,37 @@ export async function attachmentUrl(actor: SessionUser, id: string): Promise<{ u
     throw new ApiError("VALIDATION_ERROR", "That upload was never completed");
   }
   return { url: await signedDownloadUrl(row.storageKey), expires_in: 15 * 60 };
+}
+
+/**
+ * A bill link from the reimbursement export, opened by anyone at all.
+ *
+ * There is no caller to check, so this holds the line in other ways. The signature
+ * is checked first, so a guessed id never reaches the database. Only a live bill on
+ * a live claim opens: a line item's quotes or an MoU do not, whatever id is put here.
+ * Every refusal is the same 404, so this cannot be used to find out what exists.
+ */
+export async function publicBillUrl(id: string, signature: string): Promise<string> {
+  if (!verifyBillSignature(id, signature)) throw notFound("Bill");
+
+  const [row] = await db.select({ kind: attachments.kind, url: attachments.url, storageKey: attachments.storageKey })
+    .from(attachments)
+    .innerJoin(reimbursementRequests, eq(attachments.entityId, reimbursementRequests.id))
+    .where(and(
+      eq(attachments.id, id),
+      eq(attachments.entityType, "REIMBURSEMENT"),
+      isNull(attachments.removedAt),
+      isNull(reimbursementRequests.deletedAt),
+    ))
+    .limit(1);
+  if (!row) throw notFound("Bill");
+
+  if (row.kind === "LINK") {
+    if (!row.url) throw notFound("Bill");
+    return row.url;
+  }
+  if (!row.storageKey || row.storageKey === "pending") throw notFound("Bill");
+  return signedDownloadUrl(row.storageKey);
 }
 
 export interface LinkInput {

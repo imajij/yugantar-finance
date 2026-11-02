@@ -618,7 +618,7 @@ Email in v1. Push or WhatsApp must be live before fest week for Urgent tickets �
 - Append-only audit log for every create / update / state change / payment record / reallocation / flag resolution, with actor, timestamp, before/after, and reason.
 - No hard deletes. Records are soft-deleted or moved to terminal states; files are retained.
 - Segregation of duties as in 5.2, enforced in the API layer.
-- Receipt, invoice, and MoU files are stored privately and served through signed, expiring URLs; only users who can see the parent record can fetch them.
+- Receipt, invoice, and MoU files are stored privately and served through signed, expiring URLs; only users who can see the parent record can fetch them. One exception, by decision: the bill links in the reimbursement export open for anyone who holds the link, with no sign-in, so the file can go to someone without an account. They cover bills on reimbursements only, and stop working when the bill is removed or the claim is deleted.
 - Data retained for at least two years after fest close for college audit; Finance HOD can export a full archive.
 - Amounts stored as integers in paise to avoid rounding errors.
 
@@ -1407,6 +1407,7 @@ One department (Tech, allocated ₹1,00,000) with one line item (Sound, planned 
 | POST | `/attachments` | all | Create a LINK attachment |
 | GET | `/attachments/{id}` | anyone who can see the parent | Metadata + `ocr_json` |
 | GET | `/attachments/{id}/url` | anyone who can see the parent | Signed GET URL, 15 min |
+| GET | `/bills/{id}?sig=` | anyone holding the link; no session | Bill link from the reimbursement export (section 11). 302 to a signed GET URL, 15 min |
 | DELETE | `/attachments/{id}` | uploader while parent is editable; H/F for line-item documents | Soft remove |
 
 ### 20.3 Me, users, webhooks
@@ -1651,7 +1652,7 @@ Each milestone ends with tests green, seed data loaded, and a short demo path in
 - The five numbers for a seeded department match a hand-computed fixture after a scripted sequence: submit → endorse → approve → pay, plus a vendor advance and a balance adjustment.
 - No `number` arithmetic on rupees anywhere; `money.ts` is the only place amounts are formatted.
 - Every write produces an audit event with `before` / `after`; `audit_events` has no UPDATE / DELETE grants for the app role.
-- Attachments are never served from a public URL.
+- Attachments are never served from a public URL, except the signed bill links in the reimbursement export (section 11).
 - `pnpm test`, `pnpm lint`, `pnpm typecheck` pass; `pnpm db:seed` produces a usable demo.
 
 ### 21.4 Decisions already made (do not re-ask)

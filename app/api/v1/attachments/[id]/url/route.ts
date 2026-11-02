@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { route } from "@/lib/api";
 import { attachmentUrl } from "@/lib/services/attachments";
 
@@ -27,8 +26,9 @@ export const GET = route<{ id: string }>(async ({ user, params, request }) => {
 
   if (new URL(request.url).searchParams.get("redirect") === "1") {
     // No-store: the 302 carries a short-lived signature and must never be cached
-    // by a shared proxy and handed to somebody else.
-    return NextResponse.redirect(url, { status: 302, headers: { "cache-control": "no-store" } });
+    // by a shared proxy and handed to somebody else. A bare `Location` because local
+    // storage signs a relative URL, which `NextResponse.redirect` throws on.
+    return new Response(null, { status: 302, headers: { location: url, "cache-control": "no-store" } });
   }
   return { url, expires_in };
 });
