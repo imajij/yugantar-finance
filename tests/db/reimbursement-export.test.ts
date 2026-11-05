@@ -38,12 +38,20 @@ async function receipt(actor: Actor): Promise<string> {
     returning id`)).id;
 }
 
+/** Proof the claimant paid, which every new claim needs alongside its receipt (7.2). */
+async function proof(actor: Actor): Promise<string> {
+  return (await one<{ id: string }>(sql`
+    insert into attachments (fest_id, purpose, kind, storage_key, file_name, mime_type, size_bytes, uploaded_by)
+    values (${festId}, 'CLAIM_PAYMENT_PROOF', 'FILE', ${"k/" + Math.random()}, 'upi.png', 'image/png', 1024, ${actor.id})
+    returning id`)).id;
+}
+
 const claim = async (actor: Actor, lineItemId: string, description: string, payee: string) =>
   createReimbursement(actor, {
     lineItemId, expenseTypeId, description,
     amountPaise: R(1200), transactionOn: "2026-11-20",
     payeeName: payee, payeeUpiId: `${payee.toLowerCase()}@upi`,
-    attachmentIds: [await receipt(actor)], submit: true,
+    attachmentIds: [await receipt(actor)], paymentProofIds: [await proof(actor)], submit: true,
   });
 
 /** Just the reference column, which is all these assertions are about. */
@@ -207,7 +215,7 @@ test("every bill on a claim gets its own link, in the order they were added", as
     lineItemId: techItem, expenseTypeId, description: "Cables for the main stage",
     amountPaise: R(1200), transactionOn: "2026-11-20",
     payeeName: "Ravi", payeeUpiId: "ravi@upi",
-    attachmentIds: [first, second], submit: true,
+    attachmentIds: [first, second], paymentProofIds: [await proof(techMember)], submit: true,
   });
   await db.execute(sql`update attachments set created_at = now() - interval '1 hour' where id = ${first}`);
   await claim(techHod, techItem, "Gaffer tape, four rolls", "Priya");

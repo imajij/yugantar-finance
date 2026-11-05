@@ -209,6 +209,7 @@ Allocations and line items can be revised at any time (see 7.5); every change is
 | Field | Required | Notes |
 |---|:---:|---|
 | Receipt(s) | ✓ | Image or PDF, ≤ 10 MB each, up to 5. Camera capture on mobile. |
+| Proof of payment | ✓ | Image or PDF, ≤ 10 MB each, up to 3: a UPI screenshot, card slip or bank statement line showing the claimant paid. Stored as `CLAIM_PAYMENT_PROOF`, distinct from Finance's `PAYMENT_PROOF` for the payout. |
 | Line item | ✓ | Dropdown of the member's department's open line items, showing Available for each. |
 | Expense type | ✓ | Configurable list. Defaults: Food & Beverages, Travel & Transport, Printing & Stationery, Equipment Rental, Decor & Props, Prizes & Gifts, Marketing & Promotion, Accommodation, Miscellaneous. |
 | Reason / description | ✓ | What it was for. Minimum 10 characters. |
@@ -790,7 +791,7 @@ create type ticket_priority       as enum ('LOW','MEDIUM','HIGH','URGENT');
 create type flag_severity         as enum ('LOW','MEDIUM','HIGH');
 create type flag_status           as enum ('OPEN','ACKNOWLEDGED','DISMISSED');
 create type entity_type           as enum ('FEST','DEPARTMENT','LINE_ITEM','REIMBURSEMENT','VENDOR','VENDOR_REQUEST','VENDOR_MILESTONE','INCOME_ENTRY','BUDGET_TRANSFER','TICKET','USER','ATTACHMENT','COMMENT','FLAG');
-create type attachment_purpose    as enum ('RECEIPT','QUOTE','LISTING','PO','INVOICE','DELIVERY_PROOF','PAYMENT_PROOF','MOU','TICKET_ATTACHMENT','TICKET_PROOF','OTHER');
+create type attachment_purpose    as enum ('RECEIPT','QUOTE','LISTING','PO','INVOICE','DELIVERY_PROOF','PAYMENT_PROOF','MOU','TICKET_ATTACHMENT','TICKET_PROOF','OTHER','CHAT_ATTACHMENT','CLAIM_PAYMENT_PROOF');
 create type attachment_kind       as enum ('FILE','LINK');
 create type notification_channel  as enum ('IN_APP','EMAIL','PUSH','WHATSAPP');
 ```
@@ -1456,7 +1457,7 @@ One department (Tech, allocated ₹1,00,000) with one line item (Sound, planned 
 | Method | Path | Roles | Purpose |
 |---|---|---|---|
 | GET | `/reimbursements` | M own; H own dept; F, Mg all | Filters: `status`, `department_id`, `line_item_id`, `submitter_id`, `flagged=1`, `from`, `to`, `q` |
-| POST | `/reimbursements` | all | Creates DRAFT, or SUBMITTED when `submit: true`. Body: `line_item_id, expense_type_id, description, transaction_on, amount_paise, merchant?, payee_name, payee_upi_id, attachment_ids[]` (≥ 1 receipt) |
+| POST | `/reimbursements` | all | Creates DRAFT, or SUBMITTED when `submit: true`. Body: `line_item_id, expense_type_id, description, transaction_on, amount_paise, merchant?, payee_name, payee_upi_id, attachment_ids[], payment_proof_ids[]` (≥ 1 receipt, ≥ 1 proof of payment) |
 | GET | `/reimbursements/{id}` | as list | Full record (20.1) |
 | PATCH | `/reimbursements/{id}` | submitter, in DRAFT / SENT_BACK | Any field; bumps `version`; old attachments stay, removed ones soft-removed |
 | POST | `/reimbursements/{id}/transitions` | see table below | State change |

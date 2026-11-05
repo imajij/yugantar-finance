@@ -212,11 +212,14 @@ async function reimbursementRows(actor: Actor, f: Filters) {
            au.name as approved_by, r.approved_at,
            pu.name as paid_by, r.paid_at, r.payment_reference,
            su.role::text as submitter_role,
+           -- Bills only: the claimant's proof of payment is not a receipt (7.2).
            (select count(*)::int from attachments a
              where a.entity_type = 'REIMBURSEMENT' and a.entity_id = r.id
+               and a.purpose <> 'CLAIM_PAYMENT_PROOF'
                and a.removed_at is null) as receipts,
            (select coalesce(json_agg(a.id order by a.created_at, a.id), '[]'::json) from attachments a
              where a.entity_type = 'REIMBURSEMENT' and a.entity_id = r.id
+               and a.purpose <> 'CLAIM_PAYMENT_PROOF'
                and a.removed_at is null) as attachment_ids,
            (select count(*)::int from flags fl
              where fl.entity_type = 'REIMBURSEMENT' and fl.entity_id = r.id and fl.status = 'OPEN') as open_flags

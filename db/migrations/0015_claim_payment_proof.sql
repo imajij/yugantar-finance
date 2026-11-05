@@ -1,0 +1,11 @@
+-- Proof that the claimant actually paid: a UPI screenshot, a card slip, a bank
+-- statement line. Mandatory on every new reimbursement (PRD 7.2).
+--
+-- Its own purpose rather than `PAYMENT_PROOF`, which on a reimbursement already
+-- means the opposite payment — Finance paying the claimant back, bound when the
+-- payment is recorded. One label for both would leave a reviewer unable to tell
+-- "they paid the shop" from "we paid them".
+--
+-- ADD VALUE is fine inside the migrator's transaction as long as nothing here uses
+-- the new label, which nothing does.
+ALTER TYPE "attachment_purpose" ADD VALUE IF NOT EXISTS 'CLAIM_PAYMENT_PROOF';

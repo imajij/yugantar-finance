@@ -71,7 +71,7 @@ export const allocationRequestStatus = pgEnum("allocation_request_status", [
 export const projectStatus = pgEnum("project_status", ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"]);
 export const attachmentPurpose = pgEnum("attachment_purpose", [
   "RECEIPT", "QUOTE", "LISTING", "PO", "INVOICE", "DELIVERY_PROOF", "PAYMENT_PROOF", "MOU",
-  "TICKET_ATTACHMENT", "TICKET_PROOF", "OTHER", "CHAT_ATTACHMENT",
+  "TICKET_ATTACHMENT", "TICKET_PROOF", "OTHER", "CHAT_ATTACHMENT", "CLAIM_PAYMENT_PROOF",
 ]);
 export const attachmentKind = pgEnum("attachment_kind", ["FILE", "LINK"]);
 export const notificationChannel = pgEnum("notification_channel", ["IN_APP", "EMAIL", "PUSH", "WHATSAPP"]);

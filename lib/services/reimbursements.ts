@@ -42,6 +42,8 @@ export interface CreateInput {
   payeeName: string;
   payeeUpiId: string;
   attachmentIds: string[];
+  /** Proof the claimant paid — a UPI screenshot, card slip or statement line (7.2). */
+  paymentProofIds: string[];
   submit?: boolean;
 }
 
@@ -49,6 +51,9 @@ export async function createReimbursement(actor: Actor, input: CreateInput) {
   assertCan(actor, "reimbursement.create", { festId: actor.festId });
   if (input.attachmentIds.length === 0) {
     throw new ApiError("VALIDATION_ERROR", "At least one receipt is required");
+  }
+  if (input.paymentProofIds.length === 0) {
+    throw new ApiError("VALIDATION_ERROR", "Proof of payment is required — a UPI screenshot, card slip or bank statement");
   }
 
   return db.transaction(async (tx) => {
@@ -84,6 +89,7 @@ export async function createReimbursement(actor: Actor, input: CreateInput) {
     }).returning();
 
     await bindReceipts(tx, actor, row.id, input.attachmentIds);
+    await bindPaymentProofs(tx, actor, row.id, input.paymentProofIds);
 
     await recordAudit(tx, {
       festId: actor.festId, entityType: "REIMBURSEMENT", entityId: row.id, actorId: actor.id,
@@ -112,8 +118,9 @@ function partyOf(row: { festId: string; id: string; submitterId: string; departm
   };
 }
 
-export interface UpdateInput extends Partial<Omit<CreateInput, "submit" | "attachmentIds">> {
+export interface UpdateInput extends Partial<Omit<CreateInput, "submit" | "attachmentIds" | "paymentProofIds">> {
   attachmentIds?: string[];
+  paymentProofIds?: string[];
 }
 
 /** 7.2 — editable only by the submitter, only in DRAFT or SENT_BACK; a resubmission bumps `version`. */
@@ -156,6 +163,7 @@ export async function updateReimbursement(actor: Actor, id: string, input: Updat
     }).where(eq(reimbursementRequests.id, id)).returning();
 
     if (input.attachmentIds?.length) await bindReceipts(tx, actor, id, input.attachmentIds);
+    if (input.paymentProofIds?.length) await bindPaymentProofs(tx, actor, id, input.paymentProofIds);
 
     await recordAudit(tx, {
       festId: actor.festId, entityType: "REIMBURSEMENT", entityId: id, actorId: actor.id,
@@ -451,9 +459,30 @@ async function bindReceipts(tx: Tx, actor: Actor, requestId: string, attachmentI
   }
 }
 
+const MAX_PAYMENT_PROOFS = 3;
+
+/**
+ * 7.2 — what shows the claimant's own money left, as distinct from what was bought.
+ * Bound with its purpose stamped here rather than trusted from the presign: what
+ * the claimant sent as proof is filed as proof, whatever it was uploaded as.
+ */
+async function bindPaymentProofs(tx: Tx, actor: Actor, requestId: string, attachmentIds: string[]) {
+  const [{ existing }] = (await tx.execute(sql`
+    select count(*)::int as existing from attachments
+     where entity_type = 'REIMBURSEMENT' and entity_id = ${requestId}
+       and purpose = 'CLAIM_PAYMENT_PROOF' and removed_at is null
+  `)) as unknown as { existing: number }[];
+  if (Number(existing) + attachmentIds.length > MAX_PAYMENT_PROOFS) {
+    throw new ApiError("VALIDATION_ERROR", `At most ${MAX_PAYMENT_PROOFS} payment proofs per request`);
+  }
+  for (const id of attachmentIds) {
+    await bindAttachment(tx, actor, id, "REIMBURSEMENT", requestId, "CLAIM_PAYMENT_PROOF");
+  }
+}
+
 async function bindAttachment(
   tx: Tx, actor: Actor, attachmentId: string,
-  entityType: "REIMBURSEMENT", entityId: string, purpose: "PAYMENT_PROOF" | null,
+  entityType: "REIMBURSEMENT", entityId: string, purpose: "PAYMENT_PROOF" | "CLAIM_PAYMENT_PROOF" | null,
 ) {
   const updated = await tx.update(attachments)
     .set({ entityType, entityId, ...(purpose ? { purpose } : {}) })

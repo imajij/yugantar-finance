@@ -96,6 +96,8 @@ const createSchema = z.object({
   payee_name: z.string().min(2).max(120),
   payee_upi_id: z.string().regex(/^[\w.\-]{2,}@[a-zA-Z]{2,}$/, "Not a valid UPI ID"),
   attachment_ids: z.array(z.uuid()).min(1, "At least one receipt is required").max(5),
+  payment_proof_ids: z.array(z.uuid())
+    .min(1, "Proof of payment is required — a UPI screenshot, card slip or bank statement").max(3),
   submit: z.boolean().default(false),
 });
 
@@ -111,6 +113,7 @@ export const POST = route(async ({ user, request }) => {
     payeeName: b.payee_name,
     payeeUpiId: b.payee_upi_id,
     attachmentIds: b.attachment_ids,
+    paymentProofIds: b.payment_proof_ids,
     submit: b.submit,
   });
 }, { idempotent: true });

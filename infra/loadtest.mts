@@ -217,6 +217,17 @@ function memberWork(a: Actor): (() => Promise<void>)[] {
         }).catch(() => null);
         await call("POST /complete", "POST", `/api/v1/attachments/${up.json?.attachment_id}/complete`, { as: a });
       }
+      // Proof of payment is mandatory on a claim (7.2); one presign stands in for it.
+      const proof = await call("POST /presign", "POST", "/api/v1/attachments/presign", {
+        as: a, body: { purpose: "CLAIM_PAYMENT_PROOF", file_name: "upi.png", mime_type: "image/png", size_bytes: 512 },
+      });
+      const proofUrl = String(proof.json?.upload_url ?? "");
+      if (proofUrl) {
+        await fetch(proofUrl.startsWith("http") ? proofUrl : `${BASE}${proofUrl}`, {
+          method: "PUT", body: new Uint8Array(randomBytes(512)),
+        }).catch(() => null);
+        await call("POST /complete", "POST", `/api/v1/attachments/${proof.json?.attachment_id}/complete`, { as: a });
+      }
       const r = await call("POST /reimbursements", "POST", "/api/v1/reimbursements", {
         as: a,
         body: {
@@ -224,7 +235,8 @@ function memberWork(a: Actor): (() => Promise<void>)[] {
           description: "Cables, tape and batteries for the stage",
           transaction_on: "2026-11-20", amount_paise: 50000 + Math.floor(Math.random() * 200000),
           payee_name: a.email, payee_upi_id: `${a.email.split("@")[0]}@upi`,
-          attachment_ids: [String(up.json?.attachment_id ?? "")], submit: true,
+          attachment_ids: [String(up.json?.attachment_id ?? "")],
+          payment_proof_ids: [String(proof.json?.attachment_id ?? "")], submit: true,
         },
       });
       if (r.json?.id) claims.push({ id: String(r.json.id), dept: a.deptId });

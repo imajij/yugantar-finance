@@ -33,15 +33,26 @@ const load = (path: string) => import(`@/app/api/v1/${path}/route`) as Promise<R
  */
 const REFUSED = ["FORBIDDEN", "INVALID_TRANSITION"];
 
-/** An uploaded, completed receipt belonging to `userId`, ready to bind. */
-async function receipt(userId: string): Promise<string> {
+/** An uploaded, completed file belonging to `userId`, ready to bind. */
+async function upload(userId: string, purpose: "RECEIPT" | "CLAIM_PAYMENT_PROOF"): Promise<string> {
   const [row] = (await db.execute(sql`
     insert into attachments (fest_id, purpose, kind, storage_key, file_name, mime_type,
                              size_bytes, sha256, uploaded_by)
-    values (${fx.festId}, 'RECEIPT', 'FILE', ${`k/${crypto.randomUUID()}`}, 'receipt.jpg',
+    values (${fx.festId}, ${purpose}, 'FILE', ${`k/${crypto.randomUUID()}`}, 'receipt.jpg',
             'image/jpeg', 1024, ${crypto.randomUUID()}, ${userId})
     returning id`)) as unknown as { id: string }[];
   return row.id;
+}
+
+/**
+ * Every claim needs a proof of payment as well as a receipt (7.2), so each receipt
+ * minted here comes with one from the same uploader, which `newRequest` sends along.
+ */
+const proofFor = new Map<string, string>();
+async function receipt(userId: string): Promise<string> {
+  const id = await upload(userId, "RECEIPT");
+  proofFor.set(id, await upload(userId, "CLAIM_PAYMENT_PROOF"));
+  return id;
 }
 
 /**
@@ -63,6 +74,7 @@ const newRequest = (attachmentId: string, overrides: Record<string, unknown> = {
     payee_name: "Tech Member",
     payee_upi_id: `payee-${claimCount}@upi`,
     attachment_ids: [attachmentId],
+    payment_proof_ids: proofFor.has(attachmentId) ? [proofFor.get(attachmentId)!] : [],
     ...overrides,
   };
 };

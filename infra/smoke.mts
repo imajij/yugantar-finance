@@ -485,7 +485,7 @@ const claim = await hit("POST", "/api/v1/reimbursements", {
     description: "Cables and gaffer tape for the main stage",
     transaction_on: "2026-11-20", amount_paise: 250000,
     payee_name: "Finance HOD", payee_upi_id: "smoke@upi",
-    attachment_ids: [await receiptFor()], submit: true,
+    attachment_ids: [await receiptFor()], payment_proof_ids: [await receiptFor(finance, "CLAIM_PAYMENT_PROOF")], submit: true,
   },
 });
 const claimId = required("reimbursement id", String(claim.json?.id ?? ""));
@@ -550,6 +550,7 @@ const unpaid = await hit("POST", "/api/v1/reimbursements", {
     payee_name: "Rohit Das",
     payee_upi_id: "rohit@okaxis",
     attachment_ids: [secondReceiptId],
+    payment_proof_ids: [await receiptFor(techHodEarly, "CLAIM_PAYMENT_PROOF")],
     submit: true,
   },
   label: "/api/v1/reimbursements (left approved, unpaid)",
@@ -704,7 +705,7 @@ const mgmtClaim = await hit("POST", "/api/v1/reimbursements", {
     description: "Tea and snacks for the overnight build crew",
     transaction_on: "2026-11-24", amount_paise: 90000,
     payee_name: "Management", payee_upi_id: "mgmt@upi",
-    attachment_ids: [await receiptFor(management)], submit: true,
+    attachment_ids: [await receiptFor(management)], payment_proof_ids: [await receiptFor(management, "CLAIM_PAYMENT_PROOF")], submit: true,
   },
   label: "/api/v1/reimbursements (Management's own)",
 });
@@ -1283,7 +1284,7 @@ const drifting = await hit("POST", "/api/v1/reimbursements", {
     description: "Rope and shackles for the rigging",
     transaction_on: "2026-11-21", amount_paise: 90000,
     payee_name: "Finance HOD", payee_upi_id: "smoke@upi",
-    attachment_ids: [await receiptFor()], submit: false,
+    attachment_ids: [await receiptFor()], payment_proof_ids: [await receiptFor(finance, "CLAIM_PAYMENT_PROOF")], submit: false,
   },
   label: "/api/v1/reimbursements (draft against Tech)",
 });
@@ -1370,7 +1371,7 @@ const frozenClaim = await hit("POST", "/api/v1/reimbursements", {
     description: "Extension boards for the green room",
     transaction_on: "2026-11-21", amount_paise: 120000,
     payee_name: "Finance HOD", payee_upi_id: "smoke@upi",
-    attachment_ids: [await receiptFor()], submit: false,
+    attachment_ids: [await receiptFor()], payment_proof_ids: [await receiptFor(finance, "CLAIM_PAYMENT_PROOF")], submit: false,
   },
   label: "/api/v1/reimbursements (draft, for the freeze)",
 });
