@@ -914,8 +914,11 @@ export async function markRead(actor: SessionUser, channelId: string) {
   const channel = await resolve(actor, channelId);
   if (!channel.isMember) return { ok: true };
 
+  // The database's clock, not this server's: messages are stamped by `now()` in
+  // Postgres, and a server clock even a few milliseconds behind it left the
+  // message you had just read counted as unread.
   await db.update(channelMembers)
-    .set({ lastReadAt: new Date() })
+    .set({ lastReadAt: sql`now()` })
     .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, actor.id)));
   return { ok: true };
 }

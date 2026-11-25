@@ -23,7 +23,6 @@ import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema.js";
-import { rupeesToPaise } from "../lib/money.js";
 import { dropFestBySlug } from "../lib/test-support.js";
 
 const { fests, departments, users, expenseTypes } = schema;
@@ -32,7 +31,6 @@ const client = postgres(process.env.DATABASE_URL!, { max: 1 });
 const db = drizzle(client, { schema, casing: "snake_case" });
 
 const DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN || "sst.scaler.com";
-const R = rupeesToPaise;
 
 /**
  * The first administrator. Overridable so another deployment needs no code change,
@@ -78,7 +76,12 @@ const [inserted] = await db
     totalBudgetPaise: 0,
     settings: {
       fest_days: ["2026-11-27", "2026-11-28", "2026-11-29"],
-      line_item_doc_threshold_paise: R(10000),
+      // Off. Above a non-zero amount a line item cannot receive any request until
+      // somebody attaches a quotation, which is a hard block on the people filing
+      // claims for a gap in the planning done above them (PRD 7.1, 21.4). Documents
+      // stay available and stay worth attaching; they are simply not a gate. Set
+      // this to an amount in paise to turn the gate back on for one fest.
+      line_item_doc_threshold_paise: 0,
       request_aging_amber_days: 3,
       request_aging_red_days: 7,
       ticket_auto_close_hours: 48,

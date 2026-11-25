@@ -4,7 +4,8 @@
  * The rule that shapes this file: **a file URL is only ever handed to someone who
  * can see the record it hangs off.** A presigned URL is a bearer token — whoever
  * holds it can fetch the receipt — so the permission check happens here, before
- * the URL exists, and the URL itself lives for fifteen minutes.
+ * the URL exists, and the URL itself lives for fifteen minutes. The one exception
+ * is `publicBillUrl`, whose link is deliberately usable by whoever holds it.
  *
  * Unbound attachments (uploaded, parent not created yet) belong to their uploader
  * and nobody else, which is what makes the "create with `attachment_ids`" flow in
@@ -12,12 +13,12 @@
  */
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { attachments } from "@/db/schema";
+import { attachments, reimbursementRequests } from "@/db/schema";
 import { ApiError, notFound } from "@/lib/api";
 import { can, type Action } from "@/lib/authz";
 import { VIEW_ACTION, resolveEntity, type EntityType } from "@/lib/entities";
 import type { SessionUser } from "@/lib/session";
-import { deleteObject, getObject, MAX_FILE_BYTES, objectExists, sha256, signedDownloadUrl } from "@/lib/storage";
+import { deleteObject, getObject, MAX_FILE_BYTES, objectExists, sha256, signedDownloadUrl, verifyBillSignature } from "@/lib/storage";
 import { canAttachToMessage, canSeeMessage } from "./chat";
 import { recordAudit } from "./audit";
 
@@ -28,6 +29,7 @@ export const MAX_PER_ENTITY: Partial<Record<EntityType, number>> = {
   REIMBURSEMENT: 5,
   LINE_ITEM: 10,
   VENDOR_REQUEST: 10,
+  VENDOR: 20,
   TICKET: 5,
   INCOME_ENTRY: 5,
   MESSAGE: 5,
@@ -63,7 +65,9 @@ export async function assertCanSee(actor: SessionUser, row: AttachmentRow): Prom
 
   const type = row.entityType as EntityType;
   const resource = await resolveEntity(actor.festId, type, row.entityId);
-  if (!can(actor, VIEW_ACTION[type], resource)) {
+  // A vendor's documents carry its bank account, so they are seen by those who see that.
+  const action = type === "VENDOR" ? "vendor.document.view" : VIEW_ACTION[type];
+  if (!can(actor, action, resource)) {
     throw new ApiError("FORBIDDEN", "You cannot see the record this file belongs to");
   }
 }
@@ -76,6 +80,7 @@ async function assertCanRemove(actor: SessionUser, row: AttachmentRow): Promise<
     const resource = await resolveEntity(actor.festId, "LINE_ITEM", row.entityId);
     if (can(actor, "lineItem.document.manage", resource)) return;
   }
+  if (row.entityType === "VENDOR" && can(actor, "vendor.document.manage", { festId: actor.festId })) return;
 
   if (row.uploadedBy !== actor.id) {
     throw new ApiError("FORBIDDEN", "Only the person who uploaded a file can remove it");
@@ -208,6 +213,37 @@ export async function attachmentUrl(actor: SessionUser, id: string): Promise<{ u
   return { url: await signedDownloadUrl(row.storageKey), expires_in: 15 * 60 };
 }
 
+/**
+ * A bill link from the reimbursement export, opened by anyone at all.
+ *
+ * There is no caller to check, so this holds the line in other ways. The signature
+ * is checked first, so a guessed id never reaches the database. Only a live bill on
+ * a live claim opens: a line item's quotes or an MoU do not, whatever id is put here.
+ * Every refusal is the same 404, so this cannot be used to find out what exists.
+ */
+export async function publicBillUrl(id: string, signature: string): Promise<string> {
+  if (!verifyBillSignature(id, signature)) throw notFound("Bill");
+
+  const [row] = await db.select({ kind: attachments.kind, url: attachments.url, storageKey: attachments.storageKey })
+    .from(attachments)
+    .innerJoin(reimbursementRequests, eq(attachments.entityId, reimbursementRequests.id))
+    .where(and(
+      eq(attachments.id, id),
+      eq(attachments.entityType, "REIMBURSEMENT"),
+      isNull(attachments.removedAt),
+      isNull(reimbursementRequests.deletedAt),
+    ))
+    .limit(1);
+  if (!row) throw notFound("Bill");
+
+  if (row.kind === "LINK") {
+    if (!row.url) throw notFound("Bill");
+    return row.url;
+  }
+  if (!row.storageKey || row.storageKey === "pending") throw notFound("Bill");
+  return signedDownloadUrl(row.storageKey);
+}
+
 export interface LinkInput {
   purpose: AttachmentRow["purpose"];
   url: string;
@@ -315,7 +351,7 @@ export async function removeAttachment(actor: SessionUser, id: string) {
  * Runs inside the creating transaction so a request never exists without its receipt.
  */
 export async function bindAttachments(
-  tx: Tx, actor: SessionUser, ids: string[], type: EntityType, entityId: string,
+  tx: Tx, actor: Pick<SessionUser, "id" | "festId">, ids: string[], type: EntityType, entityId: string,
 ): Promise<number> {
   if (ids.length === 0) return 0;
 

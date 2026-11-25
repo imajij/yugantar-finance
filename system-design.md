@@ -99,7 +99,7 @@ Twenty-seven routes. Grouped by what somebody is trying to do.
 |---|---|---|
 | `/dashboard` | Role-dependent landing. Five numbers, queues, flags, recent activity | Works, but is a flat wall of equal-weight cards with no hierarchy |
 | `/budget` | Every department's five numbers, allocation controls, allocation-request queue, stall warnings | Dense table, horizontally scrolling below ~48rem |
-| `/budget/[id]` | One department: five numbers, line items with utilization, create/edit/close, ask for a budget | Table is `min-w-[54rem]`; unusable on a phone |
+| `/budget/[id]` | One department: five numbers, line items with utilization, create/edit/close/delete, ask for a budget | Table is `min-w-[54rem]`; unusable on a phone |
 | `/budget/[id]/line-items/[itemId]` | One line item: numbers, supporting documents, quote comparison, timeline | Fine |
 | `/budget/review` | Finance's sweep: every line item, unreviewed-above-threshold first | Long list, no grouping |
 | `/income` | Sponsorship and ticket income; pledged vs received | Fine |

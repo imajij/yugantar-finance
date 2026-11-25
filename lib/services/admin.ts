@@ -9,9 +9,7 @@ import { ApiError, conflict, notFound } from "@/lib/api";
 import { assertCan, can, canFestWide, type Actor } from "@/lib/authz";
 import { requestSignInLink, revokeAllSessions } from "@/lib/auth";
 import { enforce } from "@/lib/rate-limit";
-import {
-  allowedEmailDomains, clerkConfigured, emailDomainAllowed, revokeClerkSessions, sendClerkInvitation,
-} from "@/lib/clerk";
+import { allowedEmailDomains, emailDomainAllowed } from "@/lib/email-domains";
 import type { Role } from "@/lib/state-machines/types";
 import { recordAudit, snapshot } from "./audit";
 import { ensureDepartmentChannel, removeFromAllChannels, syncMembershipForUser } from "./chat";
@@ -158,12 +156,9 @@ export async function inviteUser(actor: Actor, input: UserInput) {
   // Outside the transaction: a mail failure must not undo an invitation the Finance
   // HOD can re-send from the admin screen.
   //
-  // Which invitation depends on how people sign in (`lib/session.ts`). With Clerk it
-  // is Clerk's own; without it, the same one-time link the sign-in page issues —
-  // arriving unprompted is the difference between an invitation and a row in a table.
-  const invited = clerkConfigured()
-    ? await sendClerkInvitation(row.email)
-    : await requestSignInLink({ email: row.email }).then(() => true, () => false);
+  // The invitation is the same one-time link the sign-in page issues — arriving
+  // unprompted is the difference between an invitation and a row in a table.
+  const invited = await requestSignInLink({ email: row.email }).then(() => true, () => false);
 
   return { ...row, invitation_sent: invited };
 }
@@ -177,8 +172,8 @@ export async function inviteUser(actor: Actor, input: UserInput) {
  * delete the account and invite it again, which loses the id every audit row
  * already points at.
  *
- * It is the same message `inviteUser` sends, not a different one — Clerk's own
- * invitation where Clerk is configured, otherwise the one-time sign-in link. An
+ * It is the same message `inviteUser` sends, not a different one: the one-time
+ * sign-in link. An
  * ACTIVE account can be sent one too: "I cannot get in" is the same problem from
  * the other side, and it is a link to *their* address, so it grants nobody
  * anything they did not already have.
@@ -214,9 +209,7 @@ export async function resendInvitation(actor: Actor, id: string) {
     });
   });
 
-  const sent = clerkConfigured()
-    ? await sendClerkInvitation(target.email)
-    : await requestSignInLink({ email: target.email }).then(() => true, () => false);
+  const sent = await requestSignInLink({ email: target.email }).then(() => true, () => false);
 
   return { id: target.id, email: target.email, invitation_sent: sent };
 }
@@ -303,7 +296,6 @@ export async function updateUser(
   // nothing else would.
   if (input.status === "DISABLED") {
     await revokeAllSessions(id);
-    if (updated.clerkUserId) await revokeClerkSessions(updated.clerkUserId);
   }
   return updated;
 }

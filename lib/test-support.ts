@@ -72,6 +72,7 @@ async function dropFestsMatching(exec: Executor, like: string): Promise<void> {
     for (const stmt of [
       sql`delete from income_tranches where income_entry_id in (select id from income_entries where fest_id in ${scope})`,
       sql`delete from income_entries where fest_id in ${scope}`,
+      sql`delete from vendor_payments where fest_id in ${scope}`,
       sql`delete from vendor_milestones where vendor_request_id in (select id from vendor_requests where fest_id in ${scope})`,
       sql`delete from vendor_requests where fest_id in ${scope}`,
       sql`delete from reimbursement_requests where fest_id in ${scope}`,

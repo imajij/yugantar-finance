@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
-  ArrowLeft, Camera, ChevronDown, Loader2, Plus, Receipt as ReceiptIcon, Send, X,
+  ArrowLeft, Camera, ChevronDown, FileCheck, Loader2, Plus, Receipt as ReceiptIcon, Send, X,
 } from "lucide-react";
 import { formatPaise, rupeesToPaise } from "@/lib/money";
 import { Button, IconButton, Required } from "@/components/ui";
@@ -31,6 +31,8 @@ import { AvailableInline } from "@/components/five-numbers";
 interface LineItemOption {
   id: string;
   name: string;
+  /** The department whose budget the claim is charged to, and whose head endorses it. */
+  departmentName: string;
   availablePaise: number;
   plannedPaise: number;
   pendingPaise: number;
@@ -53,9 +55,23 @@ interface Props {
    * decided it and the amounts were never fetched.
    */
   showsBudget: boolean;
+  /**
+   * Finance and Management may charge any department's line item, so the choice
+   * names the department alongside it and the page follows whichever is picked.
+   */
+  anyDepartment: boolean;
+  /**
+   * Set when Finance opened this from Department expenses for one department: the
+   * line items are that department's, and leaving goes back to the section.
+   */
+  forDepartment?: string | null;
 }
 
 interface Receipt { id: string; name: string }
+
+const ACCEPT = "image/jpeg,image/png,image/heic,image/webp,application/pdf";
+const MAX_RECEIPTS = 5;
+const MAX_PROOFS = 3;
 
 const FIELD =
   "w-full rounded-[var(--r-control)] px-4 py-3 text-[14px] bg-[var(--yg-surface)] "
@@ -64,12 +80,14 @@ const FIELD =
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function NewRequestForm({
-  lineItems, expenseTypes, defaults, receiptWindow, showsBudget,
+  lineItems, expenseTypes, defaults, receiptWindow, showsBudget, anyDepartment, forDepartment,
 }: Props) {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [proofs, setProofs] = useState<Receipt[]>([]);
+  const [uploadingProof, setUploadingProof] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,35 +106,43 @@ export function NewRequestForm({
   const chosenType = expenseTypeId || selected?.defaultExpenseTypeId || expenseTypes[0]?.id || "";
   const remaining = selected && amountPaise !== null ? selected.availablePaise - amountPaise : null;
   const outsideWindow = transactionOn < receiptWindow.start || transactionOn > receiptWindow.end;
+  // The department charged is the line item's, which for Finance may not be theirs.
+  const chargedDepartment = selected?.departmentName ?? defaults.department;
 
   if (lineItems.length === 0) {
     return (
       <ErrorNote detail="Ask your HOD to break the department's allocation into line items — a claim has to be charged against one.">
-        Your department has no open line items, so there is nowhere to file this claim.
+        {anyDepartment
+          ? "No department has an open line item yet, so there is nowhere to file this claim."
+          : "Your department has no open line items, so there is nowhere to file this claim."}
       </ErrorNote>
     );
   }
 
-  /** 20.2 — presign, PUT the file, then complete so the server can hash it for F1. */
   async function upload(files: FileList | null) {
     if (!files?.length) return;
     setUploading(true);
     setError(null);
     try {
-      for (const file of Array.from(files).slice(0, 5 - receipts.length)) {
-        const presign = await postJson("/api/v1/attachments/presign", {
-          purpose: "RECEIPT", file_name: file.name, mime_type: file.type, size_bytes: file.size,
-        });
-        const put = await fetch(presign.upload_url, { method: "PUT", body: file });
-        if (!put.ok) throw new Error("That upload did not go through. Try again when the signal is better.");
-        await postJson(`/api/v1/attachments/${presign.attachment_id}/complete`, {});
-        setReceipts((r) => [...r, { id: presign.attachment_id, name: file.name }]);
-      }
+      await uploadAll(files, "RECEIPT", MAX_RECEIPTS - receipts.length, (r) => setReceipts((all) => [...all, r]));
       setStep(2);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function uploadProof(files: FileList | null) {
+    if (!files?.length) return;
+    setUploadingProof(true);
+    setError(null);
+    try {
+      await uploadAll(files, "CLAIM_PAYMENT_PROOF", MAX_PROOFS - proofs.length, (r) => setProofs((all) => [...all, r]));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploadingProof(false);
     }
   }
 
@@ -140,6 +166,7 @@ export function NewRequestForm({
         payee_name: payeeName,
         payee_upi_id: payeeUpiId,
         attachment_ids: receipts.map((r) => r.id),
+        payment_proof_ids: proofs.map((p) => p.id),
         submit: andSubmit,
       });
       router.push(`/requests/${created.id}`);
@@ -154,7 +181,10 @@ export function NewRequestForm({
     <div className="flex w-full max-w-[430px] flex-col gap-4">
       <header className="flex items-center justify-between gap-3">
         {step === 1 ? (
-          <IconButton label="Leave without saving" onClick={() => router.push("/requests")}>
+          <IconButton
+            label="Leave without saving"
+            onClick={() => router.push(forDepartment ? "/expenses" : "/requests")}
+          >
             <X size={18} aria-hidden />
           </IconButton>
         ) : (
@@ -163,7 +193,7 @@ export function NewRequestForm({
           </IconButton>
         )}
         <span className="font-display text-[15px]">
-          {step === 3 ? "Check and submit" : "New reimbursement"}
+          {step === 3 ? "Check and submit" : forDepartment ? `Expense for ${forDepartment}` : "New reimbursement"}
         </span>
         <span className="tnum w-11 text-right text-[12px] text-text-muted">{step}/3</span>
       </header>
@@ -205,17 +235,17 @@ export function NewRequestForm({
               className="sr-only"
               multiple
               capture="environment"
-              accept="image/jpeg,image/png,image/heic,image/webp,application/pdf"
+              accept={ACCEPT}
               onChange={(e) => upload(e.target.files)}
-              disabled={uploading || receipts.length >= 5}
+              disabled={uploading || receipts.length >= MAX_RECEIPTS}
             />
           </label>
 
           {receipts.length > 0 && <ReceiptList receipts={receipts} onAdd={upload} uploading={uploading} />}
 
           <p className="text-[12px] leading-relaxed text-text-muted">
-            JPG, PNG, HEIC or PDF, up to 10&nbsp;MB each, five at most. A claim can be saved
-            without one, but it cannot be submitted.
+            JPG, PNG, HEIC or PDF, up to 10&nbsp;MB each, five at most. A claim needs at
+            least one before it can be saved or submitted.
           </p>
 
           <Button tone="ghost" onClick={() => setStep(2)} className="w-full">
@@ -264,7 +294,12 @@ export function NewRequestForm({
                 onClick={() => setPickingLineItem((v) => !v)}
                 className="flex items-center justify-between gap-3 text-left"
               >
-                <span className="text-[14px] font-medium">{selected?.name ?? "Choose one"}</span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-[14px] font-medium">{selected?.name ?? "Choose one"}</span>
+                  {anyDepartment && selected && (
+                    <span className="text-[12px] text-text-muted">{selected.departmentName}</span>
+                  )}
+                </span>
                 <span className="flex items-center gap-1.5 text-[12px]" style={{ color: "var(--yg-info)" }}>
                   Change <ChevronDown size={14} aria-hidden />
                 </span>
@@ -284,8 +319,11 @@ export function NewRequestForm({
 
               {pickingLineItem && (
                 <ul className="flex flex-col gap-1">
-                  {lineItems.map((i) => (
+                  {lineItems.map((i, n) => (
                     <li key={i.id}>
+                      {anyDepartment && i.departmentName !== lineItems[n - 1]?.departmentName && (
+                        <span className="meta-label mt-2 block px-3">{i.departmentName}</span>
+                      )}
                       <button
                         type="button"
                         onClick={() => { setLineItemId(i.id); setPickingLineItem(false); }}
@@ -342,6 +380,64 @@ export function NewRequestForm({
       {/* ────────────────────────────────────────────── 3 · check and submit */}
       {step === 3 && (
         <>
+          {/*
+            Proof the money left the claimant's account, separate from the receipt:
+            a receipt says what was bought, this says who paid for it. Required —
+            the server refuses a claim without one.
+          */}
+          <section className="flex flex-col gap-2">
+            <span className="meta-label">Proof of payment <Required announce /></span>
+            {proofs.length > 0 && (
+              <ul className="flex flex-col gap-1.5">
+                {proofs.map((p) => (
+                  <li
+                    key={p.id}
+                    className="flex items-center gap-2.5 rounded-[var(--r-control)] px-3 py-2.5 text-[12.5px]"
+                    style={{ background: "var(--yg-surface)", border: "1px solid var(--yg-surface-2)" }}
+                  >
+                    <FileCheck size={16} aria-hidden style={{ color: "var(--state-done-fg)" }} />
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                    <button
+                      type="button"
+                      className="tap text-text-muted"
+                      onClick={() => setProofs((all) => all.filter((x) => x.id !== p.id))}
+                      disabled={submitting}
+                    >
+                      <X size={15} aria-hidden />
+                      <span className="sr-only">Remove {p.name}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {proofs.length < MAX_PROOFS && (
+              <label
+                className="flex cursor-pointer items-center justify-center gap-2 rounded-[var(--r-control)] py-3.5 text-[13px] font-medium"
+                style={{
+                  background: "var(--yg-surface)",
+                  border: `1px dashed ${proofs.length === 0 ? "var(--yg-accent)" : "var(--yg-outline)"}`,
+                  color: "var(--yg-accent)",
+                }}
+              >
+                {uploadingProof ? <Loader2 size={16} className="yg-spin" aria-hidden /> : <Plus size={16} aria-hidden />}
+                {uploadingProof ? "Uploading…" : proofs.length === 0 ? "Upload payment proof" : "Add another"}
+                <input
+                  type="file"
+                  className="sr-only"
+                  multiple
+                  accept={ACCEPT}
+                  onChange={(e) => { uploadProof(e.target.files); e.target.value = ""; }}
+                  disabled={uploadingProof || submitting}
+                  aria-required="true"
+                />
+              </label>
+            )}
+            <p className="text-[11.5px] text-text-muted">
+              A UPI screenshot, card slip or bank statement line showing you paid. Image or
+              PDF, up to 10&nbsp;MB, three at most.
+            </p>
+          </section>
+
           <section className="flex flex-col gap-2">
             <label htmlFor="description" className="meta-label">What was it for</label>
             <textarea
@@ -363,7 +459,7 @@ export function NewRequestForm({
           >
             <Prefilled label="Amount" value={formatPaise(amountPaise ?? 0)} mono />
             <Prefilled label="Line item" value={selected?.name ?? "—"} />
-            <Prefilled label="Department" value={defaults.department} />
+            <Prefilled label="Department" value={chargedDepartment} />
             <Row label="Date on receipt" required>
               <input
                 type="date"
@@ -417,13 +513,13 @@ export function NewRequestForm({
             showsBudget ? (
               <InfoNote>
                 <span className="tnum">{formatPaise(amountPaise)}</span> shows as{" "}
-                <strong>pending</strong> against {defaults.department} until it is endorsed —{" "}
+                <strong>pending</strong> against {chargedDepartment} until it is endorsed —{" "}
                 {selected.name} drops to <span className="tnum">{formatPaise(selected.availablePaise - amountPaise)}</span>{" "}
                 available in the meantime.
               </InfoNote>
             ) : (
               <InfoNote>
-                This goes to {defaults.department}&rsquo;s head to endorse, then to Finance to
+                This goes to {chargedDepartment}&rsquo;s head to endorse, then to Finance to
                 approve. You will be told at each step.
               </InfoNote>
             )
@@ -436,18 +532,30 @@ export function NewRequestForm({
             <Button
               tone="hero"
               className="h-[52px] w-full text-[15px]"
-              disabled={submitting || receipts.length === 0 || description.trim().length < 10}
+              disabled={
+                submitting || uploadingProof || receipts.length === 0 || proofs.length === 0
+                || description.trim().length < 10
+              }
               onClick={() => save(true)}
             >
               {submitting ? <Loader2 size={17} className="yg-spin" aria-hidden /> : <Send size={17} aria-hidden />}
               Submit for endorsement
             </Button>
-            <Button tone="ghost" className="w-full" disabled={submitting} onClick={() => save(false)}>
+            <Button
+              tone="ghost"
+              className="w-full"
+              disabled={submitting || uploadingProof || receipts.length === 0 || proofs.length === 0}
+              onClick={() => save(false)}
+            >
               Save as draft
             </Button>
-            {receipts.length === 0 && (
+            {(receipts.length === 0 || proofs.length === 0) && (
               <p className="text-center text-[11.5px] text-text-muted">
-                A claim needs at least one receipt before it can be submitted. Saving a draft is fine.
+                {receipts.length === 0 && proofs.length === 0
+                  ? "Add a receipt and proof of payment to save or submit this claim."
+                  : receipts.length === 0
+                    ? "Add at least one receipt to save or submit this claim."
+                    : "Add proof of payment to save or submit this claim."}
               </p>
             )}
           </div>
@@ -488,9 +596,9 @@ function ReceiptList({
           className="sr-only"
           multiple
           capture="environment"
-          accept="image/jpeg,image/png,image/heic,image/webp,application/pdf"
+          accept={ACCEPT}
           onChange={(e) => onAdd(e.target.files)}
-          disabled={uploading || receipts.length >= 5}
+          disabled={uploading || receipts.length >= MAX_RECEIPTS}
         />
       </label>
     </div>
@@ -520,6 +628,21 @@ function Prefilled({ label, value, mono }: { label: string; value: string; mono?
       <span className={`text-[13px] ${mono ? "tnum" : ""}`}>{value}</span>
     </Row>
   );
+}
+
+/** 20.2 — presign, PUT the file, then complete so the server can hash it for F1. */
+async function uploadAll(
+  files: FileList, purpose: "RECEIPT" | "CLAIM_PAYMENT_PROOF", room: number, onDone: (r: Receipt) => void,
+) {
+  for (const file of Array.from(files).slice(0, Math.max(0, room))) {
+    const presign = await postJson("/api/v1/attachments/presign", {
+      purpose, file_name: file.name, mime_type: file.type, size_bytes: file.size,
+    });
+    const put = await fetch(presign.upload_url, { method: "PUT", body: file });
+    if (!put.ok) throw new Error("That upload did not go through. Try again when the signal is better.");
+    await postJson(`/api/v1/attachments/${presign.attachment_id}/complete`, {});
+    onDone({ id: presign.attachment_id, name: file.name });
+  }
 }
 
 function safePaise(value: string): number | null {

@@ -153,3 +153,45 @@ test("an empty sheet is still a valid workbook", () => {
 test("a workbook with no sheets is a programming error, not an empty file", () => {
   expect(() => buildXlsx([])).toThrow(/at least one sheet/);
 });
+
+const LINKED = () =>
+  readZip(buildXlsx([{
+    name: "S",
+    columns: [
+      { key: "ref", header: "Reference" },
+      { key: "bill", header: "Bill", type: "link", linkText: "Open bill" },
+    ],
+    rows: [
+      { ref: "RB-1", bill: "https://app.test/a?x=1&y=2" },
+      { ref: "RB-2", bill: null },
+      { ref: "RB-3", bill: "javascript:alert(1)" },
+    ],
+  }]));
+
+test("a link column is a real hyperlink, pointing at the address and reading as its label", () => {
+  const entries = LINKED();
+  const sheet = entries.get("xl/worksheets/sheet1.xml")!;
+  const rels = entries.get("xl/worksheets/_rels/sheet1.xml.rels")!;
+
+  expect(sheet).toContain('<hyperlink ref="B2" r:id="rId1"/>');
+  expect(sheet).toContain("Open bill");
+  expect(rels).toContain('Target="https://app.test/a?x=1&amp;y=2"');
+  expect(rels).toContain('TargetMode="External"');
+  // Excel rejects the workbook if `hyperlinks` comes before `autoFilter`.
+  expect(sheet.indexOf("<autoFilter")).toBeLessThan(sheet.indexOf("<hyperlinks>"));
+});
+
+test("only the web becomes clickable: a javascript: value stays inert text", () => {
+  const entries = LINKED();
+  const sheet = entries.get("xl/worksheets/sheet1.xml")!;
+
+  expect(sheet.match(/<hyperlink /g)).toHaveLength(1);
+  expect(entries.get("xl/worksheets/_rels/sheet1.xml.rels")).not.toContain("javascript:");
+  expect(sheet).toContain("javascript:alert(1)");
+});
+
+test("a sheet with no links gets no hyperlink part", () => {
+  const entries = readZip(SIMPLE());
+  expect(entries.has("xl/worksheets/_rels/sheet1.xml.rels")).toBe(false);
+  expect(entries.get("xl/worksheets/sheet1.xml")).not.toContain("<hyperlinks>");
+});

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Camera, Receipt, Sheet } from "lucide-react";
 import { redirect } from "next/navigation";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Plus } from "lucide-react";
 import { db } from "@/db";
 import { departments, lineItems, reimbursementRequests, users } from "@/db/schema";
@@ -9,20 +9,49 @@ import { getSession } from "@/lib/session";
 import { canFestWide } from "@/lib/authz";
 import { Amount, buttonClass, buttonStyle, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
 import { waitingOn } from "@/lib/services/reimbursements";
+import type { ReimbursementState } from "@/lib/state-machines/reimbursement";
 
 /** Kept out of the JSX so the download reads as one thing in one place. */
 const EXCEL_HREF = "/api/v1/exports/reimbursements?format=xlsx";
 
-export default async function RequestsPage() {
+/**
+ * The views of this list, chiefly for Management: what is approved and still has to
+ * be paid. One state each, so the Excel download can carry the same filter — the
+ * export takes a single `status`.
+ *
+ * "Pending payment" is APPROVED only. A claim ON_HOLD is unpaid too, but it is
+ * waiting on Finance to resolve the hold, not on anybody to pay it, so it has its own.
+ */
+const FILTERS: { key: string; label: string; status: ReimbursementState; empty: string }[] = [
+  { key: "pending-payment", label: "Pending payment", status: "APPROVED", empty: "Nothing is waiting to be paid." },
+  { key: "on-hold", label: "On hold", status: "ON_HOLD", empty: "Nothing is on hold." },
+  { key: "paid", label: "Paid", status: "PAID", empty: "Nothing has been paid yet." },
+];
+
+export default async function RequestsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string }>;
+}) {
   const user = await getSession();
   if (!user) redirect("/sign-in");
+
+  const { filter: requested } = await searchParams;
+  const filter = FILTERS.find((f) => f.key === requested);
 
   const seesAll = canFestWide(user, "reimbursement.view");
   const scope = seesAll ? undefined
     : user.role === "DEPT_HOD" ? eq(reimbursementRequests.departmentId, user.departmentId)
     : eq(reimbursementRequests.submitterId, user.id);
 
-  const rows = await db
+  const where = and(
+    eq(reimbursementRequests.festId, user.festId),
+    isNull(reimbursementRequests.deletedAt),
+    scope,
+    filter ? inArray(reimbursementRequests.status, [filter.status]) : undefined,
+  );
+
+  const [rows, [totals]] = await Promise.all([db
     .select({
       id: reimbursementRequests.id,
       humanId: reimbursementRequests.humanId,
@@ -47,13 +76,18 @@ export default async function RequestsPage() {
     .innerJoin(users, eq(users.id, reimbursementRequests.submitterId))
     .innerJoin(departments, eq(departments.id, reimbursementRequests.departmentId))
     .innerJoin(lineItems, eq(lineItems.id, reimbursementRequests.lineItemId))
-    .where(and(
-      eq(reimbursementRequests.festId, user.festId),
-      isNull(reimbursementRequests.deletedAt),
-      scope,
-    ))
+    .where(where)
     .orderBy(desc(reimbursementRequests.createdAt))
-    .limit(100);
+    .limit(100),
+    // Counted in SQL over the whole filter, not summed from the rows above: the list
+    // stops at a hundred, and a total that quietly stops with it would be wrong.
+    db.select({
+      count: sql<number>`count(*)`.mapWith(Number),
+      paise: sql<number>`coalesce(sum(${reimbursementRequests.amountPaise}), 0)`.mapWith(Number),
+    }).from(reimbursementRequests).where(where),
+  ]);
+
+  const excelHref = filter ? `${EXCEL_HREF}&status=${filter.status}` : EXCEL_HREF;
 
   return (
     <>
@@ -71,7 +105,7 @@ export default async function RequestsPage() {
             */}
             {rows.length > 0 && (
               <a
-                href={EXCEL_HREF}
+                href={excelHref}
                 className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-sm"
                 style={{ border: "1px solid var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
               >
@@ -91,7 +125,35 @@ export default async function RequestsPage() {
         {seesAll ? "Reimbursements" : user.role === "DEPT_HOD" ? `${user.departmentName} reimbursements` : "My requests"}
       </PageTitle>
 
-      {rows.length === 0 ? (
+      <nav aria-label="Filter reimbursements" className="mb-4 flex flex-wrap items-center gap-1.5 text-xs">
+        {[{ key: "", label: "All" }, ...FILTERS].map((f) => {
+          const on = (filter?.key ?? "") === f.key;
+          return (
+            <Link
+              key={f.key || "all"}
+              href={f.key ? `/requests?filter=${f.key}` : "/requests"}
+              aria-current={on ? "page" : undefined}
+              className="rounded-full px-3 py-1.5"
+              style={on
+                ? { background: "var(--yg-accent)", color: "var(--yg-on-accent)" }
+                : { background: "var(--yg-surface-2)", color: "var(--yg-text-soft)" }}
+            >
+              {f.label}
+            </Link>
+          );
+        })}
+        {filter && totals.count > 0 && (
+          <span className="ml-auto text-[12.5px] text-text-muted">
+            <span className="tnum">{totals.count}</span> claim{totals.count === 1 ? "" : "s"} ·{" "}
+            <span className="tnum text-text"><Amount paise={totals.paise} /></span>
+            {filter.status === "APPROVED" && " to pay"}
+          </span>
+        )}
+      </nav>
+
+      {rows.length === 0 && filter ? (
+        <p className="py-10 text-center text-sm text-text-muted">{filter.empty}</p>
+      ) : rows.length === 0 ? (
         <Empty
           icon={<Receipt size={24} aria-hidden />}
           title="No reimbursements yet"

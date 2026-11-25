@@ -7,10 +7,12 @@ import {
   InvalidTransition, ValidationError, assertTransition, type Role, type Transition,
   REIMBURSEMENT_STATES, REIMBURSEMENT_ACTIONS, REIMBURSEMENT_TRANSITIONS, REIMBURSEMENT_TERMINAL,
   landingStateForSubmit, approverRoleFor,
-  VENDOR_STATES, VENDOR_ACTIONS, VENDOR_TRANSITIONS, VENDOR_TERMINAL,
+  VENDOR_STATES, VENDOR_ACTIONS, VENDOR_TRANSITIONS, VENDOR_TERMINAL, landingStateAfterPayment,
   TICKET_STATES, TICKET_ACTIONS, TICKET_TRANSITIONS, TICKET_TERMINAL,
   LINE_ITEM_STATES, LINE_ITEM_ACTIONS, LINE_ITEM_TRANSITIONS,
 } from "@/lib/state-machines";
+
+import { rupeesToPaise as R } from "@/lib/money";
 
 const ROLES: Role[] = ["MEMBER", "DEPT_HOD", "FINANCE_HOD", "MANAGEMENT"];
 
@@ -152,12 +154,38 @@ describe("segregation of duties (PRD 5.2)", () => {
     }
   });
 
-  test("only Management moves vendor money", () => {
-    for (const action of ["RECORD_ADVANCE", "RECORD_BALANCE", "RECORD_REFUND"] as const) {
-      for (const t of VENDOR_TRANSITIONS.filter((x) => x.action === action)) {
-        expect(t.roles, action).toEqual(["MANAGEMENT"]);
+  /*
+   * Vendor money goes out through Management or the Finance HOD, and nobody else.
+   * Whether Finance may pay a request it raised is `can`'s question
+   * (`vendorRequest.recordPayment`, 5.2's vendor exception), so there is no actor
+   * constraint on these rows. A refund coming back stays Management's to record.
+   *
+   * If this fails, ask whether a third role just gained the ability to move money
+   * out, not whether the assertion is inconvenient.
+   */
+  test("vendor money moves through Management or Finance, and nobody else", () => {
+    for (const action of ["RECORD_ADVANCE", "RECORD_BALANCE", "RECORD_REMAINING"] as const) {
+      const rows = VENDOR_TRANSITIONS.filter((x) => x.action === action);
+      expect(rows.length, action).toBeGreaterThan(0);
+      for (const t of rows) {
+        expect([...t.roles].sort(), `${t.from}:${action}`).toEqual(["FINANCE_HOD", "MANAGEMENT"]);
       }
     }
+    for (const t of VENDOR_TRANSITIONS.filter((x) => x.action === "RECORD_REFUND")) {
+      expect(t.roles).toEqual(["MANAGEMENT"]);
+    }
+  });
+
+  test("only a payment that settles moves a vendor request on", () => {
+    const advance = (settled: boolean) => ({ kind: "ADVANCE" as const, settled });
+    const balance = (settled: boolean) => ({ kind: "BALANCE" as const, settled });
+    expect(landingStateAfterPayment("APPROVED", advance(true), R(24000))).toBe("ADVANCE_PAID");
+    expect(landingStateAfterPayment("APPROVED", advance(false), R(30000))).toBe("APPROVED");
+    expect(landingStateAfterPayment("DELIVERED", advance(true), R(24000))).toBe("DELIVERED");
+    expect(landingStateAfterPayment("BALANCE_APPROVED", balance(false), R(4000))).toBe("BALANCE_APPROVED");
+    // A settled balance with the advance still part-paid is not the end of it.
+    expect(landingStateAfterPayment("BALANCE_APPROVED", balance(true), R(6000))).toBe("BALANCE_APPROVED");
+    expect(landingStateAfterPayment("BALANCE_APPROVED", advance(true), 0)).toBe("CLOSED");
   });
 
   /**

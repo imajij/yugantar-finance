@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import type { Actor } from "@/lib/authz";
 import { dropFests } from "@/lib/test-support";
+import { publicBillUrl } from "@/lib/services/attachments";
 import { runExport } from "@/lib/services/exports";
 import { createReimbursement, transitionReimbursement } from "@/lib/services/reimbursements";
 import { rupeesToPaise as R } from "@/lib/money";
@@ -37,12 +38,20 @@ async function receipt(actor: Actor): Promise<string> {
     returning id`)).id;
 }
 
+/** Proof the claimant paid, which every new claim needs alongside its receipt (7.2). */
+async function proof(actor: Actor): Promise<string> {
+  return (await one<{ id: string }>(sql`
+    insert into attachments (fest_id, purpose, kind, storage_key, file_name, mime_type, size_bytes, uploaded_by)
+    values (${festId}, 'CLAIM_PAYMENT_PROOF', 'FILE', ${"k/" + Math.random()}, 'upi.png', 'image/png', 1024, ${actor.id})
+    returning id`)).id;
+}
+
 const claim = async (actor: Actor, lineItemId: string, description: string, payee: string) =>
   createReimbursement(actor, {
     lineItemId, expenseTypeId, description,
     amountPaise: R(1200), transactionOn: "2026-11-20",
     payeeName: payee, payeeUpiId: `${payee.toLowerCase()}@upi`,
-    attachmentIds: [await receipt(actor)], submit: true,
+    attachmentIds: [await receipt(actor)], paymentProofIds: [await proof(actor)], submit: true,
   });
 
 /** Just the reference column, which is all these assertions are about. */
@@ -192,4 +201,72 @@ test("an empty ledger still has its headers", async () => {
   const lines = body.trim().split("\r\n");
   expect(lines[0]).toContain("Reference");
   expect(lines).toHaveLength(1);
+});
+
+/* ---------------------------------------------------------------- the bills */
+
+const LINK = /https?:\/\/[^,\r\n]+\/api\/v1\/bills\/([0-9a-f-]{36})\?sig=([0-9a-f]{64})/g;
+const linksIn = (text: string) => [...text.matchAll(LINK)].map((m) => m[1]);
+
+test("every bill on a claim gets its own link, in the order they were added", async () => {
+  const first = await receipt(techMember);
+  const second = await receipt(techMember);
+  await createReimbursement(techMember, {
+    lineItemId: techItem, expenseTypeId, description: "Cables for the main stage",
+    amountPaise: R(1200), transactionOn: "2026-11-20",
+    payeeName: "Ravi", payeeUpiId: "ravi@upi",
+    attachmentIds: [first, second], paymentProofIds: [await proof(techMember)], submit: true,
+  });
+  await db.execute(sql`update attachments set created_at = now() - interval '1 hour' where id = ${first}`);
+  await claim(techHod, techItem, "Gaffer tape, four rolls", "Priya");
+
+  const body = String((await runExport(finance, "reimbursements", "csv")).body);
+  expect(body.split("\r\n")[0]).toContain("Bill 1,Bill 2");
+  expect(linksIn(body)).toContain(first);
+  expect(linksIn(body)).toContain(second);
+  expect(linksIn(body).indexOf(first)).toBeLessThan(linksIn(body).indexOf(second));
+});
+
+test("a removed bill is not linked", async () => {
+  await claim(techMember, techItem, "Cables for the main stage", "Ravi");
+  await db.execute(sql`update attachments set removed_at = now() where fest_id = ${festId}`);
+
+  const body = String((await runExport(finance, "reimbursements", "csv")).body);
+  expect(linksIn(body)).toEqual([]);
+  // The column stays, so every export of this ledger has the same shape.
+  expect(body.split("\r\n")[0]).toContain("Bill 1");
+});
+
+/**
+ * The link is public on purpose, which makes scope the whole safeguard: holding the
+ * file is holding the bills, so a file may only carry bills its reader may take.
+ */
+test("a Member's file links their own bills and nobody else's", async () => {
+  await claim(techMember, techItem, "Cables for the main stage", "Ravi");
+  await claim(techHod, techItem, "Gaffer tape, four rolls", "Priya");
+
+  const all = linksIn(String((await runExport(finance, "reimbursements", "csv")).body));
+  const own = linksIn(String((await runExport(techMember, "reimbursements", "csv")).body));
+  expect(all).toHaveLength(2);
+  expect(own).toHaveLength(1);
+  expect(all).toContain(own[0]);
+});
+
+test("a link in the file opens the bill with nobody signed in, and does not expire", async () => {
+  await claim(techMember, techItem, "Cables for the main stage", "Ravi");
+
+  const body = String((await runExport(finance, "reimbursements", "csv")).body);
+  expect(body).not.toMatch(/X-Amz|[?&]expires=/);
+
+  const [match] = [...body.matchAll(LINK)];
+  await expect(publicBillUrl(match[1], match[2])).resolves.toContain("sig=");
+});
+
+test("the workbook's bill cells are hyperlinks", async () => {
+  await claim(techMember, techItem, "Cables for the main stage", "Ravi");
+  const { body } = await runExport(finance, "reimbursements", "xlsx");
+
+  // Stored deflated, so look for the part's name rather than its contents; the
+  // contents are `tests/unit/xlsx.test.ts`'s job.
+  expect(Buffer.from(body as Buffer).includes("xl/worksheets/_rels/sheet1.xml.rels")).toBe(true);
 });

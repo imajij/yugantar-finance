@@ -296,6 +296,21 @@ await hit("PATCH", `/api/v1/line-items/${lineItemId}/documents/${docId}`, {
 await hit("POST", `/api/v1/line-items/${lineItemId}/transitions`, {
   as: finance, body: { action: "MARK_REVIEWED" }, label: "/api/v1/line-items/{id}/transitions",
 });
+// Deleting one. Its own item, created for the purpose: nothing has been charged
+// against it, which is the only state a line item can be deleted in. The refusal
+// for one that *has* been charged is further down, once claims exist.
+const spareItem = await hit("POST", `/api/v1/departments/${techId}/line-items`, {
+  as: finance, body: { name: "Typed by mistake", planned_paise: 100000 },
+  label: "/api/v1/departments/{id}/line-items (one to delete)",
+});
+if (spareItem.json?.id) {
+  await hit("DELETE", `/api/v1/line-items/${spareItem.json.id}?reason=Entered%20twice`, {
+    as: finance, label: "/api/v1/line-items/{id} (delete)",
+  });
+  await hit("GET", `/api/v1/line-items/${spareItem.json.id}`, {
+    as: finance, expect: 404, label: "/api/v1/line-items/{id} (gone after delete)",
+  });
+}
 await hit("GET", "/api/v1/budget-review", { as: finance });
 
 section("Allocation requests");
@@ -470,10 +485,15 @@ const claim = await hit("POST", "/api/v1/reimbursements", {
     description: "Cables and gaffer tape for the main stage",
     transaction_on: "2026-11-20", amount_paise: 250000,
     payee_name: "Finance HOD", payee_upi_id: "smoke@upi",
-    attachment_ids: [await receiptFor()], submit: true,
+    attachment_ids: [await receiptFor()], payment_proof_ids: [await receiptFor(finance, "CLAIM_PAYMENT_PROOF")], submit: true,
   },
 });
 const claimId = required("reimbursement id", String(claim.json?.id ?? ""));
+// Now that something is charged against it, the line item cannot be deleted —
+// closing it is the way to retire one with history (7.5).
+await hit("DELETE", `/api/v1/line-items/${lineItemId}`, {
+  as: finance, expect: 409, label: "/api/v1/line-items/{id} (delete refused, claim attached)",
+});
 await hit("GET", "/api/v1/reimbursements", { as: finance });
 await hit("GET", `/api/v1/reimbursements/${claimId}`, { as: finance, label: "/api/v1/reimbursements/{id}" });
 
@@ -530,6 +550,7 @@ const unpaid = await hit("POST", "/api/v1/reimbursements", {
     payee_name: "Rohit Das",
     payee_upi_id: "rohit@okaxis",
     attachment_ids: [secondReceiptId],
+    payment_proof_ids: [await receiptFor(techHodEarly, "CLAIM_PAYMENT_PROOF")],
     submit: true,
   },
   label: "/api/v1/reimbursements (left approved, unpaid)",
@@ -613,21 +634,47 @@ const ms = (detail.json?.milestones ?? []) as { id: string; kind: string; planne
 const advanceId = required("advance milestone id", String(ms.find((m) => m.kind === "ADVANCE")?.id ?? ""));
 const balanceId = required("balance milestone id", String(ms.find((m) => m.kind === "BALANCE")?.id ?? ""));
 
-// A payment settles its own milestone, in full, or it is not a payment.
-await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
-  as: management, expect: [400, 422],
-  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 1, paid_at: "2026-11-20", payment_reference: "UTR-X" },
-  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (part payment refused)",
-});
 await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
   as: management, expect: [400, 422],
   body: { action: "RECORD_ADVANCE", milestone_id: balanceId, paid_paise: 6000000, paid_at: "2026-11-20", payment_reference: "UTR-X" },
   label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (wrong milestone refused)",
 });
+
+// The Finance HOD pays part of the advance (7.3, 5.2): recorded, and the rest owed.
+const partAdvance = await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: finance,
+  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 1000000, paid_at: "2026-11-19", payment_reference: "UTR-ADV-1" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (Finance, part payment)",
+});
+rows.push({
+  group, method: "POST", path: "a part-paid advance leaves the request approved", as: "finance",
+  status: partAdvance.status, expected: "content",
+  ok: partAdvance.json?.status === "APPROVED",
+  note: String(partAdvance.json?.status ?? "?"),
+});
 await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
-  as: management,
-  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 4000000, paid_at: "2026-11-20", payment_reference: "UTR-ADV" },
-  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE",
+  as: finance, expect: [400, 422],
+  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 3000000, paid_at: "2026-11-20", payment_reference: "UTR-X" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (already part-paid, refused)",
+});
+await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: finance, expect: [400, 422],
+  body: { action: "RECORD_REMAINING", milestone_id: advanceId, paid_paise: 3000001, paid_at: "2026-11-20", payment_reference: "UTR-X" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_REMAINING (more than is owed, refused)",
+});
+const restAdvance = await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: finance,
+  body: {
+    action: "RECORD_REMAINING", milestone_id: advanceId, paid_paise: 3000000, paid_at: "2026-11-20",
+    payment_reference: "UTR-ADV-2", proof_attachment_id: await receiptFor(finance, "OTHER"),
+  },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_REMAINING (with its receipt)",
+});
+rows.push({
+  group, method: "POST", path: "the remaining payment settles the advance", as: "finance",
+  status: restAdvance.status, expected: "content",
+  ok: restAdvance.json?.status === "ADVANCE_PAID",
+  note: String(restAdvance.json?.status ?? "?"),
 });
 
 await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
@@ -643,11 +690,11 @@ await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
   label: "/api/v1/vendor-requests/{id}/transitions RELEASE_BALANCE",
 });
 
-// The one that closed a ₹60,000 balance for a rupee.
+// More than is owed is never a payment.
 await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
   as: management, expect: [400, 422],
-  body: { action: "RECORD_BALANCE", milestone_id: balanceId, paid_paise: 100, paid_at: "2026-11-28", payment_reference: "UTR-X" },
-  label: "/api/v1/vendor-requests/{id}/transitions RECORD_BALANCE (token payment refused)",
+  body: { action: "RECORD_BALANCE", milestone_id: balanceId, paid_paise: 6000001, paid_at: "2026-11-28", payment_reference: "UTR-X" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_BALANCE (overpayment refused)",
 });
 const stillOpen = await hit("GET", `/api/v1/vendor-requests/${vr2Id}`, {
   as: finance, label: "/api/v1/vendor-requests/{id} (after the refusal)",
@@ -684,7 +731,7 @@ const mgmtClaim = await hit("POST", "/api/v1/reimbursements", {
     description: "Tea and snacks for the overnight build crew",
     transaction_on: "2026-11-24", amount_paise: 90000,
     payee_name: "Management", payee_upi_id: "mgmt@upi",
-    attachment_ids: [await receiptFor(management)], submit: true,
+    attachment_ids: [await receiptFor(management)], payment_proof_ids: [await receiptFor(management, "CLAIM_PAYMENT_PROOF")], submit: true,
   },
   label: "/api/v1/reimbursements (Management's own)",
 });
@@ -1263,7 +1310,7 @@ const drifting = await hit("POST", "/api/v1/reimbursements", {
     description: "Rope and shackles for the rigging",
     transaction_on: "2026-11-21", amount_paise: 90000,
     payee_name: "Finance HOD", payee_upi_id: "smoke@upi",
-    attachment_ids: [await receiptFor()], submit: false,
+    attachment_ids: [await receiptFor()], payment_proof_ids: [await receiptFor(finance, "CLAIM_PAYMENT_PROOF")], submit: false,
   },
   label: "/api/v1/reimbursements (draft against Tech)",
 });
@@ -1350,7 +1397,7 @@ const frozenClaim = await hit("POST", "/api/v1/reimbursements", {
     description: "Extension boards for the green room",
     transaction_on: "2026-11-21", amount_paise: 120000,
     payee_name: "Finance HOD", payee_upi_id: "smoke@upi",
-    attachment_ids: [await receiptFor()], submit: false,
+    attachment_ids: [await receiptFor()], payment_proof_ids: [await receiptFor(finance, "CLAIM_PAYMENT_PROOF")], submit: false,
   },
   label: "/api/v1/reimbursements (draft, for the freeze)",
 });
@@ -1439,6 +1486,20 @@ rows.push({
 await hit("GET", "/api/v1/exports/reimbursements?format=html", {
   as: finance, expect: [400, 422], label: "/api/v1/exports/reimbursements (html refused)",
 });
+// The bill links in the file open for anyone holding one, signed in or not, and for
+// nobody who has only the id.
+const ledger = await hit("GET", "/api/v1/exports/reimbursements?format=csv", {
+  as: finance, label: "/api/v1/exports/reimbursements (csv)",
+});
+const billLink = /\/api\/v1\/bills\/[0-9a-f-]{36}\?sig=[0-9a-f]{64}/.exec(ledger.text)?.[0] ?? "";
+const opened = await hit("GET", billLink, { expect: 302, label: "a bill link from the export (signed out)" });
+rows.push({
+  group, method: "GET", path: "a bill link leads to a signed storage URL", as: "anon",
+  status: opened.status, expected: "content",
+  ok: /sig=|X-Amz-Signature=/.test(opened.headers.get("location") ?? ""),
+  note: "signed location",
+});
+await hit("GET", billLink.split("?")[0], { expect: 404, label: "a bill link without its signature" });
 
 section("Comments, flags, audit, notifications");
 await hit("POST", "/api/v1/comments", {

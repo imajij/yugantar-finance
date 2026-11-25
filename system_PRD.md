@@ -56,7 +56,7 @@ Today fest finances live in spreadsheets, WhatsApp groups, and physical receipts
 Flag any of these that are wrong — they shape the design.
 
 1. **Line items, not manual marking.** "Feed in a larger figure, break it down, HODs mark what's utilized" is modeled as: Finance HOD sets the fest total and department allocations; each allocation is broken into named line items (e.g. *Tech → Sound system ₹20,000*); every reimbursement and vendor payment is attached to a line item; utilization is **computed from transactions**, not typed in. HODs can additionally mark a line item **Closed** when no more spend is expected, which releases its unspent balance. This keeps the "mark as utilized" intent while making the numbers trustworthy.
-2. Both Finance HOD and Department HODs can create and edit line items; Finance HOD is the final authority, and the department cap cannot be exceeded. Line items can carry supporting documents (vendor quotations, web listings, screenshots) so Finance can see the basis for each number. They are optional by default, with a configurable amount above which at least one is required.
+2. Both Finance HOD and Department HODs can create and edit line items; Finance HOD is the final authority, and the department cap cannot be exceeded. Line items can carry supporting documents (vendor quotations, web listings, screenshots) so Finance can see the basis for each number. They are optional, with a configurable amount above which at least one is required — off by default.
 3. The platform serves one fest at a time. Every record carries a `fest_id` so it can be reused next year.
 4. Single currency (INR), single timezone (IST).
 5. Members can see their own department's line items and Available figure (read-only), so they don't spend money that isn't there. They cannot see other departments.
@@ -89,6 +89,7 @@ Flag any of these that are wrong — they shape the design.
 | Approve vendor request, release balance, cancel | — | — | ✓ | — |
 | Create / edit line items (own dept, within cap) | — | ✓ | ✓ (any dept) | — |
 | Close / reopen a line item | — | ✓ | ✓ | — |
+| Delete a line item (nothing charged against it) | — | ✓ (own dept) | ✓ | — |
 | Attach / remove supporting documents on line items | — | ✓ (own dept) | ✓ | — |
 | Mark a line item as reviewed | — | — | ✓ | — |
 | Set fest total, department allocations, reallocate | — | — | ✓ | — |
@@ -117,6 +118,8 @@ Enforced server-side, not just hidden in the UI:
 - A Finance HOD's own reimbursement is approved by Management (any Management user) instead of Finance.
 - A Management user's own reimbursement is approved by Finance and paid by a different Management user (or, if there is only one, recorded by Finance HOD with a note).
 - If there are multiple Finance HODs, any of them can approve — except the submitter.
+- Vendor payments are recorded by Management or the Finance HOD. A Department HOD can never approve or pay a vendor request they raised.
+- **Exception, by decision:** the Finance HOD may raise vendor requests for any department, and may approve and pay one they raised themselves — otherwise, with a single Finance HOD, nobody could approve them. Approving their own needs a written note saying why, which goes on the record, and Management is notified of the approval and of every vendor payment.
 
 ## 6. Core concepts and data model
 
@@ -192,7 +195,7 @@ In-kind sponsorship is shown for completeness but never counts toward cash.
    - Links — web listings (an Amazon or IndiaMART page, a rental site). The URL plus an optional screenshot, because listings change.
    - Each document carries a label, a source (vendor or site), and the quoted amount, so Finance can compare the planned amount against its quotes at a glance. Three quotes for one item is the normal case.
    - Documents stay visible on the line item, in the department statement export, and on every request attached to that line item.
-   - A fest setting (`line_item_doc_threshold_paise`, default ₹10,000; 0 disables) sets the amount at or above which a line item must have at least one document before requests can attach to it. Below it, documents are optional.
+   - A fest setting (`line_item_doc_threshold_paise`, **default 0 — off**) sets the amount at or above which a line item must have at least one document before requests can attach to it. While it is 0, documents are optional at every amount: the gate fell on the person filing a claim rather than the person who planned the line item, and nothing they could do cleared it. Set it to an amount in paise to re-arm it for one fest; flag F13 and the budget-review ordering follow the same setting.
    - Finance HOD can mark a line item **Reviewed** after looking at its documents. Unreviewed items above the threshold are listed first on the Finance budget-review screen. Whether this should become a hard approval gate is open question 20.
 4. Finance HOD invites users by college email and assigns roles and departments.
 5. Finance HOD configures expense types and flag thresholds (sensible defaults provided).
@@ -208,7 +211,8 @@ Allocations and line items can be revised at any time (see 7.5); every change is
 | Field | Required | Notes |
 |---|:---:|---|
 | Receipt(s) | ✓ | Image or PDF, ≤ 10 MB each, up to 5. Camera capture on mobile. |
-| Line item | ✓ | Dropdown of the member's department's open line items, showing Available for each. |
+| Proof of payment | ✓ | Image or PDF, ≤ 10 MB each, up to 3: a UPI screenshot, card slip or bank statement line showing the claimant paid. Stored as `CLAIM_PAYMENT_PROOF`, distinct from Finance's `PAYMENT_PROOF` for the payout. |
+| Line item | ✓ | Dropdown of the member's department's open line items, showing Available for each. The Finance HOD and Management choose from every department's open line items, grouped by department; the claim is charged to, and endorsed by the head of, that line item's department. |
 | Expense type | ✓ | Configurable list. Defaults: Food & Beverages, Travel & Transport, Printing & Stationery, Equipment Rental, Decor & Props, Prizes & Gifts, Marketing & Promotion, Accommodation, Miscellaneous. |
 | Reason / description | ✓ | What it was for. Minimum 10 characters. |
 | Transaction date | ✓ | Date on the receipt. Flagged (not blocked) if outside the fest receipt window. |
@@ -267,7 +271,7 @@ Allocations and line items can be revised at any time (see 7.5); every change is
 
 Covers anything where money goes to an outside party in stages — sound/light rental, stage fabrication, catering, printing.
 
-**Who:** Department HOD raises → Finance HOD approves → Management pays advance → Department HOD confirms delivery → Finance HOD releases balance → Management pays balance.
+**Who:** Department HOD (or the Finance HOD, for any department) raises → Finance HOD approves → Management or Finance HOD pays advance → Department HOD confirms delivery → Finance HOD releases balance → Management or Finance HOD pays balance.
 
 **Request fields:** vendor (pick existing or create), line item, description, quote / PO file(s), total value, advance amount (₹ or %), balance amount (computed), advance due (on approval / on a date), expected delivery date, vendor payment details (bank or UPI), notes.
 
@@ -279,7 +283,7 @@ Covers anything where money goes to an outside party in stages — sound/light r
 | SUBMITTED | Awaiting Finance HOD |
 | SENT_BACK | Returned with reason; editable |
 | APPROVED | Full value moves to Committed. Advance awaiting payment |
-| ADVANCE_PAID | Management recorded the advance (reference, date). Skipped if advance = 0 |
+| ADVANCE_PAID | The advance is paid in full (reference, date). Skipped if advance = 0. A part-paid advance leaves the request in APPROVED |
 | DELIVERED | Dept HOD confirmed delivery with date, note, and invoice upload |
 | BALANCE_APPROVED | Finance HOD released the balance (amount may be adjusted with a reason). Skipped if balance = 0 |
 | CLOSED | Terminal. Balance paid and recorded, or fully settled |
@@ -291,13 +295,14 @@ Covers anything where money goes to an outside party in stages — sound/light r
 | From | Action | By | To |
 |---|---|---|---|
 | DRAFT | Submit | Dept HOD | SUBMITTED |
-| SUBMITTED | Approve | Finance HOD | APPROVED |
+| SUBMITTED | Approve (a note is required if the Finance HOD raised it — 5.2) | Finance HOD | APPROVED |
 | SUBMITTED | Send back / Decline (reason) | Finance HOD | SENT_BACK / DECLINED |
 | SENT_BACK | Edit and resubmit | Dept HOD | SUBMITTED |
-| APPROVED | Record advance payment | Management | ADVANCE_PAID |
+| APPROVED | Record advance payment, in full or in part | Management / Finance HOD | ADVANCE_PAID if paid in full, else stays APPROVED |
 | APPROVED / ADVANCE_PAID | Confirm delivery (invoice required) | Dept HOD | DELIVERED |
 | DELIVERED | Release balance (amount editable with reason) | Finance HOD | BALANCE_APPROVED |
-| BALANCE_APPROVED | Record balance payment | Management | CLOSED |
+| BALANCE_APPROVED | Record balance payment, in full or in part | Management / Finance HOD | CLOSED once nothing is owed, else stays BALANCE_APPROVED |
+| APPROVED / ADVANCE_PAID / DELIVERED / BALANCE_APPROVED | Record remaining payment on a part-paid milestone | Management / Finance HOD | as above once it settles, else unchanged |
 | DELIVERED, balance = 0 | Close | Finance HOD | CLOSED |
 | APPROVED / ADVANCE_PAID | Cancel (reason; refund tracking if advance paid) | Finance HOD | CANCELLED |
 
@@ -306,8 +311,11 @@ Covers anything where money goes to an outside party in stages — sound/light r
 - The vendor page shows every request across departments: total contracted, paid, outstanding. Finance sees total exposure per vendor.
 - Expected delivery date passing without confirmation → reminder to Dept HOD and a Medium flag (F12).
 - Milestones are stored as a list so more than two (e.g. 30 / 40 / 30) can be supported later without a schema change.
+- A payment is marked as paying its milestone in full or in part. A part payment moves only what was paid from Committed to Spent; the rest stays Committed and owed, and the milestone offers a "remaining payment" — with its own reference, date and receipt — until it is paid off. Each payment is kept separately (`vendor_payments`). A payment can never exceed what is owed on the milestone; settling for less than agreed is still done by reducing the approved value at release, with a reason.
 - An invoice total that differs from the approved value raises a High flag (F9) before balance release.
 - A refund received on a cancelled request is recorded against the line item and reduces Spent.
+- Documents. The request form takes the vendor's quote, invoice or MoU (up to 10 files). After the request is raised, whoever raised it, its department's HOD and Finance can add more (an invoice, purchase order, delivery proof or other), each marked with what it is and recorded on the request's timeline. Files can be added in any state but removed only while the request is a draft or sent back, so the set a reviewer relied on never shrinks.
+- A vendor's own papers (MoU, GST certificate, bank proof) are kept on the vendor, up to 20. Finance files and removes them; Finance and Management see them. Department HODs do not, because these documents carry the vendor's bank details (20.7).
 
 ### 7.4 Income tracking
 
@@ -334,6 +342,7 @@ Covers anything where money goes to an outside party in stages — sound/light r
 - **Within a department:** Dept HOD can add, rename, resize, or close line items as long as Σ line items ≤ allocation and no line item drops below its own Committed + Spent.
 - **Closing a line item:** no new requests can attach to it; its unspent balance returns to the department's unplanned buffer. Finance HOD can pull buffer back to Reserve. Closed items can be reopened by the HOD with a reason.
 - **Supporting documents** can be added or removed while a line item is open. Removal is soft (file retained, marked removed) and logged.
+- **Deleting a line item:** allowed only while nothing has been charged against it — no reimbursement request and no vendor request, whatever their state. The planned amount returns to the department's unplanned buffer, the row is kept (soft delete), open flags on it are dismissed as no longer applying, and the deletion is logged. Once anything is filed against it the delete is refused with `CONFLICT`; closing it is the way to retire an item that has history, because the five numbers read the line item and money that has moved cannot be made to disappear from them.
 - All of the above write audit events showing before and after values.
 
 ### 7.6 Comments
@@ -491,6 +500,7 @@ Thresholds are configurable by Finance HOD. F1–F6, F8, F9, F12–F14 are deter
 **Finance HOD**
 - Fest overview: total budget, allocated vs reserve, income received vs spent (cash position), projected close, department table (five numbers + utilization bar), open flags count, items awaiting decision.
 - Approval queue: reimbursements and vendor requests, flagged first, with bulk approve for clean items.
+- Department expenses: every other department with its Available and open line items, and for each one "Add expense" (the claim form, offering only that department's line items) and "Vendor payment" (the vendor request form, likewise). Below, everything the Finance HOD has added for other departments, with its state. The claims follow 7.2 (that department's head endorses, Management approves); the vendor requests follow 7.3, with 5.2's exception for approving their own. On a phone the camera tab opens this section for the Finance HOD, since their own department holds no budget.
 - Flags panel.
 - Income ledger and sponsor statements.
 - Vendors: exposure per vendor.
@@ -616,7 +626,7 @@ Email in v1. Push or WhatsApp must be live before fest week for Urgent tickets �
 - Append-only audit log for every create / update / state change / payment record / reallocation / flag resolution, with actor, timestamp, before/after, and reason.
 - No hard deletes. Records are soft-deleted or moved to terminal states; files are retained.
 - Segregation of duties as in 5.2, enforced in the API layer.
-- Receipt, invoice, and MoU files are stored privately and served through signed, expiring URLs; only users who can see the parent record can fetch them.
+- Receipt, invoice, and MoU files are stored privately and served through signed, expiring URLs; only users who can see the parent record can fetch them. One exception, by decision: the bill links in the reimbursement export open for anyone who holds the link, with no sign-in, so the file can go to someone without an account. They cover bills on reimbursements only, and stop working when the bill is removed or the claim is deleted.
 - Data retained for at least two years after fest close for college audit; Finance HOD can export a full archive.
 - Amounts stored as integers in paise to avoid rounding errors.
 
@@ -716,7 +726,7 @@ All exports are CSV and XLSX, filterable by date range, department, state, line 
 18. Light theme: needed at launch for faculty and college accounts, or v1.1? (Draft: v1.1; exports are light regardless.)
 19. Can Design share the vector source of the wordmark and a favicon mark?
 20. Should line items need Finance approval before they can receive requests (a hard review gate), or is the optional Reviewed mark plus the document threshold enough? (Draft: no gate.)
-21. Is ₹10,000 the right default for the supporting-document threshold?
+21. ~~Is ₹10,000 the right default for the supporting-document threshold?~~ Closed: the default is 0 (off). A missing quotation is Finance's to chase on the budget-review screen, not a refusal aimed at whoever is next to file a claim against the item.
 
 ## 18. Technical architecture
 
@@ -788,7 +798,7 @@ create type ticket_priority       as enum ('LOW','MEDIUM','HIGH','URGENT');
 create type flag_severity         as enum ('LOW','MEDIUM','HIGH');
 create type flag_status           as enum ('OPEN','ACKNOWLEDGED','DISMISSED');
 create type entity_type           as enum ('FEST','DEPARTMENT','LINE_ITEM','REIMBURSEMENT','VENDOR','VENDOR_REQUEST','VENDOR_MILESTONE','INCOME_ENTRY','BUDGET_TRANSFER','TICKET','USER','ATTACHMENT','COMMENT','FLAG');
-create type attachment_purpose    as enum ('RECEIPT','QUOTE','LISTING','PO','INVOICE','DELIVERY_PROOF','PAYMENT_PROOF','MOU','TICKET_ATTACHMENT','TICKET_PROOF','OTHER');
+create type attachment_purpose    as enum ('RECEIPT','QUOTE','LISTING','PO','INVOICE','DELIVERY_PROOF','PAYMENT_PROOF','MOU','TICKET_ATTACHMENT','TICKET_PROOF','OTHER','CHAT_ATTACHMENT','CLAIM_PAYMENT_PROOF');
 create type attachment_kind       as enum ('FILE','LINK');
 create type notification_channel  as enum ('IN_APP','EMAIL','PUSH','WHATSAPP');
 ```
@@ -1004,6 +1014,22 @@ create table vendor_milestones (
 );
 -- Service layer enforces: sum(planned_paise) = coalesce(approved_value_paise, total_value_paise).
 -- MVP creates exactly two milestones (ADVANCE, BALANCE); the model allows more.
+-- paid_paise is the running total of its vendor_payments; paid_at (and paid_by,
+-- payment_reference) are set only when that total reaches planned_paise — settled.
+
+-- One row per transfer: a milestone may be paid in parts (7.3).
+create table vendor_payments (
+  id                   uuid primary key default gen_random_uuid(),
+  fest_id              uuid not null references fests(id),
+  vendor_request_id    uuid not null references vendor_requests(id),
+  milestone_id         uuid not null references vendor_milestones(id),
+  amount_paise         bigint not null check (amount_paise > 0),
+  paid_at              timestamptz not null,
+  paid_by              uuid references users(id),
+  payment_reference    text not null,
+  proof_attachment_id  uuid references attachments(id),
+  created_at           timestamptz not null default now()
+);
 
 create table income_entries (
   id                    uuid primary key default gen_random_uuid(),
@@ -1333,7 +1359,7 @@ group by f.id, cash.received_paise, cash.pledged_paise, cash.expected_paise;
 ```json
 {
   "fest_days": ["2026-11-27", "2026-11-28", "2026-11-29"],
-  "line_item_doc_threshold_paise": 1000000,
+  "line_item_doc_threshold_paise": 0,
   "request_aging_amber_days": 3,
   "request_aging_red_days": 7,
   "ticket_auto_close_hours": 48,
@@ -1405,6 +1431,7 @@ One department (Tech, allocated ₹1,00,000) with one line item (Sound, planned 
 | POST | `/attachments` | all | Create a LINK attachment |
 | GET | `/attachments/{id}` | anyone who can see the parent | Metadata + `ocr_json` |
 | GET | `/attachments/{id}/url` | anyone who can see the parent | Signed GET URL, 15 min |
+| GET | `/bills/{id}?sig=` | anyone holding the link; no session | Bill link from the reimbursement export (section 11). 302 to a signed GET URL, 15 min |
 | DELETE | `/attachments/{id}` | uploader while parent is editable; H/F for line-item documents | Soft remove |
 
 ### 20.3 Me, users, webhooks
@@ -1440,6 +1467,7 @@ One department (Tech, allocated ₹1,00,000) with one line item (Sound, planned 
 | POST | `/departments/{id}/line-items` | own H, F | `{ name, description?, planned_paise, default_expense_type_id?, attachment_ids? }`. `OVER_ALLOCATION` if Σ would exceed the department allocation |
 | GET | `/line-items/{id}` | as above | Totals, documents (with quoted amounts and lowest quote), attached requests, flags, timeline |
 | PATCH | `/line-items/{id}` | own H, F | Name, description, planned amount (cannot go below committed + spent), expense type |
+| DELETE | `/line-items/{id}` | own H, F | Soft delete, logged, optional `?reason=`. `CONFLICT` while any reimbursement or vendor request is charged against it, whatever its state — close it instead (7.5) |
 | POST | `/line-items/{id}/transitions` | own H, F (`MARK_REVIEWED`: F only) | Actions: `CLOSE` (reason), `REOPEN` (reason), `MARK_REVIEWED`, `UNMARK_REVIEWED` |
 | GET | `/line-items/{id}/documents` | as GET | Supporting documents, removed ones excluded unless `?include_removed=1` (F) |
 | POST | `/line-items/{id}/documents` | own H, F | Bind an uploaded file `{ attachment_id, label, source_name, quoted_amount_paise? }` or create a link `{ kind: "LINK", url, label, source_name, quoted_amount_paise?, screenshot_attachment_id? }`. Max 10 active. Re-evaluates F13 / F14 |
@@ -1452,7 +1480,7 @@ One department (Tech, allocated ₹1,00,000) with one line item (Sound, planned 
 | Method | Path | Roles | Purpose |
 |---|---|---|---|
 | GET | `/reimbursements` | M own; H own dept; F, Mg all | Filters: `status`, `department_id`, `line_item_id`, `submitter_id`, `flagged=1`, `from`, `to`, `q` |
-| POST | `/reimbursements` | all | Creates DRAFT, or SUBMITTED when `submit: true`. Body: `line_item_id, expense_type_id, description, transaction_on, amount_paise, merchant?, payee_name, payee_upi_id, attachment_ids[]` (≥ 1 receipt) |
+| POST | `/reimbursements` | all | Creates DRAFT, or SUBMITTED when `submit: true`. Body: `line_item_id, expense_type_id, description, transaction_on, amount_paise, merchant?, payee_name, payee_upi_id, attachment_ids[], payment_proof_ids[]` (≥ 1 receipt, ≥ 1 proof of payment) |
 | GET | `/reimbursements/{id}` | as list | Full record (20.1) |
 | PATCH | `/reimbursements/{id}` | submitter, in DRAFT / SENT_BACK | Any field; bumps `version`; old attachments stay, removed ones soft-removed |
 | POST | `/reimbursements/{id}/transitions` | see table below | State change |
@@ -1482,6 +1510,8 @@ Transition actions (7.2):
 | GET | `/vendor-requests` | H own dept; F, Mg all | Filters: `status`, `department_id`, `vendor_id`, `overdue=1` |
 | POST | `/vendor-requests` | H, F | `vendor_id | vendor: {…}`, `line_item_id, description, total_value_paise, milestones: [{ kind, planned_paise }], expected_delivery_on, attachment_ids[]` (quote / PO). `submit: true` to submit directly |
 | GET | `/vendor-requests/{id}` | as list | Full record with milestones |
+| POST | `/vendor-requests/{id}/documents` | requester, H own dept, F | `attachment_ids[]`, `kind: INVOICE | QUOTE | PO | DELIVERY_PROOF | OTHER`. Adds files in any state, audited on the request's timeline |
+| GET · POST | `/vendors/{id}/documents` | GET F, Mg · POST F | The vendor's own papers. POST: `attachment_ids[]`, `kind: MOU | INVOICE | QUOTE | OTHER`. Removed with DELETE `/attachments/{id}` (F) |
 | PATCH | `/vendor-requests/{id}` | requester, in DRAFT / SENT_BACK | Any field including milestones |
 | POST | `/vendor-requests/{id}/transitions` | see table | State change |
 
@@ -1493,10 +1523,11 @@ Transition actions (7.3):
 | `APPROVE` | SUBMITTED | F | `approved_value_paise?` (defaults to total) |
 | `SEND_BACK` / `DECLINE` | SUBMITTED | F | `reason` |
 | `RESUBMIT` | SENT_BACK | requester | — |
-| `RECORD_ADVANCE` | APPROVED | Mg | `milestone_id, paid_paise, paid_at, payment_reference, proof_attachment_id?` |
+| `RECORD_ADVANCE` | APPROVED | Mg, F (not the requester) | `milestone_id, paid_paise, paid_at, payment_reference, proof_attachment_id?` — `paid_paise` ≤ the milestone; less than it is a part payment |
 | `CONFIRM_DELIVERY` | APPROVED (advance = 0), ADVANCE_PAID | target dept H, F | `delivered_at, note?, invoice_attachment_id` (required) |
 | `RELEASE_BALANCE` | DELIVERED | F | `approved_value_paise?` (≤ current), `reason` if changed |
-| `RECORD_BALANCE` | BALANCE_APPROVED | Mg | `milestone_id, paid_paise, paid_at, payment_reference, proof_attachment_id?` → CLOSED |
+| `RECORD_BALANCE` | BALANCE_APPROVED | Mg, F (not the requester) | `milestone_id, paid_paise, paid_at, payment_reference, proof_attachment_id?` → CLOSED once nothing is owed |
+| `RECORD_REMAINING` | APPROVED, ADVANCE_PAID, DELIVERED, BALANCE_APPROVED | Mg, F (not the requester) | Same body, for a milestone already paid in part; `paid_paise` ≤ what is left |
 | `CLOSE` | DELIVERED (balance = 0) | F | — |
 | `CANCEL` | APPROVED, ADVANCE_PAID | F | `reason, refund_expected_paise?` |
 | `RECORD_REFUND` | CANCELLED | Mg | `amount_paise, received_at, reference` |
@@ -1648,14 +1679,14 @@ Each milestone ends with tests green, seed data loaded, and a short demo path in
 - The five numbers for a seeded department match a hand-computed fixture after a scripted sequence: submit → endorse → approve → pay, plus a vendor advance and a balance adjustment.
 - No `number` arithmetic on rupees anywhere; `money.ts` is the only place amounts are formatted.
 - Every write produces an audit event with `before` / `after`; `audit_events` has no UPDATE / DELETE grants for the app role.
-- Attachments are never served from a public URL.
+- Attachments are never served from a public URL, except the signed bill links in the reimbursement export (section 11).
 - `pnpm test`, `pnpm lint`, `pnpm typecheck` pass; `pnpm db:seed` produces a usable demo.
 
 ### 21.4 Decisions already made (do not re-ask)
 
-- Line items are open on creation; there is no approval gate (open question 20 pending). The document threshold and flags F13 / F14 are the control.
+- Line items are open on creation; there is no approval gate (open question 20 pending). Flags F13 / F14 and the budget-review screen are the control; the document threshold is off by default (7.1, open question 21).
 - Finance and Core are departments (`kind`); Finance HODs and Management users belong to them.
-- Over-budget requests are flagged, never blocked. The only hard blocks are `OVER_ALLOCATION` (fest total, department allocation, line-item minimum) and the supporting-document threshold for attaching requests.
+- Over-budget requests are flagged, never blocked. The only hard blocks are `OVER_ALLOCATION` (fest total, department allocation, line-item minimum) and the supporting-document threshold for attaching requests — and that threshold ships at 0, so a deployment that never sets it has `OVER_ALLOCATION` as its only hard block.
 - Pending is subtracted from Available.
 - Payments are recorded, never executed.
 - Email is the only channel in MVP; in-app notifications are stored regardless so push can be added later without schema changes.

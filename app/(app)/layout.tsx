@@ -2,9 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   Archive, Bell, Camera, ClipboardList, CircleDot, FileText, Flag, Gauge, HandCoins,
-  Home, MessagesSquare, ScrollText, Settings, Truck, Users, Wallet,
+  Home, MessagesSquare, Receipt, ScrollText, Settings, Truck, Users, Wallet,
 } from "lucide-react";
-import { getSession, clerkConfigured } from "@/lib/session";
+import { getSession } from "@/lib/session";
 import { can, type Action } from "@/lib/authz";
 import { unreadCount } from "@/lib/services/notifications";
 import { unreadTotal } from "@/lib/services/chat";
@@ -43,6 +43,8 @@ const GROUPS: { label: string; items: NavItem[] }[] = [
       { href: "/dashboard", label: "Dashboard", icon: Gauge, action: "fest.view" },
       { href: "/budget", label: "Budget", icon: Wallet, action: "department.budget.view" },
       { href: "/requests", label: "Reimbursements", icon: FileText, action: "reimbursement.create" },
+      // Finance adds spend to other departments' budgets from here.
+      { href: "/expenses", label: "Department expenses", icon: Receipt, action: "expense.forAnyDepartment" },
       { href: "/queues", label: "Queues", icon: ClipboardList, action: "reimbursement.create", hot: true },
       { href: "/vendors", label: "Vendors", icon: Truck, action: "vendor.view" },
       { href: "/income", label: "Income", icon: HandCoins, action: "income.view" },
@@ -99,7 +101,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       items: g.items.filter((n) => can(user, n.action, scope)),
     }))
     .filter((g) => g.items.length > 0);
-  const tabs = TABS.filter((t) => can(user, t.action, scope));
+  /*
+   * The Finance HOD's own department holds no budget, so on a phone their camera
+   * tab opens Department expenses — pick the department, then the claim — rather
+   * than a claim form whose first question is which department.
+   */
+  const tabs = TABS
+    .filter((t) => can(user, t.action, scope))
+    .map((t) => (t.href === "/requests/new" && can(user, "expense.forAnyDepartment", scope)
+      ? { ...t, href: "/expenses", label: "Expense" }
+      : t));
 
   /*
    * The shell is the viewport, and nothing outside it scrolls.
@@ -174,7 +185,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <p className="px-2 pb-1 text-[var(--text-meta)] text-text-faint">
             {user.departmentName} · {user.role.replace("_", " ").toLowerCase()}
           </p>
-          <SignOutButton withClerk={clerkConfigured()} />
+          <SignOutButton />
         </div>
       </aside>
 

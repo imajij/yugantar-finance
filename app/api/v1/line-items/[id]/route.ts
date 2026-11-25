@@ -5,7 +5,7 @@ import { attachments, auditEvents, lineItems } from "@/db/schema";
 import { assertCan } from "@/lib/authz";
 import { notFound, parseBody, route } from "@/lib/api";
 import { lineItemTotals } from "@/lib/queries/budget";
-import { updateLineItem } from "@/lib/services/line-items";
+import { deleteLineItem, updateLineItem } from "@/lib/services/line-items";
 
 /** PRD 20.5 / 20.1 — one call returns totals, documents, flags and timeline. */
 export const GET = route<{ id: string }>(async ({ user, params }) => {
@@ -58,4 +58,13 @@ export const PATCH = route<{ id: string }>(async ({ user, params, request }) => 
     defaultExpenseTypeId: body.default_expense_type_id,
     reason: body.reason,
   });
+});
+
+/**
+ * 20.5 — deleting one. Soft, audited, and refused once anything is charged against
+ * it; `deleteLineItem` says why, and closing is the alternative it points at.
+ */
+export const DELETE = route<{ id: string }>(async ({ user, params, request }) => {
+  const reason = new URL(request.url).searchParams.get("reason") ?? undefined;
+  return deleteLineItem(user, params.id, reason);
 });

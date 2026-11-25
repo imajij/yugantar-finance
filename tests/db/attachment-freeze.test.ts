@@ -43,13 +43,21 @@ async function receipt(actor: SessionUser, boundTo?: string): Promise<string> {
     returning id`)).id;
 }
 
+/** Proof the claimant paid, which every new claim needs alongside its receipt (7.2). */
+async function proof(actor: SessionUser): Promise<string> {
+  return (await one<{ id: string }>(sql`
+    insert into attachments (fest_id, purpose, kind, storage_key, file_name, mime_type, size_bytes, uploaded_by)
+    values (${festId}, 'CLAIM_PAYMENT_PROOF', 'FILE', ${"k/" + Math.random()}, 'upi.png', 'image/png', 1024, ${actor.id})
+    returning id`)).id;
+}
+
 const claim = async (actor: SessionUser) =>
   createReimbursement(actor, {
     lineItemId, expenseTypeId,
     description: "Cables and gaffer tape for the main stage",
     amountPaise: R(1200), transactionOn: "2026-11-20",
     payeeName: "Ravi", payeeUpiId: "ravi@upi",
-    attachmentIds: [await receipt(actor)], submit: true,
+    attachmentIds: [await receipt(actor)], paymentProofIds: [await proof(actor)], submit: true,
   });
 
 const addLink = (actor: SessionUser, entityId: string) =>
@@ -102,7 +110,7 @@ test("a draft is yours to change, in both directions", async () => {
     description: "Cables and gaffer tape for the main stage",
     amountPaise: R(1200), transactionOn: "2026-11-20",
     payeeName: "Ravi", payeeUpiId: "ravi@upi",
-    attachmentIds: [await receipt(member)], submit: false,
+    attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: false,
   });
   const extra = await addLink(member, req.id);
   await expect(removeAttachment(member, extra.id)).resolves.toBeTruthy();
@@ -183,7 +191,7 @@ test("an upload started before submission does not bind after it", async () => {
     description: "Cables and gaffer tape for the main stage",
     amountPaise: R(1200), transactionOn: "2026-11-20",
     payeeName: "Ravi", payeeUpiId: "ravi@upi",
-    attachmentIds: [await receipt(member)], submit: false,
+    attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: false,
   });
   const inFlight = await receipt(member, req.id);
   await transitionReimbursement(member, req.id, "SUBMIT");

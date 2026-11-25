@@ -2,25 +2,39 @@
  * Vendors and vendor payment requests (PRD 7.3, 20.7).
  *
  * The money model: on APPROVE the *entire* approved value moves to Committed; each
- * paid milestone moves that amount from Committed to Spent; reducing the balance at
- * release returns the difference to Available. All of that falls out of the views in
+ * payment against a milestone — in full or in part — moves that amount from
+ * Committed to Spent; reducing the balance at release returns the difference to
+ * Available. All of that falls out of the views in
  * 19.4 — nothing here writes a derived number.
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
 import {
   attachments, auditEvents, comments, flags, lineItems, users,
-  vendorMilestones, vendorRequests, vendors,
+  vendorMilestones, vendorPayments, vendorRequests, vendors,
 } from "@/db/schema";
 import { ApiError, conflict, notFound } from "@/lib/api";
 import { assertCan, can, maskAccountNumber, satisfiesActorConstraints, type Actor } from "@/lib/authz";
 import { nextHumanId } from "@/lib/human-id";
-import { assertVendorTransition, type VendorAction, type VendorState } from "@/lib/state-machines/vendor";
+import { formatPaise } from "@/lib/money";
+import {
+  assertVendorTransition, landingStateAfterPayment, type VendorAction, type VendorState,
+} from "@/lib/state-machines/vendor";
 import { evaluateVendorFlags } from "@/lib/flags";
 import { recordAudit, snapshot } from "./audit";
 import {
   notifyHighFlags, notifyMoneyTransition, VENDOR_RULES, type Party,
 } from "./notify-routing";
+
+const PAYMENT_ACTIONS: readonly VendorAction[] = ["RECORD_ADVANCE", "RECORD_BALANCE", "RECORD_REMAINING"];
+
+/**
+ * What is still owed on a milestone. Settled (`paid_at` set) means nothing; otherwise
+ * whatever of the plan has not been paid yet, which for a part-paid milestone is the
+ * remainder.
+ */
+export const owedOn = (m: { plannedPaise: number; paidPaise: number | null; paidAt: Date | null }) =>
+  m.paidAt ? 0 : Math.max(0, m.plannedPaise - (m.paidPaise ?? 0));
 
 const AUDITED = [
   "status", "totalValuePaise", "approvedValuePaise", "lineItemId", "vendorId",
@@ -296,6 +310,8 @@ export async function transitionVendorRequest(
     const now = new Date();
     const patch: Record<string, unknown> = { updatedAt: now };
     let to: VendorState = before.status;
+    /** Set by a payment: what it did, for the audit line and who is told. */
+    let payment: { settled: boolean; kind: string; summary: string } | null = null;
 
     switch (action) {
       case "SUBMIT":
@@ -304,6 +320,18 @@ export async function transitionVendorRequest(
         break;
 
       case "APPROVE": {
+        /*
+         * 5.2's exception for vendor payments: the Finance HOD may approve a request
+         * they raised — so Finance can raise one for any department without a second
+         * Finance HOD — but only by saying why. The note is the compensating
+         * control: it is on the record, and Management is told of the approval.
+         */
+        if (before.requestedBy === actor.id && !(body.note ?? body.reason)?.trim()) {
+          throw new ApiError(
+            "VALIDATION_ERROR",
+            "You raised this request, so approving it yourself needs a note saying why (5.2).",
+          );
+        }
         const approved = body.approved_value_paise ?? before.totalValuePaise;
         if (approved <= 0 || approved > before.totalValuePaise) {
           throw new ApiError("VALIDATION_ERROR", "Approved value must be positive and at most the requested total");
@@ -318,74 +346,105 @@ export async function transitionVendorRequest(
       case "DECLINE": to = "DECLINED"; break;
 
       case "RECORD_ADVANCE":
-      case "RECORD_BALANCE": {
+      case "RECORD_BALANCE":
+      case "RECORD_REMAINING": {
         const milestone = milestones.find((m) => m.id === body.milestone_id);
         if (!milestone) throw notFound("Milestone");
-        if (milestone.paidPaise !== null) throw conflict("That milestone is already paid");
-        if (body.paid_paise! <= 0) throw new ApiError("VALIDATION_ERROR", "Paid amount must be positive");
+        if (milestone.paidAt !== null) throw conflict("That milestone is already paid in full");
+        const amount = body.paid_paise!;
+        if (amount <= 0) throw new ApiError("VALIDATION_ERROR", "Paid amount must be positive");
+
+        const alreadyPaid = milestone.paidPaise ?? 0;
+        const remaining = owedOn(milestone);
 
         /*
-         * The action names which milestone it is for, so it has to be that kind of
-         * milestone. Without this, `RECORD_ADVANCE` against the balance milestone
-         * marks the balance paid and leaves the request in ADVANCE_PAID — a request
-         * that reads as half-settled with nothing left to pay.
+         * The first payment on a milestone names it: the advance or the balance. Once
+         * part of it is paid, what is left is the remaining payment, whichever stage
+         * the request has reached — an advance half-paid before delivery is still
+         * owed after it.
          */
-        const wantsAdvance = action === "RECORD_ADVANCE";
-        if (wantsAdvance !== (milestone.kind === "ADVANCE")) {
-          throw new ApiError(
-            "VALIDATION_ERROR",
-            wantsAdvance
-              ? "That is not the advance milestone; record the balance instead"
-              : "That is the advance milestone; record the advance instead",
-          );
+        if (action === "RECORD_REMAINING") {
+          if (alreadyPaid === 0) {
+            throw new ApiError("VALIDATION_ERROR",
+              "Nothing has been paid on that milestone yet; record the advance or the balance instead");
+          }
+        } else {
+          if (alreadyPaid > 0) {
+            throw new ApiError("VALIDATION_ERROR",
+              "Part of that milestone is already paid; record the remaining payment instead");
+          }
+          /*
+           * The action names which milestone it is for, so it has to be that kind of
+           * milestone. Without this, `RECORD_ADVANCE` against the balance milestone
+           * marks the balance paid and leaves the request in ADVANCE_PAID — a request
+           * that reads as half-settled with nothing left to pay.
+           */
+          const wantsAdvance = action === "RECORD_ADVANCE";
+          if (wantsAdvance !== (milestone.kind === "ADVANCE")) {
+            throw new ApiError(
+              "VALIDATION_ERROR",
+              wantsAdvance
+                ? "That is not the advance milestone; record the balance instead"
+                : "That is the advance milestone; record the advance instead",
+            );
+          }
         }
 
         /*
-         * Pay what was agreed, or change what was agreed first.
+         * Paid in full, or paid in part — never more than is owed.
          *
-         * 7.3 gives exactly one way to settle for less than the planned amount:
-         * reduce the approved value at `RELEASE_BALANCE`, with a reason, which
-         * rescales the unpaid milestones and returns the difference to Available
-         * where the department can see it. Letting a payment quietly be any number
-         * routed around all of that — ₹1 against a ₹4,00,000 milestone marked it
-         * paid, closed the request, and dropped ₹3,99,999 out of Committed with no
-         * reason recorded anywhere and nobody owing anything.
+         * A part payment is exactly that: the milestone stays unsettled, and what is
+         * left of it stays Committed and owed until the remaining payment is
+         * recorded. That is what keeps a ₹1 transfer against a ₹24,000 balance from
+         * closing the request and quietly dropping ₹23,999.99 out of Committed.
+         * Settling for *less* than was agreed is still the release's job (7.3): it
+         * needs a reason, and the difference visibly goes back to the department.
          */
-        if (body.paid_paise !== milestone.plannedPaise) {
+        if (amount > remaining) {
           throw new ApiError(
             "VALIDATION_ERROR",
-            body.paid_paise! < milestone.plannedPaise
-              ? "A payment settles the milestone in full. To pay less, reduce the approved value at release "
-                + "and say why — that returns the difference to the department."
-              : "A payment cannot exceed the milestone. Raise the approved value before paying it.",
-            { planned_paise: milestone.plannedPaise, offered_paise: body.paid_paise },
+            `A payment cannot be more than is owed on the milestone (${formatPaise(remaining)}). `
+              + "Raise the approved value before paying more.",
+            { owed_paise: remaining, offered_paise: amount },
           );
         }
+        const settled = amount === remaining;
+        const paidAt = new Date(body.paid_at!);
 
         await tx.update(vendorMilestones).set({
-          paidPaise: body.paid_paise!, paidAt: new Date(body.paid_at!),
-          paidBy: actor.id, paymentReference: body.payment_reference!, updatedAt: now,
+          paidPaise: alreadyPaid + amount,
+          updatedAt: now,
+          // `paid_at` means settled; a part payment leaves it empty (0016).
+          ...(settled ? { paidAt, paidBy: actor.id, paymentReference: body.payment_reference! } : {}),
         }).where(eq(vendorMilestones.id, milestone.id));
+
+        await tx.insert(vendorPayments).values({
+          festId: actor.festId, vendorRequestId: id, milestoneId: milestone.id,
+          amountPaise: amount, paidAt, paidBy: actor.id,
+          paymentReference: body.payment_reference!,
+          proofAttachmentId: body.proof_attachment_id ?? null,
+        });
 
         /*
          * Closing is "nothing is owed", not "the balance action was used". The MVP
          * makes two milestones, but the model allows more (19.x), and a request with
-         * a third still unpaid must not close — CLOSED leaves Committed entirely
-         * (0001_views.sql), so whatever is still owed would simply vanish.
+         * a third still unpaid — or an advance still part-paid — must not close:
+         * CLOSED leaves Committed entirely (0001_views.sql), so whatever is still
+         * owed would simply vanish.
          */
-        const stillOwed = milestones
-          .filter((m) => m.id !== milestone.id && m.paidPaise === null)
-          .reduce((sum, m) => sum + m.plannedPaise, 0);
+        const stillOwed = milestones.reduce(
+          (sum, m) => sum + (m.id === milestone.id ? remaining - amount : owedOn(m)), 0,
+        );
+        to = landingStateAfterPayment(before.status, { kind: milestone.kind, settled }, stillOwed);
+        if (to === "CLOSED") patch.closedAt = now;
 
-        if (wantsAdvance) {
-          to = "ADVANCE_PAID";
-        } else if (stillOwed === 0) {
-          to = "CLOSED";
-          patch.closedAt = now;
-        } else {
-          // Paid, and still open, because something is still owed on it.
-          to = "BALANCE_APPROVED";
-        }
+        payment = {
+          settled, kind: milestone.kind,
+          summary: settled
+            ? `${formatPaise(amount)} paid; the ${milestone.kind.toLowerCase()} is paid in full`
+            : `${formatPaise(amount)} paid in part; ${formatPaise(remaining - amount)} of the `
+              + `${milestone.kind.toLowerCase()} still owed`,
+        };
         break;
       }
 
@@ -424,7 +483,7 @@ export async function transitionVendorRequest(
       }
 
       case "CLOSE": {
-        const unpaid = milestones.filter((m) => m.paidPaise === null).reduce((s, m) => s + m.plannedPaise, 0);
+        const unpaid = milestones.reduce((s, m) => s + owedOn(m), 0);
         if (unpaid !== 0) {
           throw new ApiError("VALIDATION_ERROR", "Close is only for a zero balance; release the balance instead");
         }
@@ -461,7 +520,7 @@ export async function transitionVendorRequest(
       .returning();
     if (!after) throw conflict("This request changed while you were looking at it");
 
-    if ((action === "RECORD_ADVANCE" || action === "RECORD_BALANCE") && body.proof_attachment_id) {
+    if (PAYMENT_ACTIONS.includes(action) && body.proof_attachment_id) {
       await bindAttachment(tx, actor, body.proof_attachment_id, id, "PAYMENT_PROOF");
     }
 
@@ -469,7 +528,8 @@ export async function transitionVendorRequest(
       festId: actor.festId, entityType: "VENDOR_REQUEST", entityId: id, actorId: actor.id,
       action: `vendor_request.transition.${action}`,
       before: snapshot(before, AUDITED), after: snapshot(after, AUDITED),
-      reason: body.reason ?? body.note ?? null,
+      // A payment's line on the timeline says whether it settled anything.
+      reason: body.reason ?? body.note ?? payment?.summary ?? null,
     });
     const raised = await evaluateVendorFlags(tx, id);
 
@@ -483,14 +543,23 @@ export async function transitionVendorRequest(
        where vr.id = ${id}
     `)) as unknown as { vendor_name: string; department_name: string }[];
 
-    await notifyMoneyTransition(tx, VENDOR_RULES, action, party, {
+    /*
+     * Who hears about a payment depends on what it did, not which button recorded
+     * it: a part payment is not "advance paid", and a balance that leaves something
+     * else owed is not "closed and fully paid".
+     */
+    const rule = !payment ? action
+      : !payment.settled ? "PARTIAL_PAYMENT"
+      : to === "CLOSED" ? "RECORD_BALANCE"
+      : payment.kind === "ADVANCE" ? "RECORD_ADVANCE"
+      : "MILESTONE_PAID";
+
+    await notifyMoneyTransition(tx, VENDOR_RULES, rule, party, {
       humanId: after.humanId,
       description: after.description,
-      amountPaise: action === "RECORD_ADVANCE" || action === "RECORD_BALANCE"
-        ? (body.paid_paise ?? 0)
-        : (after.approvedValuePaise ?? after.totalValuePaise),
+      amountPaise: payment ? (body.paid_paise ?? 0) : (after.approvedValuePaise ?? after.totalValuePaise),
       actorName: await actorNameOf(tx, actor.id),
-      reason: body.reason ?? body.note ?? null,
+      reason: body.reason ?? body.note ?? payment?.summary ?? null,
       departmentName: meta?.department_name,
       vendorName: meta?.vendor_name,
     });
@@ -508,7 +577,7 @@ function assertActionPermission(
     assertCan(actor, "vendorRequest.approve", resource);
   }
   if (action === "CONFIRM_DELIVERY") assertCan(actor, "vendorRequest.confirmDelivery", resource);
-  if (action === "RECORD_ADVANCE" || action === "RECORD_BALANCE" || action === "RECORD_REFUND") {
+  if (PAYMENT_ACTIONS.includes(action) || action === "RECORD_REFUND") {
     assertCan(actor, "vendorRequest.recordPayment", resource);
   }
 }
@@ -543,19 +612,27 @@ async function rescaleMilestones(
   }
 }
 
-/** Reducing the balance at release only touches milestones that have not been paid. */
+/**
+ * Reducing the balance at release only touches what is still owed. A settled
+ * milestone keeps its plan; one paid in part keeps what was paid on it, and only its
+ * remainder is shared out of `remaining`.
+ */
 async function rescaleUnpaidMilestones(
-  tx: Tx, milestones: { id: string; plannedPaise: number; paidPaise: number | null }[], remaining: number,
+  tx: Tx,
+  milestones: { id: string; plannedPaise: number; paidPaise: number | null; paidAt: Date | null }[],
+  remaining: number,
 ) {
-  const unpaid = milestones.filter((m) => m.paidPaise === null);
-  const planned = unpaid.reduce((s, m) => s + m.plannedPaise, 0);
+  const open = milestones.filter((m) => m.paidAt === null);
+  const owed = open.reduce((s, m) => s + owedOn(m), 0);
   let allocated = 0;
-  for (const [i, m] of unpaid.entries()) {
-    const share = i === unpaid.length - 1
+  for (const [i, m] of open.entries()) {
+    const share = i === open.length - 1
       ? remaining - allocated
-      : planned === 0 ? 0 : Math.round((m.plannedPaise / planned) * remaining);
+      : owed === 0 ? 0 : Math.round((owedOn(m) / owed) * remaining);
     allocated += share;
-    await tx.update(vendorMilestones).set({ plannedPaise: share }).where(eq(vendorMilestones.id, m.id));
+    await tx.update(vendorMilestones)
+      .set({ plannedPaise: (m.paidPaise ?? 0) + share })
+      .where(eq(vendorMilestones.id, m.id));
   }
 }
 
@@ -609,8 +686,15 @@ async function bindAttachment(
 /** 20.1 — one call returns everything the detail screen needs. */
 export async function getVendorRequestDetail(actor: Actor, id: string) {
   const row = await load(db as unknown as Tx, actor, id);
-  const [milestones, files, openFlags, thread, timeline, vendor, item, requester] = await Promise.all([
+  const [milestones, payments, files, openFlags, thread, timeline, vendor, item, requester] = await Promise.all([
     db.select().from(vendorMilestones).where(eq(vendorMilestones.vendorRequestId, id)).orderBy(vendorMilestones.sortOrder),
+    db.select({
+      id: vendorPayments.id, milestoneId: vendorPayments.milestoneId, amountPaise: vendorPayments.amountPaise,
+      paidAt: vendorPayments.paidAt, paymentReference: vendorPayments.paymentReference,
+      proofAttachmentId: vendorPayments.proofAttachmentId, paidBy: users.name,
+    }).from(vendorPayments).leftJoin(users, eq(users.id, vendorPayments.paidBy))
+      .where(eq(vendorPayments.vendorRequestId, id))
+      .orderBy(vendorPayments.paidAt, vendorPayments.createdAt),
     db.select().from(attachments).where(and(
       eq(attachments.entityType, "VENDOR_REQUEST"), eq(attachments.entityId, id), isNull(attachments.removedAt),
     )),
@@ -634,6 +718,7 @@ export async function getVendorRequestDetail(actor: Actor, id: string) {
     lineItem: item[0],
     requester: requester[0],
     milestones,
+    payments,
     attachments: files,
     flags: openFlags,
     comments: thread,

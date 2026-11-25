@@ -65,7 +65,18 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   ["vendorRequest.create", techResource, [hod, finance]],
   ["vendorRequest.approve", techResource, [finance]],
   ["vendorRequest.confirmDelivery", techResource, [hod, finance]],
-  ["vendorRequest.recordPayment", techResource, [mgmt]],
+  // Management or the Finance HOD (Finance even on its own — 5.2 exception).
+  ["vendorRequest.recordPayment", techResource, [finance, mgmt]],
+  // The Department expenses section: Finance adds spend to any department's budget.
+  ["expense.forAnyDepartment", { festId: FEST }, [finance]],
+  ["expense.forAnyDepartment", { festId: FEST, departmentId: LOGISTICS }, [finance]],
+  // Adding a document to a vendor request: its department's head and Finance (and
+  // whoever raised it — below). Never Management, never a Member.
+  ["vendorRequest.document.add", techResource, [hod, finance]],
+  ["vendorRequest.document.add", { festId: FEST, departmentId: TECH, submitterId: member.id }, [member, hod, finance]],
+  // A vendor's own papers carry its bank account, so they follow the bank details.
+  ["vendor.document.view", { festId: FEST }, [finance, mgmt]],
+  ["vendor.document.manage", { festId: FEST }, [finance]],
   ["user.manage", { festId: FEST }, [finance]],
   ["expenseType.manage", { festId: FEST }, [finance]],
   ["flag.view", techResource, [hod, finance, superAdmin]],
@@ -178,7 +189,7 @@ describe("department scoping", () => {
       "reimbursement.approve", "reimbursement.endorse", "reimbursement.recordPayment",
       "reimbursement.hold", "fest.manage", "user.manage", "income.manage", "flag.resolve",
       "lineItem.markReviewed", "vendorRequest.approve", "department.manage",
-      "vendor.bankDetails.view",
+      "vendor.bankDetails.view", "vendor.document.view",
     ] as const) {
       expect(can(superAdmin, action, techResource), action).toBe(false);
     }
@@ -252,6 +263,10 @@ describe("segregation of duties (5.2)", () => {
       expect(can(actor, "reimbursement.endorse", own(actor)), actor.role).toBe(false);
       expect(can(actor, "reimbursement.approve", own(actor)), actor.role).toBe(false);
       expect(can(actor, "reimbursement.recordPayment", own(actor)), actor.role).toBe(false);
+      // Vendor requests are the one exception, and only for the Finance HOD (below).
+      if (actor.role !== "FINANCE_HOD") {
+        expect(can(actor, "vendorRequest.recordPayment", own(actor)), actor.role).toBe(false);
+      }
     }
   });
 
@@ -279,8 +294,19 @@ describe("segregation of duties (5.2)", () => {
     expect(can(mgmt, "budget.transfer", { festId: FEST })).toBe(false);
   });
 
-  test("a Finance HOD may not approve a vendor request they raised", () => {
-    expect(can(finance, "vendorRequest.approve", { festId: FEST, departmentId: TECH, submitterId: finance.id })).toBe(false);
+  /*
+   * By decision (5.2): Finance raises vendor payments for any department, and with
+   * one Finance HOD nobody else could approve them. So Finance may approve and pay
+   * its own — the service demands a note on the approval, and Management is told.
+   * Nobody else gains anything from this.
+   */
+  test("a Finance HOD may approve and pay a vendor request they raised", () => {
+    const financeOwn = { festId: FEST, departmentId: TECH, submitterId: finance.id };
+    expect(can(finance, "vendorRequest.approve", financeOwn)).toBe(true);
+    expect(can(finance, "vendorRequest.recordPayment", financeOwn)).toBe(true);
+    const hodOwn = { festId: FEST, departmentId: TECH, submitterId: hod.id };
+    expect(can(hod, "vendorRequest.approve", hodOwn)).toBe(false);
+    expect(can(hod, "vendorRequest.recordPayment", hodOwn)).toBe(false);
   });
 });
 

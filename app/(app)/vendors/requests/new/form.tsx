@@ -4,26 +4,30 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { formatPaise } from "@/lib/money";
 import { Required } from "@/components/ui";
+import { FileUpload, type Uploaded } from "@/components/file-upload";
 
 const INPUT = "mt-1 w-full rounded-lg px-3 py-2.5 text-sm bg-[var(--yg-bg-app)] border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 
 interface Props {
   vendors: { id: string; name: string }[];
-  lineItems: { id: string; name: string; availablePaise: number }[];
+  lineItems: { id: string; name: string; departmentName: string; availablePaise: number }[];
   canApprove: boolean;
+  /** Finance may charge any department; the list is then grouped by department. */
+  anyDepartment: boolean;
 }
 
 /**
  * PRD 7.3 — the MVP shape is advance + balance. The split is a percentage so the
  * two milestones always add up to the total, which the service insists on.
  */
-export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
+export function VendorRequestForm({ vendors, lineItems, canApprove, anyDepartment }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState("");
   const [advancePct, setAdvancePct] = useState(50);
   const [lineItemId, setLineItemId] = useState("");
+  const [documents, setDocuments] = useState<Uploaded[]>([]);
 
   const totalPaise = Math.round(Number(total || 0) * 100);
   const advancePaise = Math.round((totalPaise * advancePct) / 100);
@@ -50,6 +54,7 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
           { kind: "BALANCE", planned_paise: balancePaise },
         ],
         expected_delivery_on: String(f.get("expected_delivery_on") ?? "") || null,
+        attachment_ids: documents.map((d) => d.id),
         submit: true,
       }),
     });
@@ -63,7 +68,13 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
   }
 
   if (lineItems.length === 0) {
-    return <p className="text-sm text-text-muted">Your department has no open line items to charge this to.</p>;
+    return (
+      <p className="text-sm text-text-muted">
+        {anyDepartment
+          ? "No department has an open line item to charge this to yet."
+          : "Your department has no open line items to charge this to."}
+      </p>
+    );
   }
 
   return (
@@ -79,15 +90,29 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
         <textarea name="description" required minLength={5} maxLength={1000} rows={3} className={INPUT} />
       </Field>
 
-      <Field label="Line item" required hint={chosen ? `${formatPaise(chosen.availablePaise)} available` : undefined}>
+      <Field
+        label="Line item"
+        required
+        hint={chosen
+          ? `${anyDepartment ? `${chosen.departmentName} · ` : ""}${formatPaise(chosen.availablePaise)} available`
+          : anyDepartment ? "Any department's — the request is charged to that department's budget." : undefined}
+      >
         <select
           name="line_item_id" required value={lineItemId} className={INPUT}
           onChange={(e) => setLineItemId(e.target.value)}
         >
           <option value="" disabled>Choose a line item</option>
-          {lineItems.map((i) => (
-            <option key={i.id} value={i.id}>{i.name} — {formatPaise(i.availablePaise)} left</option>
-          ))}
+          {anyDepartment
+            ? [...new Set(lineItems.map((i) => i.departmentName))].map((dept) => (
+              <optgroup key={dept} label={dept}>
+                {lineItems.filter((i) => i.departmentName === dept).map((i) => (
+                  <option key={i.id} value={i.id}>{i.name} — {formatPaise(i.availablePaise)} left</option>
+                ))}
+              </optgroup>
+            ))
+            : lineItems.map((i) => (
+              <option key={i.id} value={i.id}>{i.name} — {formatPaise(i.availablePaise)} left</option>
+            ))}
         </select>
       </Field>
 
@@ -122,6 +147,15 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
         <input name="expected_delivery_on" type="date" className={INPUT} />
       </Field>
 
+      <FileUpload
+        files={documents}
+        onChange={setDocuments}
+        max={10}
+        purpose="QUOTE"
+        label="Quote, invoice or MoU"
+        hint="What the vendor sent, so whoever approves can check the amount. JPG, PNG, HEIC or PDF, up to 10 MB each. More can be added later from the request."
+      />
+
       <button
         type="submit" disabled={busy || totalPaise <= 0}
         className="rounded-full px-5 py-2.5 text-sm font-medium disabled:opacity-50"
@@ -132,7 +166,8 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
 
       {canApprove && (
         <p className="text-xs text-text-muted">
-          You can approve vendor payments, but not one you raised yourself.
+          You can approve this yourself once it is raised, with a note saying why — Management
+          is told when you do.
         </p>
       )}
 

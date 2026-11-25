@@ -75,7 +75,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # The same file the dev server and every infra script read, so CI and a laptop
-      # are configured one way rather than two. R2, Clerk and Resend are all absent:
+      # are configured one way rather than two. R2 and Resend are both absent:
       # uploads fall back to local disk, sign-in to emailed links, and mail to the
       # log — which is what the tests exercise anyway.
       #

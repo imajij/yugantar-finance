@@ -23,7 +23,10 @@ import { db } from "@/db";
 import { ApiError, notFound } from "@/lib/api";
 import { assertCan, canFestWide, type Actor } from "@/lib/authz";
 import { waitingOn } from "./reimbursements";
+import { appUrl } from "@/lib/email";
 import { formatPaise } from "@/lib/money";
+import { billSignature } from "@/lib/storage";
+import { OWED_ON_MILESTONE, PAYABLE_MILESTONE } from "@/lib/queries/vendor-payable";
 import { buildXlsx, type Column, type Sheet } from "@/lib/xlsx";
 
 export type ExportKind =
@@ -153,6 +156,28 @@ const REIMBURSEMENT_COLUMNS: Column[] = [
 ];
 
 /**
+ * The address of a bill, written into a file that may be opened months from now by
+ * someone with no account here (PRD 11).
+ *
+ * **Whoever holds this link can open the bill**, so it is only ever written for rows
+ * `reimbursementScope` already lets this caller take away. It is not a signed storage
+ * URL, which would die in fifteen minutes. See `publicBillUrl`.
+ */
+const billLink = (attachmentId: string) =>
+  `${appUrl()}/api/v1/bills/${attachmentId}?sig=${billSignature(attachmentId)}`;
+
+/**
+ * One column per bill, as many as the busiest claim in this file has: a spreadsheet
+ * cell holds one link. Always at least one, so an empty file has the same shape.
+ */
+function billColumns(data: Record<string, unknown>[]): Column[] {
+  const most = Math.max(1, ...data.map((row) => (row.attachment_ids as string[]).length));
+  return Array.from({ length: most }, (_, i) => ({
+    key: `bill_${i + 1}`, header: `Bill ${i + 1}`, type: "link", linkText: "Open bill", width: 12,
+  }));
+}
+
+/**
  * How much of the ledger this caller may take away.
  *
  * The same three-way rule the Reimbursements screen renders from — fest-wide for
@@ -188,9 +213,15 @@ async function reimbursementRows(actor: Actor, f: Filters) {
            au.name as approved_by, r.approved_at,
            pu.name as paid_by, r.paid_at, r.payment_reference,
            su.role::text as submitter_role,
+           -- Bills only: the claimant's proof of payment is not a receipt (7.2).
            (select count(*)::int from attachments a
              where a.entity_type = 'REIMBURSEMENT' and a.entity_id = r.id
+               and a.purpose <> 'CLAIM_PAYMENT_PROOF'
                and a.removed_at is null) as receipts,
+           (select coalesce(json_agg(a.id order by a.created_at, a.id), '[]'::json) from attachments a
+             where a.entity_type = 'REIMBURSEMENT' and a.entity_id = r.id
+               and a.purpose <> 'CLAIM_PAYMENT_PROOF'
+               and a.removed_at is null) as attachment_ids,
            (select count(*)::int from flags fl
              where fl.entity_type = 'REIMBURSEMENT' and fl.entity_id = r.id and fl.status = 'OPEN') as open_flags
       from reimbursement_requests r
@@ -242,8 +273,11 @@ async function transactions(actor: Actor, f: Filters) {
     select vr.human_id || '/' || m.kind::text, 'Vendor ' || lower(m.kind::text), d.name,
            li.name, null, vr.description,
            v.name, coalesce(m.paid_at::date, vr.approved_at::date, vr.created_at::date),
-           coalesce(m.paid_paise, m.planned_paise),
-           case when m.paid_at is not null then 'PAID' else vr.status::text end,
+           -- Settled: what was paid. Otherwise the plan, marked part-paid if any of it is.
+           case when m.paid_at is not null then m.paid_paise else m.planned_paise end,
+           case when m.paid_at is not null then 'PAID'
+                when coalesce(m.paid_paise, 0) > 0 then 'PART_PAID'
+                else vr.status::text end,
            ru.name, null, null,
            au.name, vr.approved_at,
            pu.name, m.paid_at, m.payment_reference,
@@ -367,7 +401,7 @@ async function paymentBatch(actor: Actor, f: Filters) {
 
     select vr.human_id || '/' || m.kind::text, 'Vendor ' || lower(m.kind::text),
            v.name, v.upi_id, v.bank_account_number, v.bank_ifsc,
-           m.planned_paise, d.name, li.name, vr.description,
+           ${OWED_ON_MILESTONE}, d.name, li.name, vr.description,
            coalesce(vr.balance_approved_at, vr.approved_at),
            (select count(*)::int from flags fl
              where fl.entity_type = 'VENDOR_REQUEST' and fl.entity_id = vr.id and fl.status = 'OPEN')
@@ -377,9 +411,7 @@ async function paymentBatch(actor: Actor, f: Filters) {
       join departments d on d.id = vr.department_id
       join line_items li on li.id = vr.line_item_id
      where vr.fest_id = ${actor.festId} and vr.deleted_at is null
-       and m.paid_at is null and m.planned_paise > 0
-       and ((m.kind = 'ADVANCE' and vr.status = 'APPROVED')
-         or (m.kind <> 'ADVANCE' and vr.status = 'BALANCE_APPROVED'))
+       and ${PAYABLE_MILESTONE}
        ${f.departmentId ? sql`and vr.department_id = ${f.departmentId}` : sql``}
        ${f.vendorId ? sql`and vr.vendor_id = ${f.vendorId}` : sql``}
        ${f.payee ? sql`and v.name ilike ${`%${f.payee}%`}` : sql``}
@@ -749,9 +781,16 @@ export async function runExport(actor: Actor, kind: ExportKind, format: ExportFo
           row.status as Parameters<typeof waitingOn>[0],
           row.submitter_role as Parameters<typeof waitingOn>[1],
         ),
+        ...Object.fromEntries(
+          (row.attachment_ids as string[]).map((id, i) => [`bill_${i + 1}`, billLink(id)]),
+        ),
       }));
       return deliver("reimbursements", format, [
-        { name: "Reimbursements", columns: REIMBURSEMENT_COLUMNS, rows: withWaiting },
+        {
+          name: "Reimbursements",
+          columns: [...REIMBURSEMENT_COLUMNS, ...billColumns(data)],
+          rows: withWaiting,
+        },
       ]);
     }
 

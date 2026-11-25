@@ -17,7 +17,8 @@ const LABELS: Record<string, string> = {
   REJECT: "Rejected", START: "Work started", BLOCK: "Blocked", UNBLOCK: "Unblocked",
   MARK_DONE: "Marked done", CONFIRM: "Confirmed done", REOPEN: "Reopened",
   REASSIGN: "Reassigned", CANCEL: "Cancelled", ESCALATE: "Escalated",
-  RECORD_ADVANCE: "Advance paid", RECORD_BALANCE: "Balance paid",
+  RECORD_ADVANCE: "Advance payment", RECORD_BALANCE: "Balance payment",
+  RECORD_REMAINING: "Remaining payment",
   CONFIRM_DELIVERY: "Delivery confirmed", RELEASE_BALANCE: "Balance released",
   CLOSE: "Closed", RECORD_REFUND: "Refund recorded",
   WRITE_OFF: "Written off", REINSTATE: "Reinstated",
@@ -30,6 +31,8 @@ function humanAction(action: string): string {
   if (action.endsWith(".update")) return "Edited";
   if (action.endsWith(".submit")) return "Submitted";
   if (action.endsWith(".tranche.record")) return "Money received";
+  if (action.endsWith(".document.add")) return "Documents added";
+  if (action === "attachment.remove") return "Document removed";
   return action;
 }
 

@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
-import { SignIn } from "@clerk/nextjs";
-import { clerkConfigured, getSession } from "@/lib/session";
-import { allowedEmailDomains, describeAllowedDomains } from "@/lib/clerk";
+import { getSession } from "@/lib/session";
+import { allowedEmailDomains } from "@/lib/email-domains";
 import { emailConfigured } from "@/lib/email";
 import { SignInForm } from "./form";
 
@@ -12,9 +11,8 @@ export const dynamic = "force-dynamic";
  * background, gradient nav and title artwork, so the hand-off from yugaantar.org
  * feels continuous. Everything inside the app stays restrained.
  *
- * Two ways in, and only ever one of them offered at a time (see `lib/session.ts`):
- * Clerk's Google sign-in where it is configured, and an emailed one-time link where
- * it is not. Either way, access follows an invitation — nobody signs themselves up.
+ * The way in is an emailed one-time link (see `lib/auth.ts`), and it follows an
+ * invitation — nobody signs themselves up.
  */
 export default async function SignInPage({
   searchParams,
@@ -24,7 +22,6 @@ export default async function SignInPage({
   if (await getSession()) redirect("/dashboard");
 
   const domains = allowedEmailDomains();
-  const spoken = describeAllowedDomains();
   const { error } = await searchParams;
 
   return (
@@ -51,30 +48,7 @@ export default async function SignInPage({
           </p>
         )}
 
-        {clerkConfigured() ? (
-          <div className="mt-10">
-            <SignIn
-              routing="path"
-              path="/sign-in"
-              fallbackRedirectUrl="/dashboard"
-              appearance={{
-                variables: {
-                  colorBackground: "#14140f",
-                  colorPrimary: "#c3f53c",
-                  colorForeground: "#f2f2ec",
-                  colorInput: "#1d1d17",
-                  borderRadius: "0.6rem",
-                },
-              }}
-            />
-            <p className="mt-4 text-center text-xs text-text-muted">
-              Use your {spoken ? `@${domains.join(" or @")}` : "college"} account. External Management users
-              sign in with the address they were invited on.
-            </p>
-          </div>
-        ) : (
-          <SignInForm domains={domains} deliversEmail={emailConfigured()} />
-        )}
+        <SignInForm domains={domains} deliversEmail={emailConfigured()} />
       </main>
     </div>
   );

@@ -16,6 +16,8 @@ interface Props {
   extraFields?: Record<string, string[]>;
   /** Options for select-style fields, keyed by field name. */
   options?: Record<string, { value: string; label: string }[]>;
+  /** What an action will do here, where it differs from the usual wording. */
+  consequences?: Record<string, string>;
 }
 
 const LABEL: Record<string, string> = {
@@ -28,6 +30,7 @@ const LABEL: Record<string, string> = {
   CONFIRM: "Confirm done", REOPEN: "Reopen", REASSIGN: "Reassign", CANCEL: "Cancel",
   ESCALATE: "Escalate",
   RECORD_ADVANCE: "Record advance", RECORD_BALANCE: "Record balance",
+  RECORD_REMAINING: "Record remaining payment",
   CONFIRM_DELIVERY: "Confirm delivery", RELEASE_BALANCE: "Release balance",
   CLOSE: "Close", RECORD_REFUND: "Record refund", WRITE_OFF: "Write off", REINSTATE: "Reinstate",
 };
@@ -89,7 +92,9 @@ const RUPEE_FIELDS = new Set([
   "paid_paise", "invoice_total_paise", "approved_value_paise", "amount_paise",
 ]);
 
-export function TransitionActions({ endpoint, actions, extraFields = {}, options = {} }: Props) {
+export function TransitionActions({
+  endpoint, actions, extraFields = {}, options = {}, consequences = {},
+}: Props) {
   const router = useRouter();
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -165,7 +170,7 @@ export function TransitionActions({ endpoint, actions, extraFields = {}, options
         <ConfirmWithReason
           open
           title={`${LABEL[dialog] ?? dialog}?`}
-          consequence={CONSEQUENCE[dialog] ?? "This is recorded against your name and cannot be undone."}
+          consequence={consequences[dialog] ?? CONSEQUENCE[dialog] ?? "This is recorded against your name and cannot be undone."}
           confirmLabel={LABEL[dialog] ?? dialog}
           cancelLabel="Leave it as it is"
           tone={DESTRUCTIVE.has(dialog) ? "destructive" : "default"}

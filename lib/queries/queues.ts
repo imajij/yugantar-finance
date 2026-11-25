@@ -14,6 +14,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { assertCan, can, maskAccountNumber } from "@/lib/authz";
 import type { SessionUser } from "@/lib/session";
+import { OWED_ON_MILESTONE, PAYABLE_MILESTONE } from "./vendor-payable";
 
 export interface QueueFlag {
   rule: string;
@@ -186,7 +187,7 @@ export async function approvalQueue(user: SessionUser): Promise<QueueItem[]> {
       left join v_line_item_totals v2 on v2.line_item_id = vr.line_item_id
      where vr.fest_id = ${user.festId} and vr.deleted_at is null
        and vr.status in ('SUBMITTED', 'DELIVERED')
-       and vr.requested_by <> ${user.id}
+       -- Including the Finance HOD's own: they approve those too, with a note (5.2).
 
      order by ${QUEUE_ORDER}
   `)) as unknown as Record<string, unknown>[];
@@ -226,10 +227,11 @@ export async function paymentQueue(user: SessionUser): Promise<QueueItem[]> {
 
     union all
 
-    -- An advance becomes payable on approval; a balance only once it is released.
+    -- An advance becomes payable on approval; a balance only once it is released;
+    -- the rest of a part-paid milestone at any stage. See PAYABLE_MILESTONE.
     select 'VENDOR_REQUEST' as kind, vr.id, vr.human_id, vr.status::text,
            vr.description, d.name, vr.department_id,
-           li.name, m.planned_paise,
+           li.name, ${OWED_ON_MILESTONE},
            ven.name, ven.upi_id, ven.bank_account_number, ven.bank_ifsc,
            u.name, vr.requested_by,
            coalesce(vr.balance_approved_at, vr.approved_at, vr.created_at),
@@ -240,14 +242,13 @@ export async function paymentQueue(user: SessionUser): Promise<QueueItem[]> {
            null::bigint,
            m.id, m.kind::text
       from vendor_requests vr
-      join vendor_milestones m on m.vendor_request_id = vr.id and m.paid_at is null and m.planned_paise > 0
+      join vendor_milestones m on m.vendor_request_id = vr.id
       join departments d on d.id = vr.department_id
       join line_items li on li.id = vr.line_item_id
       join vendors ven on ven.id = vr.vendor_id
       join users u on u.id = vr.requested_by
      where vr.fest_id = ${user.festId} and vr.deleted_at is null
-       and ((m.kind = 'ADVANCE' and vr.status = 'APPROVED')
-         or (m.kind <> 'ADVANCE' and vr.status = 'BALANCE_APPROVED'))
+       and ${PAYABLE_MILESTONE}
 
      order by ${QUEUE_ORDER}
   `)) as unknown as Record<string, unknown>[];
@@ -299,16 +300,14 @@ export async function queueCounts(user: SessionUser): Promise<{ endorsements: nu
           and r.status = 'HOD_ENDORSED' and r.submitter_id <> ${user.id})
       + (select count(*)::int from vendor_requests vr
         where vr.fest_id = ${user.festId} and vr.deleted_at is null
-          and vr.status in ('SUBMITTED','DELIVERED') and vr.requested_by <> ${user.id}) as approvals,
+          and vr.status in ('SUBMITTED','DELIVERED')) as approvals,
       (select count(*)::int from reimbursement_requests r
         where r.fest_id = ${user.festId} and r.deleted_at is null
           and r.status = 'APPROVED' and r.submitter_id <> ${user.id})
       + (select count(*)::int from vendor_milestones m
           join vendor_requests vr on vr.id = m.vendor_request_id
-        where vr.fest_id = ${user.festId} and vr.deleted_at is null and m.paid_at is null
-          and m.planned_paise > 0
-          and ((m.kind = 'ADVANCE' and vr.status = 'APPROVED')
-            or (m.kind <> 'ADVANCE' and vr.status = 'BALANCE_APPROVED'))) as payments
+        where vr.fest_id = ${user.festId} and vr.deleted_at is null
+          and ${PAYABLE_MILESTONE}) as payments
   `)) as unknown as Record<string, number>[];
 
   const scope = { festId: user.festId, departmentId: user.departmentId, submitterId: "-" };

@@ -16,6 +16,7 @@ const patchSchema = z.object({
   payee_name: z.string().min(2).max(120).optional(),
   payee_upi_id: z.string().regex(/^[\w.\-]{2,}@[a-zA-Z]{2,}$/).optional(),
   attachment_ids: z.array(z.uuid()).max(5).optional(),
+  payment_proof_ids: z.array(z.uuid()).max(3).optional(),
 });
 
 export const PATCH = route<{ id: string }>(async ({ user, params, request }) => {
@@ -30,5 +31,6 @@ export const PATCH = route<{ id: string }>(async ({ user, params, request }) => 
     payeeName: b.payee_name,
     payeeUpiId: b.payee_upi_id,
     attachmentIds: b.attachment_ids,
+    paymentProofIds: b.payment_proof_ids,
   });
 });

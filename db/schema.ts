@@ -71,7 +71,7 @@ export const allocationRequestStatus = pgEnum("allocation_request_status", [
 export const projectStatus = pgEnum("project_status", ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"]);
 export const attachmentPurpose = pgEnum("attachment_purpose", [
   "RECEIPT", "QUOTE", "LISTING", "PO", "INVOICE", "DELIVERY_PROOF", "PAYMENT_PROOF", "MOU",
-  "TICKET_ATTACHMENT", "TICKET_PROOF", "OTHER", "CHAT_ATTACHMENT",
+  "TICKET_ATTACHMENT", "TICKET_PROOF", "OTHER", "CHAT_ATTACHMENT", "CLAIM_PAYMENT_PROOF",
 ]);
 export const attachmentKind = pgEnum("attachment_kind", ["FILE", "LINK"]);
 export const notificationChannel = pgEnum("notification_channel", ["IN_APP", "EMAIL", "PUSH", "WHATSAPP"]);
@@ -114,6 +114,7 @@ export const departments = pgTable("departments", {
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   festId: uuid("fest_id").notNull().references(() => fests.id),
+  // Unused since Clerk was removed; kept rather than dropped so no migration touches user rows.
   clerkUserId: text("clerk_user_id").unique(),
   email: citext("email").notNull(),
   name: text("name").notNull(),
@@ -313,6 +314,28 @@ export const vendorMilestones = pgTable("vendor_milestones", {
 }, (t) => [
   check("vendor_milestones_planned_nonneg", sql`${t.plannedPaise} >= 0`),
   index("vendor_milestones_request_idx").on(t.vendorRequestId),
+]);
+
+/**
+ * One transfer against a vendor milestone (7.3). A milestone may be paid in parts;
+ * its `paid_paise` is the running total of these and `paid_at` is set only once
+ * they reach the planned amount. See 0016_vendor_payments.sql.
+ */
+export const vendorPayments = pgTable("vendor_payments", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  festId: uuid("fest_id").notNull().references(() => fests.id),
+  vendorRequestId: uuid("vendor_request_id").notNull().references(() => vendorRequests.id),
+  milestoneId: uuid("milestone_id").notNull().references(() => vendorMilestones.id),
+  amountPaise: paise("amount_paise").notNull(),
+  paidAt: ts("paid_at").notNull(),
+  paidBy: uuid("paid_by").references(() => users.id),
+  paymentReference: text("payment_reference").notNull(),
+  proofAttachmentId: uuid("proof_attachment_id").references(() => attachments.id),
+  createdAt: ts("created_at").notNull().defaultNow(),
+}, (t) => [
+  check("vendor_payments_amount_positive", sql`${t.amountPaise} > 0`),
+  index("vendor_payments_request_idx").on(t.vendorRequestId),
+  index("vendor_payments_milestone_idx").on(t.milestoneId),
 ]);
 
 export const incomeEntries = pgTable("income_entries", {
@@ -730,9 +753,9 @@ export const humanIdSequences = pgTable("human_id_sequences", {
 /**
  * Sign-in links (PRD 13, adapted).
  *
- * The spec calls for Clerk and Google Workspace, and Clerk still takes precedence
- * wherever it is configured. This is the path when it is not: a one-time link
- * emailed to an address that has already been invited.
+ * The spec calls for Clerk and Google Workspace; the fest decided against Clerk, so
+ * this is the only way in: a one-time link emailed to an address that has already
+ * been invited.
  *
  * Only the SHA-256 of the token is stored. A dump of this table is then worthless —
  * the link in someone's inbox is the secret, and the database only holds a fingerprint

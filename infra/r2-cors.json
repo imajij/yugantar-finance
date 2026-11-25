@@ -4,6 +4,8 @@
       "allowed": {
         "origins": [
           "https://yugantar.ajij.dev",
+          "https://internal.yugaantar.org",
+          "https://16-4-14-159.sslip.io",
           "http://localhost:3000"
         ],
         "methods": ["PUT", "GET"],

@@ -123,13 +123,6 @@ const GROUPS: Group[] = [
     where: "Cloudflare → R2 → API → Manage API tokens → Object Read & Write",
   },
   {
-    title: "Auth — Clerk (optional)",
-    keys: ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"],
-    unlocks: "Google sign-in restricted to the college domain (PRD 13)",
-    without: "sign-in is an emailed one-time link, which needs Resend to reach anyone",
-    where: "clerk.com → API Keys",
-  },
-  {
     title: "Jobs",
     keys: ["CRON_SECRET"],
     unlocks: "the scheduled jobs in vercel.json",
@@ -216,26 +209,14 @@ if (/@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(dbUrl)) {
   );
 }
 
-// Half-configured Clerk used to 500 every page, including sign-in. It degrades now,
-// but it is still never what anyone meant.
-const clerkSet = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"].filter((k) => get(k));
-if (clerkSet.length === 1) {
+// Clerk was removed; leftover keys do nothing, and are worth clearing so nobody
+// thinks they are what signs people in.
+const clerkLeftovers = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_WEBHOOK_SECRET"]
+  .filter((k) => get(k));
+if (clerkLeftovers.length) {
   warnings.push(
-    `Only ${clerkSet[0]} is set. Clerk needs both keys, so it is disabled and sign-in `
-    + "falls back to emailed links. Set both, or clear the one that is set.",
-  );
-}
-
-// `_test_` keys are a Clerk *development* instance: shared `accounts.dev` domain,
-// a user cap, and sign-in emails that announce they are for development use.
-const clerkIsDev = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]
-  .some((k) => get(k)?.value.includes("_test_"));
-if (clerkIsDev) {
-  productionNotes.push(
-    "The Clerk keys are a development instance (pk_test_/sk_test_). Its sign-in emails "
-    + "say they are for development use and it is capped at ~100 users. A production "
-    + "instance needs your own domain and DNS records — or clear both keys and use the "
-    + "built-in emailed sign-in links, which need neither.",
+    `${clerkLeftovers.join(", ")} ${clerkLeftovers.length === 1 ? "is" : "are"} set, but Clerk is no longer `
+    + "used: sign-in is always an emailed link. Remove them.",
   );
 }
 

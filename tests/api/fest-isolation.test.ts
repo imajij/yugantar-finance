@@ -64,6 +64,11 @@ const REACHES: Reach[] = [
     options: (o) => ({ params: { id: o.lineItemId }, body: { action: "CLOSE", reason: "Not mine to close" } }),
   },
   {
+    name: "delete another fest's line item",
+    path: "line-items/[id]", method: "DELETE",
+    options: (o) => ({ params: { id: o.disposableLineItemId } }),
+  },
+  {
     name: "attach a document to another fest's line item",
     path: "line-items/[id]/documents", method: "POST",
     options: (o) => ({

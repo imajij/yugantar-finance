@@ -71,13 +71,15 @@ export type Action =
   // writes — budget
   | "fest.manage" | "department.manage" | "budget.transfer"
   | "allocationRequest.create" | "allocationRequest.decide"
-  | "lineItem.create" | "lineItem.edit" | "lineItem.close" | "lineItem.markReviewed"
-  | "lineItem.document.manage"
+  | "lineItem.create" | "lineItem.edit" | "lineItem.close" | "lineItem.delete"
+  | "lineItem.markReviewed" | "lineItem.document.manage"
   // writes — money
   | "reimbursement.create" | "reimbursement.edit" | "reimbursement.endorse"
   | "reimbursement.approve" | "reimbursement.recordPayment" | "reimbursement.hold"
   | "vendor.manage" | "vendor.delete" | "vendorRequest.create" | "vendorRequest.edit"
   | "vendorRequest.approve" | "vendorRequest.confirmDelivery" | "vendorRequest.recordPayment"
+  | "expense.forAnyDepartment"
+  | "vendorRequest.document.add" | "vendor.document.view" | "vendor.document.manage"
   | "income.manage"
   // writes — everything else
   | "ticket.create" | "ticket.triage" | "ticket.work" | "ticket.close" | "ticket.plan"
@@ -272,10 +274,15 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
     case "lineItem.create":
     case "lineItem.edit":
     case "lineItem.close":
+    case "lineItem.delete":
     case "lineItem.document.manage":
       // An administrator breaks down any department's allocation, the same way they
       // read any department's numbers. The department cap still binds them — it is
       // enforced under a row lock in the service, not by who they are.
+      //
+      // Deleting sits with creating because it is the undo of a typo, not a way out
+      // of a decision: a line item that has had anything charged against it is
+      // refused in the service, whoever asks, and closing it is the way instead.
       return finance || superAdmin || (hod && own);
 
     /* ---------------------------------------------------------------- money */
@@ -339,13 +346,51 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
       );
 
     case "vendorRequest.approve":
-      return finance && resource.submitterId !== actor.id;
+      /*
+       * Including a request the Finance HOD raised themselves — by decision, so
+       * Finance can raise vendor payments for any department without a second
+       * Finance HOD to approve them. The service makes that approval carry a note
+       * saying why, and Management is told (5.2).
+       */
+      return finance;
 
     case "vendorRequest.confirmDelivery":
       return finance || (hod && own);
 
+    case "vendorRequest.document.add":
+      /*
+       * Adding a document to a vendor request after it was raised — a revised
+       * invoice, a purchase order, a delivery note. Whoever raised it, its
+       * department's head, and Finance. Adding only: taking a file off a submitted
+       * request is still refused (attachments.ts), and each addition is on the
+       * request's timeline, so a reviewer can see the set grew.
+       */
+      return finance || (hod && own) || resource.submitterId === actor.id;
+
+    case "vendor.document.view":
+      // A vendor's own papers — MoU, invoices, GST and bank proof — carry its bank
+      // account, so they follow the bank details (20.7), not `vendor.view`.
+      return finance || management;
+
+    case "vendor.document.manage":
+      return finance;
+
+    case "expense.forAnyDepartment":
+      /*
+       * The Department expenses section (9): the Finance HOD adds expense claims and
+       * vendor payment requests against any department's budget. The writes behind
+       * it are still `lineItem.spendAgainst` and `vendorRequest.create`, which
+       * already let Finance charge any department; this only decides who is offered
+       * the section. Management is not — it may not originate vendor spend.
+       */
+      return finance;
+
     case "vendorRequest.recordPayment":
-      return management;
+      // Management, or the Finance HOD — including on a vendor request Finance
+      // raised and approved itself (5.2's documented exception; Management is told
+      // of every vendor payment). Management never raises one, so "not your own"
+      // only ever bites on them in principle.
+      return finance || (management && resource.submitterId !== actor.id);
 
     /* -------------------------------------------------------------- tickets */
     case "ticket.create":

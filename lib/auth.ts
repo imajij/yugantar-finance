@@ -1,15 +1,15 @@
 /**
  * Sign-in links and sessions (PRD 13, adapted).
  *
- * The spec calls for Clerk with Google Workspace, and Clerk still wins wherever it
- * is configured — `lib/session.ts` checks it first. This is the path when it is not:
- * a one-time link emailed to an address someone has already been invited on.
+ * The spec calls for Clerk with Google Workspace; the fest decided against Clerk, so
+ * this is the only way in: a one-time link emailed to an address someone has
+ * already been invited on.
  *
  * The properties that matter, and why each one is here:
  *
  *   **Invitation is the gate.** A link is only ever issued to an address that already
  *   has a `users` row on the fest. Knowing the URL is not enough; nobody signs
- *   themselves up. This is the same rule the Clerk webhook enforces.
+ *   themselves up.
  *
  *   **Only hashes are stored.** The token in the inbox is the secret; the database
  *   holds SHA-256 of it. A database dump grants nobody a login. Lookup is *by* the
@@ -30,7 +30,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { departments, sessions, signInTokens, users } from "@/db/schema";
-import { describeAllowedDomains, emailDomainAllowed } from "@/lib/clerk";
+import { describeAllowedDomains, emailDomainAllowed } from "@/lib/email-domains";
 import { appUrl, sendEmail } from "@/lib/email";
 import type { SessionUser } from "@/lib/session";
 
@@ -164,8 +164,8 @@ export async function consumeSignInToken(raw: string): Promise<ConsumedLink | nu
   const row = rows[0];
   if (!row) return null;
 
-  // Accepting the invitation is what makes someone active (same rule as the Clerk
-  // webhook). A disabled account never reaches here.
+  // Accepting the invitation is what makes someone active. A disabled account never
+  // reaches here.
   if (row.status === "INVITED") {
     await db.update(users)
       .set({ status: "ACTIVE", updatedAt: new Date() })

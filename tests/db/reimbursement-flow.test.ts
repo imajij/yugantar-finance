@@ -44,6 +44,14 @@ async function receipt(actor: Actor, sha?: string): Promise<string> {
   return row.id;
 }
 
+/** Proof the claimant paid, which every new claim needs alongside its receipt (7.2). */
+async function proof(actor: Actor): Promise<string> {
+  return (await one<{ id: string }>(sql`
+    insert into attachments (fest_id, purpose, kind, storage_key, file_name, mime_type, size_bytes, uploaded_by)
+    values (${festId}, 'CLAIM_PAYMENT_PROOF', 'FILE', ${"k/" + Math.random()}, 'upi.png', 'image/png', 1024, ${actor.id})
+    returning id`)).id;
+}
+
 const baseRequest = (overrides: Partial<Parameters<typeof createReimbursement>[1]> = {}) => ({
   lineItemId,
   expenseTypeId,
@@ -53,6 +61,7 @@ const baseRequest = (overrides: Partial<Parameters<typeof createReimbursement>[1
   payeeName: "Tech Member",
   payeeUpiId: "tech.member@upi",
   attachmentIds: [] as string[],
+  paymentProofIds: [] as string[],
   ...overrides,
 });
 
@@ -100,7 +109,7 @@ beforeEach(async () => {
 afterAll(() => dropFests(db, "flow-"));
 
 test("submit → endorse → approve → pay moves the money through the five numbers", async () => {
-  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], submit: true }));
+  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true }));
   expect(req.status).toBe("SUBMITTED");
   expect(req.humanId).toBe("RB-0001");
 
@@ -131,7 +140,7 @@ test("submit → endorse → approve → pay moves the money through the five nu
 
 test("a Dept HOD's own request skips endorsement", async () => {
   const req = await createReimbursement(techHod, baseRequest({
-    attachmentIds: [await receipt(techHod)], payeeUpiId: "hod@upi", submit: true,
+    attachmentIds: [await receipt(techHod)], paymentProofIds: [await proof(techHod)], payeeUpiId: "hod@upi", submit: true,
   }));
   expect(req.status).toBe("HOD_ENDORSED");
 
@@ -141,7 +150,7 @@ test("a Dept HOD's own request skips endorsement", async () => {
 
 test("a Finance HOD's own request is approved by Management, not by Finance", async () => {
   const req = await createReimbursement(finance, baseRequest({
-    attachmentIds: [await receipt(finance)], payeeUpiId: "fin@upi", submit: true,
+    attachmentIds: [await receipt(finance)], paymentProofIds: [await proof(finance)], payeeUpiId: "fin@upi", submit: true,
   }));
   await transitionReimbursement(techHod, req.id, "ENDORSE");
 
@@ -153,7 +162,7 @@ test("a Finance HOD's own request is approved by Management, not by Finance", as
 /** An approved Management claim, ready for somebody to pay. */
 async function mgmtClaimAwaitingPayment() {
   const req = await createReimbursement(mgmt, baseRequest({
-    attachmentIds: [await receipt(mgmt)], payeeUpiId: "mg@upi", submit: true,
+    attachmentIds: [await receipt(mgmt)], paymentProofIds: [await proof(mgmt)], payeeUpiId: "mg@upi", submit: true,
   }));
   await transitionReimbursement(techHod, req.id, "ENDORSE");
   await transitionReimbursement(finance, req.id, "APPROVE");
@@ -216,7 +225,7 @@ test("the fallback does not leak onto anybody else's claim", async () => {
   // A Member's claim has a Management user available who is not the claimant, so
   // Finance has no business recording it — 5.2's separation still applies.
   const req = await createReimbursement(member, baseRequest({
-    attachmentIds: [await receipt(member)], submit: true,
+    attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true,
   }));
   await transitionReimbursement(techHod, req.id, "ENDORSE");
   await transitionReimbursement(finance, req.id, "APPROVE");
@@ -239,7 +248,7 @@ test("an inactive second Management account is not a payer", async () => {
 });
 
 test("send back, edit, resubmit — a new version, the old one kept", async () => {
-  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], submit: true }));
+  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true }));
   await transitionReimbursement(techHod, req.id, "SEND_BACK", { reason: "receipt is unreadable" });
 
   const sent = await getReimbursementDetail(member, req.id);
@@ -253,7 +262,7 @@ test("send back, edit, resubmit — a new version, the old one kept", async () =
 });
 
 test("send back and decline both need a reason", async () => {
-  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], submit: true }));
+  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true }));
   await expect(transitionReimbursement(techHod, req.id, "SEND_BACK", {}))
     .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   await expect(transitionReimbursement(techHod, req.id, "DECLINE", {}))
@@ -261,7 +270,7 @@ test("send back and decline both need a reason", async () => {
 });
 
 test("hold and resolve round-trip through Finance", async () => {
-  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], submit: true }));
+  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true }));
   await transitionReimbursement(techHod, req.id, "ENDORSE");
   await transitionReimbursement(finance, req.id, "APPROVE");
 
@@ -279,7 +288,7 @@ test("hold and resolve round-trip through Finance", async () => {
 });
 
 test("a withdrawn request stops counting against the budget", async () => {
-  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], submit: true }));
+  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true }));
   expect((await lineItemTotals(lineItemId))!.pendingPaise).toBe(R(5000));
 
   await transitionReimbursement(member, req.id, "WITHDRAW");
@@ -292,8 +301,33 @@ test("a closed line item takes no new requests", async () => {
   await db.execute(sql`update line_items set status = 'CLOSED' where id = ${closed.id}`);
 
   await expect(createReimbursement(member, baseRequest({
-    lineItemId: closed.id, attachmentIds: [await receipt(member)],
+    lineItemId: closed.id, attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)],
   }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+});
+
+/**
+ * 7.1 — the supporting-document gate is a fest setting, and it ships at 0.
+ *
+ * This fest sets it, like the other fixtures, so both halves can be shown: while it
+ * is set a bare line item refuses claims, and at 0 — the seeded default — the same
+ * claim goes through. The gate fell on whoever filed next rather than on whoever
+ * planned the item, and nothing the filer could do cleared it; a missing quotation
+ * is now F13 and the budget-review screen's business, not a refusal.
+ */
+test("the document threshold refuses claims only while it is set", async () => {
+  const bare = await createLineItem(techHod, { departmentId: techId, name: "Undocumented", plannedPaise: R(20000) });
+
+  await expect(createReimbursement(member, baseRequest({
+    lineItemId: bare.id, attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)],
+  }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+  await db.execute(sql`
+    update fests set settings = settings || '{"line_item_doc_threshold_paise": 0}'::jsonb
+     where id = ${festId}`);
+
+  await expect(createReimbursement(member, baseRequest({
+    lineItemId: bare.id, attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)],
+  }))).resolves.toMatchObject({ status: "DRAFT", lineItemId: bare.id });
 });
 
 test("a request needs at least one receipt", async () => {
@@ -301,9 +335,30 @@ test("a request needs at least one receipt", async () => {
     .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
 });
 
+test("a request needs proof of payment as well as a receipt (7.2)", async () => {
+  await expect(createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)] })))
+    .rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("Proof of payment") });
+});
+
+test("proof of payment is filed as such, and capped at three", async () => {
+  const req = await createReimbursement(member, baseRequest({
+    attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member), await proof(member)],
+  }));
+  const rows = (await db.execute(sql`
+    select purpose::text as purpose, count(*)::int as n from attachments
+     where entity_type = 'REIMBURSEMENT' and entity_id = ${req.id}
+     group by purpose order by purpose`)) as unknown as { purpose: string; n: number }[];
+  expect(rows).toEqual([{ purpose: "CLAIM_PAYMENT_PROOF", n: 2 }, { purpose: "RECEIPT", n: 1 }]);
+
+  await expect(createReimbursement(member, baseRequest({
+    attachmentIds: [await receipt(member)],
+    paymentProofIds: await Promise.all([1, 2, 3, 4].map(() => proof(member))),
+  }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+});
+
 test("F5 fires when approval would take the line item below zero, but never blocks", async () => {
   const req = await createReimbursement(member, baseRequest({
-    amountPaise: R(70000), attachmentIds: [await receipt(member)], submit: true,
+    amountPaise: R(70000), attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true,
   }));
   const detail = await getReimbursementDetail(finance, req.id);
   const f5 = detail.flags.find((f) => f.rule === "F5");
@@ -319,8 +374,8 @@ test("F5 fires when approval would take the line item below zero, but never bloc
 
 test("F1 catches the same receipt file submitted twice", async () => {
   const sha = "deadbeef".repeat(8);
-  const a = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member, sha)], submit: true }));
-  const b = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member, sha)], submit: true }));
+  const a = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member, sha)], paymentProofIds: [await proof(member)], submit: true }));
+  const b = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member, sha)], paymentProofIds: [await proof(member)], submit: true }));
 
   const detail = await getReimbursementDetail(finance, b.id);
   const f1 = detail.flags.find((f) => f.rule === "F1");
@@ -330,7 +385,7 @@ test("F1 catches the same receipt file submitted twice", async () => {
 
 test("F4 flags a receipt dated outside the fest window", async () => {
   const req = await createReimbursement(member, baseRequest({
-    transactionOn: "2026-06-01", attachmentIds: [await receipt(member)], submit: true,
+    transactionOn: "2026-06-01", attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true,
   }));
   const detail = await getReimbursementDetail(finance, req.id);
   expect(detail.flags.find((f) => f.rule === "F4")?.severity).toBe("MEDIUM");
@@ -338,7 +393,7 @@ test("F4 flags a receipt dated outside the fest window", async () => {
 
 test("a flag closes itself when the condition goes away", async () => {
   const req = await createReimbursement(member, baseRequest({
-    transactionOn: "2026-06-01", amountPaise: R(1000), attachmentIds: [await receipt(member)], submit: true,
+    transactionOn: "2026-06-01", amountPaise: R(1000), attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true,
   }));
   expect((await getReimbursementDetail(finance, req.id)).flags.some((f) => f.rule === "F4" && f.status === "OPEN")).toBe(true);
 
@@ -357,13 +412,13 @@ test("a Member cannot see or act on another member's request", async () => {
     insert into users (fest_id, email, name, role, department_id, status)
     values (${festId}, 'other@t.test', 'Other', 'MEMBER', ${techId}, 'ACTIVE') returning id`)).id };
 
-  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], submit: true }));
+  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true }));
   await expect(getReimbursementDetail(other, req.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
   await expect(transitionReimbursement(other, req.id, "WITHDRAW")).rejects.toMatchObject({ code: "FORBIDDEN" });
 });
 
 test("every transition leaves an audit event naming the actor and the reason", async () => {
-  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], submit: true }));
+  const req = await createReimbursement(member, baseRequest({ attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true }));
   await transitionReimbursement(techHod, req.id, "SEND_BACK", { reason: "wrong line item" });
 
   const detail = await getReimbursementDetail(finance, req.id);
@@ -388,7 +443,7 @@ test("every transition leaves an audit event naming the actor and the reason", a
  */
 test("an approved request with no active Management to pay it is reported as stalled", async () => {
   const req = await createReimbursement(member, baseRequest({
-    amountPaise: R(1200), attachmentIds: [await receipt(member)], submit: true,
+    amountPaise: R(1200), attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)], submit: true,
   }));
   await transitionReimbursement(techHod, req.id, "ENDORSE");
   await transitionReimbursement(finance, req.id, "APPROVE");
@@ -467,7 +522,7 @@ test("moving a claim's line item moves the claim", async () => {
   // Finance may spend against any department's line item (5.1), which is what makes
   // this reachable at all — a Member cannot move a claim out of their department.
   const req = await createReimbursement(finance, baseRequest({
-    attachmentIds: [await receipt(finance)],
+    attachmentIds: [await receipt(finance)], paymentProofIds: [await proof(finance)],
   }));
   expect(req.departmentId).toBe(techId);
 
@@ -478,7 +533,7 @@ test("moving a claim's line item moves the claim", async () => {
 
 test("endorsement follows it, and the department it left cannot endorse it", async () => {
   const req = await createReimbursement(finance, baseRequest({
-    attachmentIds: [await receipt(finance)],
+    attachmentIds: [await receipt(finance)], paymentProofIds: [await proof(finance)],
   }));
   await updateReimbursement(finance, req.id, { lineItemId: logiLineItemId });
   await transitionReimbursement(finance, req.id, "SUBMIT");
@@ -493,7 +548,7 @@ test("endorsement follows it, and the department it left cannot endorse it", asy
 
 test("so does who can see it", async () => {
   const req = await createReimbursement(finance, baseRequest({
-    attachmentIds: [await receipt(finance)],
+    attachmentIds: [await receipt(finance)], paymentProofIds: [await proof(finance)],
   }));
   await updateReimbursement(finance, req.id, { lineItemId: logiLineItemId });
 
@@ -504,7 +559,7 @@ test("so does who can see it", async () => {
 
 test("the move is on the record, with both departments named", async () => {
   const req = await createReimbursement(finance, baseRequest({
-    attachmentIds: [await receipt(finance)],
+    attachmentIds: [await receipt(finance)], paymentProofIds: [await proof(finance)],
   }));
   await updateReimbursement(finance, req.id, { lineItemId: logiLineItemId });
 
@@ -523,7 +578,7 @@ test("the move is on the record, with both departments named", async () => {
 
 test("a Member cannot move a claim out of their own department", async () => {
   const req = await createReimbursement(member, baseRequest({
-    attachmentIds: [await receipt(member)],
+    attachmentIds: [await receipt(member)], paymentProofIds: [await proof(member)],
   }));
   // `lineItem.spendAgainst` is own-department only for a Member, so the door the
   // fix opens for Finance stays shut for everybody else.
