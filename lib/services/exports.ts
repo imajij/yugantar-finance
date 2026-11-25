@@ -26,6 +26,7 @@ import { waitingOn } from "./reimbursements";
 import { appUrl } from "@/lib/email";
 import { formatPaise } from "@/lib/money";
 import { billSignature } from "@/lib/storage";
+import { OWED_ON_MILESTONE, PAYABLE_MILESTONE } from "@/lib/queries/vendor-payable";
 import { buildXlsx, type Column, type Sheet } from "@/lib/xlsx";
 
 export type ExportKind =
@@ -272,8 +273,11 @@ async function transactions(actor: Actor, f: Filters) {
     select vr.human_id || '/' || m.kind::text, 'Vendor ' || lower(m.kind::text), d.name,
            li.name, null, vr.description,
            v.name, coalesce(m.paid_at::date, vr.approved_at::date, vr.created_at::date),
-           coalesce(m.paid_paise, m.planned_paise),
-           case when m.paid_at is not null then 'PAID' else vr.status::text end,
+           -- Settled: what was paid. Otherwise the plan, marked part-paid if any of it is.
+           case when m.paid_at is not null then m.paid_paise else m.planned_paise end,
+           case when m.paid_at is not null then 'PAID'
+                when coalesce(m.paid_paise, 0) > 0 then 'PART_PAID'
+                else vr.status::text end,
            ru.name, null, null,
            au.name, vr.approved_at,
            pu.name, m.paid_at, m.payment_reference,
@@ -397,7 +401,7 @@ async function paymentBatch(actor: Actor, f: Filters) {
 
     select vr.human_id || '/' || m.kind::text, 'Vendor ' || lower(m.kind::text),
            v.name, v.upi_id, v.bank_account_number, v.bank_ifsc,
-           m.planned_paise, d.name, li.name, vr.description,
+           ${OWED_ON_MILESTONE}, d.name, li.name, vr.description,
            coalesce(vr.balance_approved_at, vr.approved_at),
            (select count(*)::int from flags fl
              where fl.entity_type = 'VENDOR_REQUEST' and fl.entity_id = vr.id and fl.status = 'OPEN')
@@ -407,9 +411,7 @@ async function paymentBatch(actor: Actor, f: Filters) {
       join departments d on d.id = vr.department_id
       join line_items li on li.id = vr.line_item_id
      where vr.fest_id = ${actor.festId} and vr.deleted_at is null
-       and m.paid_at is null and m.planned_paise > 0
-       and ((m.kind = 'ADVANCE' and vr.status = 'APPROVED')
-         or (m.kind <> 'ADVANCE' and vr.status = 'BALANCE_APPROVED'))
+       and ${PAYABLE_MILESTONE}
        ${f.departmentId ? sql`and vr.department_id = ${f.departmentId}` : sql``}
        ${f.vendorId ? sql`and vr.vendor_id = ${f.vendorId}` : sql``}
        ${f.payee ? sql`and v.name ilike ${`%${f.payee}%`}` : sql``}

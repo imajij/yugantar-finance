@@ -118,6 +118,8 @@ Enforced server-side, not just hidden in the UI:
 - A Finance HOD's own reimbursement is approved by Management (any Management user) instead of Finance.
 - A Management user's own reimbursement is approved by Finance and paid by a different Management user (or, if there is only one, recorded by Finance HOD with a note).
 - If there are multiple Finance HODs, any of them can approve — except the submitter.
+- Vendor payments are recorded by Management or the Finance HOD. A Department HOD can never approve or pay a vendor request they raised.
+- **Exception, by decision:** the Finance HOD may raise vendor requests for any department, and may approve and pay one they raised themselves — otherwise, with a single Finance HOD, nobody could approve them. Approving their own needs a written note saying why, which goes on the record, and Management is notified of the approval and of every vendor payment.
 
 ## 6. Core concepts and data model
 
@@ -210,7 +212,7 @@ Allocations and line items can be revised at any time (see 7.5); every change is
 |---|:---:|---|
 | Receipt(s) | ✓ | Image or PDF, ≤ 10 MB each, up to 5. Camera capture on mobile. |
 | Proof of payment | ✓ | Image or PDF, ≤ 10 MB each, up to 3: a UPI screenshot, card slip or bank statement line showing the claimant paid. Stored as `CLAIM_PAYMENT_PROOF`, distinct from Finance's `PAYMENT_PROOF` for the payout. |
-| Line item | ✓ | Dropdown of the member's department's open line items, showing Available for each. |
+| Line item | ✓ | Dropdown of the member's department's open line items, showing Available for each. The Finance HOD and Management choose from every department's open line items, grouped by department; the claim is charged to, and endorsed by the head of, that line item's department. |
 | Expense type | ✓ | Configurable list. Defaults: Food & Beverages, Travel & Transport, Printing & Stationery, Equipment Rental, Decor & Props, Prizes & Gifts, Marketing & Promotion, Accommodation, Miscellaneous. |
 | Reason / description | ✓ | What it was for. Minimum 10 characters. |
 | Transaction date | ✓ | Date on the receipt. Flagged (not blocked) if outside the fest receipt window. |
@@ -269,7 +271,7 @@ Allocations and line items can be revised at any time (see 7.5); every change is
 
 Covers anything where money goes to an outside party in stages — sound/light rental, stage fabrication, catering, printing.
 
-**Who:** Department HOD raises → Finance HOD approves → Management pays advance → Department HOD confirms delivery → Finance HOD releases balance → Management pays balance.
+**Who:** Department HOD (or the Finance HOD, for any department) raises → Finance HOD approves → Management or Finance HOD pays advance → Department HOD confirms delivery → Finance HOD releases balance → Management or Finance HOD pays balance.
 
 **Request fields:** vendor (pick existing or create), line item, description, quote / PO file(s), total value, advance amount (₹ or %), balance amount (computed), advance due (on approval / on a date), expected delivery date, vendor payment details (bank or UPI), notes.
 
@@ -281,7 +283,7 @@ Covers anything where money goes to an outside party in stages — sound/light r
 | SUBMITTED | Awaiting Finance HOD |
 | SENT_BACK | Returned with reason; editable |
 | APPROVED | Full value moves to Committed. Advance awaiting payment |
-| ADVANCE_PAID | Management recorded the advance (reference, date). Skipped if advance = 0 |
+| ADVANCE_PAID | The advance is paid in full (reference, date). Skipped if advance = 0. A part-paid advance leaves the request in APPROVED |
 | DELIVERED | Dept HOD confirmed delivery with date, note, and invoice upload |
 | BALANCE_APPROVED | Finance HOD released the balance (amount may be adjusted with a reason). Skipped if balance = 0 |
 | CLOSED | Terminal. Balance paid and recorded, or fully settled |
@@ -293,13 +295,14 @@ Covers anything where money goes to an outside party in stages — sound/light r
 | From | Action | By | To |
 |---|---|---|---|
 | DRAFT | Submit | Dept HOD | SUBMITTED |
-| SUBMITTED | Approve | Finance HOD | APPROVED |
+| SUBMITTED | Approve (a note is required if the Finance HOD raised it — 5.2) | Finance HOD | APPROVED |
 | SUBMITTED | Send back / Decline (reason) | Finance HOD | SENT_BACK / DECLINED |
 | SENT_BACK | Edit and resubmit | Dept HOD | SUBMITTED |
-| APPROVED | Record advance payment | Management | ADVANCE_PAID |
+| APPROVED | Record advance payment, in full or in part | Management / Finance HOD | ADVANCE_PAID if paid in full, else stays APPROVED |
 | APPROVED / ADVANCE_PAID | Confirm delivery (invoice required) | Dept HOD | DELIVERED |
 | DELIVERED | Release balance (amount editable with reason) | Finance HOD | BALANCE_APPROVED |
-| BALANCE_APPROVED | Record balance payment | Management | CLOSED |
+| BALANCE_APPROVED | Record balance payment, in full or in part | Management / Finance HOD | CLOSED once nothing is owed, else stays BALANCE_APPROVED |
+| APPROVED / ADVANCE_PAID / DELIVERED / BALANCE_APPROVED | Record remaining payment on a part-paid milestone | Management / Finance HOD | as above once it settles, else unchanged |
 | DELIVERED, balance = 0 | Close | Finance HOD | CLOSED |
 | APPROVED / ADVANCE_PAID | Cancel (reason; refund tracking if advance paid) | Finance HOD | CANCELLED |
 
@@ -308,6 +311,7 @@ Covers anything where money goes to an outside party in stages — sound/light r
 - The vendor page shows every request across departments: total contracted, paid, outstanding. Finance sees total exposure per vendor.
 - Expected delivery date passing without confirmation → reminder to Dept HOD and a Medium flag (F12).
 - Milestones are stored as a list so more than two (e.g. 30 / 40 / 30) can be supported later without a schema change.
+- A payment is marked as paying its milestone in full or in part. A part payment moves only what was paid from Committed to Spent; the rest stays Committed and owed, and the milestone offers a "remaining payment" — with its own reference, date and receipt — until it is paid off. Each payment is kept separately (`vendor_payments`). A payment can never exceed what is owed on the milestone; settling for less than agreed is still done by reducing the approved value at release, with a reason.
 - An invoice total that differs from the approved value raises a High flag (F9) before balance release.
 - A refund received on a cancelled request is recorded against the line item and reduces Spent.
 
@@ -494,6 +498,7 @@ Thresholds are configurable by Finance HOD. F1–F6, F8, F9, F12–F14 are deter
 **Finance HOD**
 - Fest overview: total budget, allocated vs reserve, income received vs spent (cash position), projected close, department table (five numbers + utilization bar), open flags count, items awaiting decision.
 - Approval queue: reimbursements and vendor requests, flagged first, with bulk approve for clean items.
+- Department expenses: every other department with its Available and open line items, and for each one "Add expense" (the claim form, offering only that department's line items) and "Vendor payment" (the vendor request form, likewise). Below, everything the Finance HOD has added for other departments, with its state. The claims follow 7.2 (that department's head endorses, Management approves); the vendor requests follow 7.3, with 5.2's exception for approving their own. On a phone the camera tab opens this section for the Finance HOD, since their own department holds no budget.
 - Flags panel.
 - Income ledger and sponsor statements.
 - Vendors: exposure per vendor.
@@ -1007,6 +1012,22 @@ create table vendor_milestones (
 );
 -- Service layer enforces: sum(planned_paise) = coalesce(approved_value_paise, total_value_paise).
 -- MVP creates exactly two milestones (ADVANCE, BALANCE); the model allows more.
+-- paid_paise is the running total of its vendor_payments; paid_at (and paid_by,
+-- payment_reference) are set only when that total reaches planned_paise — settled.
+
+-- One row per transfer: a milestone may be paid in parts (7.3).
+create table vendor_payments (
+  id                   uuid primary key default gen_random_uuid(),
+  fest_id              uuid not null references fests(id),
+  vendor_request_id    uuid not null references vendor_requests(id),
+  milestone_id         uuid not null references vendor_milestones(id),
+  amount_paise         bigint not null check (amount_paise > 0),
+  paid_at              timestamptz not null,
+  paid_by              uuid references users(id),
+  payment_reference    text not null,
+  proof_attachment_id  uuid references attachments(id),
+  created_at           timestamptz not null default now()
+);
 
 create table income_entries (
   id                    uuid primary key default gen_random_uuid(),
@@ -1498,10 +1519,11 @@ Transition actions (7.3):
 | `APPROVE` | SUBMITTED | F | `approved_value_paise?` (defaults to total) |
 | `SEND_BACK` / `DECLINE` | SUBMITTED | F | `reason` |
 | `RESUBMIT` | SENT_BACK | requester | — |
-| `RECORD_ADVANCE` | APPROVED | Mg | `milestone_id, paid_paise, paid_at, payment_reference, proof_attachment_id?` |
+| `RECORD_ADVANCE` | APPROVED | Mg, F (not the requester) | `milestone_id, paid_paise, paid_at, payment_reference, proof_attachment_id?` — `paid_paise` ≤ the milestone; less than it is a part payment |
 | `CONFIRM_DELIVERY` | APPROVED (advance = 0), ADVANCE_PAID | target dept H, F | `delivered_at, note?, invoice_attachment_id` (required) |
 | `RELEASE_BALANCE` | DELIVERED | F | `approved_value_paise?` (≤ current), `reason` if changed |
-| `RECORD_BALANCE` | BALANCE_APPROVED | Mg | `milestone_id, paid_paise, paid_at, payment_reference, proof_attachment_id?` → CLOSED |
+| `RECORD_BALANCE` | BALANCE_APPROVED | Mg, F (not the requester) | `milestone_id, paid_paise, paid_at, payment_reference, proof_attachment_id?` → CLOSED once nothing is owed |
+| `RECORD_REMAINING` | APPROVED, ADVANCE_PAID, DELIVERED, BALANCE_APPROVED | Mg, F (not the requester) | Same body, for a milestone already paid in part; `paid_paise` ≤ what is left |
 | `CLOSE` | DELIVERED (balance = 0) | F | — |
 | `CANCEL` | APPROVED, ADVANCE_PAID | F | `reason, refund_expected_paise?` |
 | `RECORD_REFUND` | CANCELLED | Mg | `amount_paise, received_at, reference` |

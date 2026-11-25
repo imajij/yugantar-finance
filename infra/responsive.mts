@@ -40,7 +40,7 @@ const WIDTHS = [
 const PATHS = [
   "/dashboard", "/budget", "/budget/{department}", "/budget/review",
   "/budget/{department}/line-items/{lineItem}",
-  "/requests", "/requests/{reimbursement}", "/requests/new",
+  "/requests", "/requests/{reimbursement}", "/requests/new", "/expenses",
   "/queues", "/vendors", "/vendors/{vendor}", "/vendors/new",
   "/vendors/requests/{vendorRequest}", "/vendors/requests/new",
   "/income", "/tickets", "/tickets?layout=list", "/tickets/{ticket}",

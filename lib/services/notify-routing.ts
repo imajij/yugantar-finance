@@ -105,7 +105,7 @@ export const VENDOR_RULES: Record<string, Rule> = {
   APPROVE: {
     to: ["REQUESTER", "MANAGEMENT"],
     title: (c) => `${c.humanId} is approved`,
-    waitingOn: "Waiting on: Management, for the advance",
+    waitingOn: "Waiting on: the advance payment",
   },
   SEND_BACK: {
     to: ["REQUESTER"],
@@ -116,10 +116,22 @@ export const VENDOR_RULES: Record<string, Rule> = {
     to: ["REQUESTER"],
     title: (c) => `${c.humanId} was declined`,
   },
+  // Management and the Finance HOD both record vendor payments (5.2), so each
+  // hears about the other's.
   RECORD_ADVANCE: {
-    to: ["REQUESTER", "FINANCE"],
+    to: ["REQUESTER", "FINANCE", "MANAGEMENT"],
     title: (c) => `Advance paid on ${c.humanId}`,
     waitingOn: "Waiting on: delivery, then the balance",
+  },
+  PARTIAL_PAYMENT: {
+    to: ["REQUESTER", "FINANCE", "MANAGEMENT"],
+    title: (c) => `Part payment recorded on ${c.humanId}`,
+    waitingOn: "Waiting on: the remaining payment",
+  },
+  MILESTONE_PAID: {
+    to: ["REQUESTER", "FINANCE", "MANAGEMENT"],
+    title: (c) => `A payment on ${c.humanId} is settled`,
+    waitingOn: "Waiting on: what is still owed on it",
   },
   CONFIRM_DELIVERY: {
     to: ["FINANCE"],
@@ -132,7 +144,7 @@ export const VENDOR_RULES: Record<string, Rule> = {
     waitingOn: "Waiting on: Management to pay the balance",
   },
   RECORD_BALANCE: {
-    to: ["REQUESTER", "DEPT_HOD", "FINANCE"],
+    to: ["REQUESTER", "DEPT_HOD", "FINANCE", "MANAGEMENT"],
     title: (c) => `${c.humanId} is closed and fully paid`,
   },
   CLOSE: {

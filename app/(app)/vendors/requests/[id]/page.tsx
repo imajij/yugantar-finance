@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound as nf, redirect } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import { getSession } from "@/lib/session";
-import { getVendorRequestDetail } from "@/lib/services/vendors";
+import { getVendorRequestDetail, owedOn } from "@/lib/services/vendors";
 import { can, satisfiesActorConstraints } from "@/lib/authz";
 import { VENDOR_TRANSITIONS } from "@/lib/state-machines/vendor";
 import { Amount, Card, Empty, FlagChip, PageTitle, StateChip } from "@/components/ui";
@@ -10,6 +10,9 @@ import { RaiseConcern } from "@/components/raise-flag";
 import { TransitionActions } from "@/components/transitions";
 import { Timeline } from "@/components/timeline";
 import { CommentThread } from "@/components/comments";
+import { RecordVendorPayment, type Payable } from "./record-payment";
+
+const PAYMENT_ACTIONS = ["RECORD_ADVANCE", "RECORD_BALANCE", "RECORD_REMAINING"];
 
 /** PRD 9.4 / 20.7 — the milestone ladder is the story: contracted, advanced, delivered, closed. */
 export default async function VendorRequestPage({ params }: { params: Promise<{ id: string }> }) {
@@ -34,15 +37,32 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
         return can(user, "vendorRequest.approve", resource);
       }
       if (t.action === "CONFIRM_DELIVERY") return can(user, "vendorRequest.confirmDelivery", resource);
-      if (["RECORD_ADVANCE", "RECORD_BALANCE", "RECORD_REFUND"].includes(t.action)) {
+      if ([...PAYMENT_ACTIONS, "RECORD_REFUND"].includes(t.action)) {
         return can(user, "vendorRequest.recordPayment", resource);
       }
       return true;
     })
     .map((t) => ({ action: t.action, requires: [...(t.requires ?? [])] }));
 
+  /*
+   * Payments get their own form rather than the generic one: it asks whether the
+   * milestone was paid in full or in part, and takes the receipt. Which milestone
+   * each action can pay follows the service's rule — the first payment names the
+   * advance or the balance, and anything paid in part is finished by the remaining
+   * payment.
+   */
+  const allowed = new Set(actions.map((a) => a.action));
+  const payables: Payable[] = r.milestones.flatMap((m) => {
+    const owed = owedOn(m);
+    const paid = m.paidPaise ?? 0;
+    if (owed === 0) return [];
+    const action = paid > 0 ? "RECORD_REMAINING" : m.kind === "ADVANCE" ? "RECORD_ADVANCE" : "RECORD_BALANCE";
+    if (!allowed.has(action)) return [];
+    return [{ milestoneId: m.id, kind: m.kind, action, plannedPaise: m.plannedPaise, paidPaise: paid, owedPaise: owed }];
+  });
+  const otherActions = actions.filter((a) => !PAYMENT_ACTIONS.includes(a.action));
+
   const openFlags = r.flags.filter((f) => f.status === "OPEN");
-  const unpaid = r.milestones.filter((m) => m.paidPaise === null);
   const paidTotal = r.milestones.reduce((s, m) => s + (m.paidPaise ?? 0), 0);
   const contracted = r.approvedValuePaise ?? r.totalValuePaise;
 
@@ -106,7 +126,7 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
               <th className="pb-2 font-medium">Stage</th>
               <th className="pb-2 text-right font-medium">Planned</th>
               <th className="pb-2 text-right font-medium">Paid</th>
-              <th className="pb-2 text-right font-medium">Reference</th>
+              <th className="pb-2 text-right font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -116,10 +136,18 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
                 <td className="py-2 text-right"><Amount paise={m.plannedPaise} /></td>
                 <td className="py-2 text-right">
                   {m.paidPaise === null
-                    ? <span className="text-xs text-text-muted">unpaid</span>
+                    ? <span className="text-xs text-text-muted">—</span>
                     : <Amount paise={m.paidPaise} className="text-accent" />}
                 </td>
-                <td className="tnum py-2 text-right text-xs text-text-muted">{m.paymentReference ?? "—"}</td>
+                <td className="py-2 text-right text-xs">
+                  {m.paidAt
+                    ? <span style={{ color: "var(--state-done-fg)" }}>paid in full</span>
+                    : (m.paidPaise ?? 0) > 0
+                      ? <span style={{ color: "var(--state-waiting-fg)" }}>part paid · <Amount paise={owedOn(m)} /> left</span>
+                      : owedOn(m) === 0
+                        ? <span className="text-text-muted">nothing due</span>
+                        : <span className="text-text-muted">unpaid</span>}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -129,6 +157,48 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
           each payment moves that slice from committed to spent.
         </p>
       </Card>
+
+      {r.payments.length > 0 && (
+        <Card className="mt-4">
+          <h2 className="font-display text-sm">Payments</h2>
+          <ul className="mt-3 flex flex-col">
+            {r.payments.map((p) => {
+              const stage = r.milestones.find((m) => m.id === p.milestoneId)?.kind.toLowerCase() ?? "payment";
+              return (
+                <li
+                  key={p.id}
+                  className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5 text-sm"
+                  style={{ borderTop: "1px solid var(--yg-surface-2)" }}
+                >
+                  <span className="flex flex-col gap-0.5">
+                    <span>
+                      <Amount paise={p.amountPaise} /> <span className="text-text-muted">· {stage}</span>
+                    </span>
+                    <span className="text-xs text-text-muted">
+                      <span className="tnum">{new Date(p.paidAt).toLocaleDateString("en-IN")}</span>
+                      {" · "}<span className="tnum">{p.paymentReference}</span>
+                      {p.paidBy && <> · {p.paidBy}</>}
+                    </span>
+                  </span>
+                  {p.proofAttachmentId ? (
+                    <a
+                      href={`/api/v1/attachments/${p.proofAttachmentId}/url?redirect=1`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs"
+                      style={{ color: "var(--yg-accent)" }}
+                    >
+                      Receipt
+                    </a>
+                  ) : (
+                    <span className="text-xs text-text-muted">no receipt</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      )}
 
       {openFlags.length > 0 && (
         <Card className="mt-4">
@@ -171,18 +241,21 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
         </Card>
       )}
 
-      {actions.length > 0 && (
+      {(payables.length > 0 || otherActions.length > 0) && (
         <Card className="mt-4">
           <h2 className="font-display text-sm">Actions</h2>
+          {payables.length > 0 && (
+            <RecordVendorPayment requestId={r.id} vendorName={r.vendor.name} payables={payables} />
+          )}
           <TransitionActions
             endpoint={`/api/v1/vendor-requests/${r.id}/transitions`}
-            actions={actions}
-            options={{
-              milestone_id: unpaid.map((m) => ({
-                value: m.id,
-                label: `${m.kind.toLowerCase()} — planned ₹${(m.plannedPaise / 100).toLocaleString("en-IN")}`,
-              })),
-            }}
+            actions={otherActions}
+            // Approving a request you raised is allowed for Finance, with a note (5.2).
+            extraFields={r.requestedBy === user.id ? { APPROVE: ["note"] } : {}}
+            consequences={r.requestedBy === user.id ? {
+              APPROVE: "You raised this request, so you are approving your own. Say why — the note goes on "
+                + "the record, the whole value is committed against the line item, and Management is told.",
+            } : {}}
           />
         </Card>
       )}

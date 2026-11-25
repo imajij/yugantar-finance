@@ -31,6 +31,8 @@ import { AvailableInline } from "@/components/five-numbers";
 interface LineItemOption {
   id: string;
   name: string;
+  /** The department whose budget the claim is charged to, and whose head endorses it. */
+  departmentName: string;
   availablePaise: number;
   plannedPaise: number;
   pendingPaise: number;
@@ -53,6 +55,16 @@ interface Props {
    * decided it and the amounts were never fetched.
    */
   showsBudget: boolean;
+  /**
+   * Finance and Management may charge any department's line item, so the choice
+   * names the department alongside it and the page follows whichever is picked.
+   */
+  anyDepartment: boolean;
+  /**
+   * Set when Finance opened this from Department expenses for one department: the
+   * line items are that department's, and leaving goes back to the section.
+   */
+  forDepartment?: string | null;
 }
 
 interface Receipt { id: string; name: string }
@@ -68,7 +80,7 @@ const FIELD =
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function NewRequestForm({
-  lineItems, expenseTypes, defaults, receiptWindow, showsBudget,
+  lineItems, expenseTypes, defaults, receiptWindow, showsBudget, anyDepartment, forDepartment,
 }: Props) {
   const router = useRouter();
   const [step, setStep] = useState(1);
@@ -94,11 +106,15 @@ export function NewRequestForm({
   const chosenType = expenseTypeId || selected?.defaultExpenseTypeId || expenseTypes[0]?.id || "";
   const remaining = selected && amountPaise !== null ? selected.availablePaise - amountPaise : null;
   const outsideWindow = transactionOn < receiptWindow.start || transactionOn > receiptWindow.end;
+  // The department charged is the line item's, which for Finance may not be theirs.
+  const chargedDepartment = selected?.departmentName ?? defaults.department;
 
   if (lineItems.length === 0) {
     return (
       <ErrorNote detail="Ask your HOD to break the department's allocation into line items — a claim has to be charged against one.">
-        Your department has no open line items, so there is nowhere to file this claim.
+        {anyDepartment
+          ? "No department has an open line item yet, so there is nowhere to file this claim."
+          : "Your department has no open line items, so there is nowhere to file this claim."}
       </ErrorNote>
     );
   }
@@ -165,7 +181,10 @@ export function NewRequestForm({
     <div className="flex w-full max-w-[430px] flex-col gap-4">
       <header className="flex items-center justify-between gap-3">
         {step === 1 ? (
-          <IconButton label="Leave without saving" onClick={() => router.push("/requests")}>
+          <IconButton
+            label="Leave without saving"
+            onClick={() => router.push(forDepartment ? "/expenses" : "/requests")}
+          >
             <X size={18} aria-hidden />
           </IconButton>
         ) : (
@@ -174,7 +193,7 @@ export function NewRequestForm({
           </IconButton>
         )}
         <span className="font-display text-[15px]">
-          {step === 3 ? "Check and submit" : "New reimbursement"}
+          {step === 3 ? "Check and submit" : forDepartment ? `Expense for ${forDepartment}` : "New reimbursement"}
         </span>
         <span className="tnum w-11 text-right text-[12px] text-text-muted">{step}/3</span>
       </header>
@@ -275,7 +294,12 @@ export function NewRequestForm({
                 onClick={() => setPickingLineItem((v) => !v)}
                 className="flex items-center justify-between gap-3 text-left"
               >
-                <span className="text-[14px] font-medium">{selected?.name ?? "Choose one"}</span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-[14px] font-medium">{selected?.name ?? "Choose one"}</span>
+                  {anyDepartment && selected && (
+                    <span className="text-[12px] text-text-muted">{selected.departmentName}</span>
+                  )}
+                </span>
                 <span className="flex items-center gap-1.5 text-[12px]" style={{ color: "var(--yg-info)" }}>
                   Change <ChevronDown size={14} aria-hidden />
                 </span>
@@ -295,8 +319,11 @@ export function NewRequestForm({
 
               {pickingLineItem && (
                 <ul className="flex flex-col gap-1">
-                  {lineItems.map((i) => (
+                  {lineItems.map((i, n) => (
                     <li key={i.id}>
+                      {anyDepartment && i.departmentName !== lineItems[n - 1]?.departmentName && (
+                        <span className="meta-label mt-2 block px-3">{i.departmentName}</span>
+                      )}
                       <button
                         type="button"
                         onClick={() => { setLineItemId(i.id); setPickingLineItem(false); }}
@@ -432,7 +459,7 @@ export function NewRequestForm({
           >
             <Prefilled label="Amount" value={formatPaise(amountPaise ?? 0)} mono />
             <Prefilled label="Line item" value={selected?.name ?? "—"} />
-            <Prefilled label="Department" value={defaults.department} />
+            <Prefilled label="Department" value={chargedDepartment} />
             <Row label="Date on receipt" required>
               <input
                 type="date"
@@ -486,13 +513,13 @@ export function NewRequestForm({
             showsBudget ? (
               <InfoNote>
                 <span className="tnum">{formatPaise(amountPaise)}</span> shows as{" "}
-                <strong>pending</strong> against {defaults.department} until it is endorsed —{" "}
+                <strong>pending</strong> against {chargedDepartment} until it is endorsed —{" "}
                 {selected.name} drops to <span className="tnum">{formatPaise(selected.availablePaise - amountPaise)}</span>{" "}
                 available in the meantime.
               </InfoNote>
             ) : (
               <InfoNote>
-                This goes to {defaults.department}&rsquo;s head to endorse, then to Finance to
+                This goes to {chargedDepartment}&rsquo;s head to endorse, then to Finance to
                 approve. You will be told at each step.
               </InfoNote>
             )

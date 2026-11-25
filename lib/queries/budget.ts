@@ -78,6 +78,31 @@ export async function lineItemTotalsForDepartment(
   }));
 }
 
+/**
+ * Every line item in the fest, for the people who may charge spend to any
+ * department (Finance, Management — `lineItem.spendAgainst`).
+ */
+export async function lineItemTotalsForFest(
+  festId: string,
+  tx: Tx | typeof db = db,
+): Promise<LineItemTotals[]> {
+  const rows = (await tx.execute(sql`
+    select v.* from v_line_item_totals v
+      join line_items li on li.id = v.line_item_id
+     where li.fest_id = ${festId}
+  `)) as unknown as Record<string, unknown>[];
+  return rows.map((r) => ({
+    lineItemId: String(r.line_item_id),
+    departmentId: String(r.department_id),
+    status: r.status as "OPEN" | "CLOSED",
+    plannedPaise: n(r.planned_paise),
+    pendingPaise: n(r.pending_paise),
+    committedPaise: n(r.committed_paise),
+    spentPaise: n(r.spent_paise),
+    availablePaise: n(r.available_paise),
+  }));
+}
+
 export async function departmentTotals(departmentId: string, tx: Tx | typeof db = db): Promise<DepartmentTotals | null> {
   const rows = (await tx.execute(
     sql`select * from v_department_totals where department_id = ${departmentId}`,

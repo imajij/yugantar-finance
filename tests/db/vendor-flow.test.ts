@@ -14,6 +14,7 @@ import {
   transitionVendorRequest, updateVendor, vendorExposure,
 } from "@/lib/services/vendors";
 import { lineItemTotals } from "@/lib/queries/budget";
+import { departmentsForExpenses, expensesAddedForOthers } from "@/lib/queries/department-expenses";
 import { dropFests } from "@/lib/test-support";
 
 afterAll(() => dropFests(db, "vend-"));
@@ -217,12 +218,16 @@ test("F9 fires when the invoice does not match what was approved", async () => {
   expect(flags.some((f) => f.rule === "F9" && f.status === "OPEN")).toBe(true);
 });
 
-test("a member cannot approve, and the raiser cannot approve their own request", async () => {
+test("a member cannot approve, and Finance approves its own request only with a note", async () => {
   const req = await createVendorRequest(techHod, request({ submit: true }));
   await expect(transitionVendorRequest(member, req.id, "APPROVE")).rejects.toMatchObject({ code: "FORBIDDEN" });
 
   const own = await createVendorRequest(finance, request({ submit: true }));
-  await expect(transitionVendorRequest(finance, own.id, "APPROVE")).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await expect(transitionVendorRequest(finance, own.id, "APPROVE")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  await expect(transitionVendorRequest(finance, own.id, "APPROVE", { note: "   " }))
+    .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  await expect(transitionVendorRequest(finance, own.id, "APPROVE", { note: "Only Finance HOD this year" }))
+    .resolves.toMatchObject({ status: "APPROVED" });
 });
 
 test("cancelling after an advance expects that money back", async () => {
@@ -336,20 +341,22 @@ async function readyForBalance() {
  * CLOSED leaves Committed entirely (0001_views.sql), so the request settled, the
  * ₹23,999.99 nobody had paid stopped being committed, and it came back as
  * Available — money the department could then spend twice, with nothing anywhere
- * recording that the vendor was still owed it.
+ * recording that the vendor was still owed it. A token transfer is now what it is,
+ * a part payment: recorded, and the rest still owed.
  */
-test("a token payment cannot settle a milestone", async () => {
+test("a token payment is a part payment, and settles nothing", async () => {
   const { req, balance } = await readyForBalance();
 
-  await expect(transitionVendorRequest(mgmt, req.id, "RECORD_BALANCE", {
+  const after = await transitionVendorRequest(mgmt, req.id, "RECORD_BALANCE", {
     milestone_id: balance.id, paid_paise: 1, paid_at: "2026-11-28", payment_reference: "UTR-BAL",
-  })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
 
-  // Untouched: still open, still owed, still committed.
-  const after = await getVendorRequestDetail(finance, req.id);
+  // Still open, still owed, still committed — less the one paisa that left.
   expect(after.status).toBe("BALANCE_APPROVED");
-  expect(after.milestones.find((m) => m.kind === "BALANCE")!.paidPaise).toBeNull();
-  expect((await lineItemTotals(lineItemId))!.committedPaise).toBe(R(24000));
+  const m = (await getVendorRequestDetail(finance, req.id)).milestones.find((x) => x.kind === "BALANCE")!;
+  expect(m.paidPaise).toBe(1);
+  expect(m.paidAt).toBeNull();
+  expect((await lineItemTotals(lineItemId))!.committedPaise).toBe(R(24000) - 1);
 });
 
 test("a payment cannot exceed its milestone either", async () => {
@@ -444,4 +451,182 @@ test("the balance payment does not close a request that still owes something", a
   expect(paid.status).toBe("BALANCE_APPROVED");
   // The third milestone is still owed, and still says so.
   expect((await lineItemTotals(lineItemId))!.committedPaise).toBe(R(10000));
+});
+
+/* --------------------------------------------- Finance pays, in full or in part */
+
+test("the Finance HOD can record a vendor payment", async () => {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+  const advance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "ADVANCE")!;
+
+  const after = await transitionVendorRequest(finance, req.id, "RECORD_ADVANCE", {
+    milestone_id: advance.id, paid_paise: R(16000), paid_at: "2026-11-20", payment_reference: "UTR-FIN-1",
+  });
+  expect(after.status).toBe("ADVANCE_PAID");
+  expect((await lineItemTotals(lineItemId))!.spentPaise).toBe(R(16000));
+});
+
+/*
+ * What the Finance HOD asked for: raise a vendor payment against another
+ * department's budget, approve it (with a note, being its own), and pay it.
+ */
+test("Finance raises a vendor request for another department, approves it with a note, and pays it", async () => {
+  const req = await createVendorRequest(finance, request({ submit: true }));
+  // Charged to Tech's budget, whoever raised it.
+  expect(req.departmentId).toBe(techId);
+
+  await transitionVendorRequest(finance, req.id, "APPROVE", { note: "Raised for Tech while their HOD is travelling" });
+  expect((await lineItemTotals(lineItemId))!.committedPaise).toBe(R(40000));
+
+  const advance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "ADVANCE")!;
+  await expect(transitionVendorRequest(finance, req.id, "RECORD_ADVANCE", {
+    milestone_id: advance.id, paid_paise: R(16000), paid_at: "2026-11-20", payment_reference: "UTR-SELF",
+  })).resolves.toMatchObject({ status: "ADVANCE_PAID" });
+
+  // The note is on the record.
+  const timeline = (await getVendorRequestDetail(finance, req.id)).timeline;
+  expect(timeline.some((e) => e.action.endsWith("APPROVE") && e.reason?.includes("travelling"))).toBe(true);
+
+  // …and a department head still cannot pay or approve their own.
+  const hods = await createVendorRequest(techHod, request({ submit: true }));
+  await expect(transitionVendorRequest(techHod, hods.id, "APPROVE", { note: "mine" }))
+    .rejects.toMatchObject({ code: expect.stringMatching(/FORBIDDEN|INVALID_TRANSITION/) });
+});
+
+test("a part-paid advance stays owed until the remaining payment, which carries its own receipt", async () => {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+  const advance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "ADVANCE")!;
+
+  const part = await transitionVendorRequest(finance, req.id, "RECORD_ADVANCE", {
+    milestone_id: advance.id, paid_paise: R(10000), paid_at: "2026-11-18", payment_reference: "UTR-PART",
+  });
+  expect(part.status).toBe("APPROVED");
+  let t = (await lineItemTotals(lineItemId))!;
+  expect(t.spentPaise).toBe(R(10000));
+  expect(t.committedPaise).toBe(R(30000));
+
+  // The first-payment action will not pay it twice; the remaining payment is how.
+  await expect(transitionVendorRequest(finance, req.id, "RECORD_ADVANCE", {
+    milestone_id: advance.id, paid_paise: R(6000), paid_at: "2026-11-19", payment_reference: "UTR-AGAIN",
+  })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  // Nor more than is left.
+  await expect(transitionVendorRequest(finance, req.id, "RECORD_REMAINING", {
+    milestone_id: advance.id, paid_paise: R(6001), paid_at: "2026-11-19", payment_reference: "UTR-OVER",
+  })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+  const receipt = await attachment(finance, "OTHER");
+  const settled = await transitionVendorRequest(finance, req.id, "RECORD_REMAINING", {
+    milestone_id: advance.id, paid_paise: R(6000), paid_at: "2026-11-19", payment_reference: "UTR-REST",
+    proof_attachment_id: receipt,
+  });
+  expect(settled.status).toBe("ADVANCE_PAID");
+
+  t = (await lineItemTotals(lineItemId))!;
+  expect(t.spentPaise).toBe(R(16000));
+  expect(t.committedPaise).toBe(R(24000));
+
+  const detail = await getVendorRequestDetail(finance, req.id);
+  expect(detail.milestones.find((m) => m.kind === "ADVANCE")!.paidAt).not.toBeNull();
+  expect(detail.payments.map((p) => [p.amountPaise, p.paymentReference, p.proofAttachmentId])).toEqual([
+    [R(10000), "UTR-PART", null],
+    [R(6000), "UTR-REST", receipt],
+  ]);
+  expect(detail.attachments.find((a) => a.id === receipt)?.purpose).toBe("PAYMENT_PROOF");
+});
+
+test("the remaining payment is only for a milestone already paid in part", async () => {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+  const advance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "ADVANCE")!;
+
+  await expect(transitionVendorRequest(finance, req.id, "RECORD_REMAINING", {
+    milestone_id: advance.id, paid_paise: R(16000), paid_at: "2026-11-20", payment_reference: "UTR-X",
+  })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+});
+
+test("an advance still part-paid keeps the request open after the balance, and closes it when paid", async () => {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+  let ms = (await getVendorRequestDetail(finance, req.id)).milestones;
+  const advance = ms.find((m) => m.kind === "ADVANCE")!;
+
+  await transitionVendorRequest(mgmt, req.id, "RECORD_ADVANCE", {
+    milestone_id: advance.id, paid_paise: R(10000), paid_at: "2026-11-18", payment_reference: "UTR-A1",
+  });
+  await transitionVendorRequest(techHod, req.id, "CONFIRM_DELIVERY", {
+    delivered_at: "2026-11-26",
+    invoice_attachment_id: await attachment(techHod, "INVOICE", R(40000)),
+    invoice_total_paise: R(40000),
+  });
+  await transitionVendorRequest(finance, req.id, "RELEASE_BALANCE");
+  ms = (await getVendorRequestDetail(finance, req.id)).milestones;
+
+  const afterBalance = await transitionVendorRequest(finance, req.id, "RECORD_BALANCE", {
+    milestone_id: ms.find((m) => m.kind === "BALANCE")!.id,
+    paid_paise: R(24000), paid_at: "2026-11-28", payment_reference: "UTR-B",
+  });
+  // ₹6,000 of the advance is still owed, so this is not closed.
+  expect(afterBalance.status).toBe("BALANCE_APPROVED");
+  expect((await lineItemTotals(lineItemId))!.committedPaise).toBe(R(6000));
+
+  const closed = await transitionVendorRequest(finance, req.id, "RECORD_REMAINING", {
+    milestone_id: advance.id, paid_paise: R(6000), paid_at: "2026-11-29", payment_reference: "UTR-A2",
+  });
+  expect(closed.status).toBe("CLOSED");
+  const t = (await lineItemTotals(lineItemId))!;
+  expect(t.spentPaise).toBe(R(40000));
+  expect(t.committedPaise).toBe(0);
+});
+
+test("reducing the balance at release leaves a part payment's paid amount alone", async () => {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+  const advance = (await getVendorRequestDetail(finance, req.id)).milestones.find((m) => m.kind === "ADVANCE")!;
+  await transitionVendorRequest(mgmt, req.id, "RECORD_ADVANCE", {
+    milestone_id: advance.id, paid_paise: R(10000), paid_at: "2026-11-18", payment_reference: "UTR-A1",
+  });
+  await transitionVendorRequest(techHod, req.id, "CONFIRM_DELIVERY", {
+    delivered_at: "2026-11-26",
+    invoice_attachment_id: await attachment(techHod, "INVOICE", R(30000)),
+    invoice_total_paise: R(30000),
+  });
+  // ₹30,000 approved, ₹10,000 paid: ₹20,000 left, shared across what is still owed
+  // in proportion — ₹6,000 of advance and ₹24,000 of balance before.
+  await transitionVendorRequest(finance, req.id, "RELEASE_BALANCE", {
+    approved_value_paise: R(30000), reason: "Two monitors were not delivered",
+  });
+
+  const ms = (await getVendorRequestDetail(finance, req.id)).milestones;
+  const a = ms.find((m) => m.kind === "ADVANCE")!;
+  const b = ms.find((m) => m.kind === "BALANCE")!;
+  expect(a.paidPaise).toBe(R(10000));
+  expect(a.plannedPaise - R(10000) + b.plannedPaise).toBe(R(20000));
+  expect(a.plannedPaise).toBe(R(14000));
+  expect(b.plannedPaise).toBe(R(16000));
+  expect((await lineItemTotals(lineItemId))!.committedPaise).toBe(R(20000));
+});
+
+/*
+ * The Department expenses section: Finance sees every other department it can add
+ * spend to, and what it has added for them. Nobody else is offered it.
+ */
+test("Department expenses lists the other departments and what Finance added for them", async () => {
+  const depts = await departmentsForExpenses(finance);
+  expect(depts.map((d) => d.name)).toEqual(["Core", "Tech"]);   // never Finance's own
+  const tech = depts.find((d) => d.id === techId)!;
+  expect(tech.openLineItems).toBe(1);
+  expect(tech.availablePaise).toBe(R(100000));
+
+  // Only what Finance itself raised, for another department.
+  await createVendorRequest(techHod, request({ submit: true, description: "Raised by Tech's own head" }));
+  const mine = await createVendorRequest(finance, request({ submit: true, description: "Raised by Finance for Tech" }));
+  const added = await expensesAddedForOthers(finance);
+  expect(added.map((e) => e.id)).toEqual([mine.id]);
+  expect(added[0]).toMatchObject({ kind: "VENDOR_REQUEST", department: "Tech", amountPaise: R(40000), status: "SUBMITTED" });
+
+  for (const actor of [techHod, member, mgmt]) {
+    await expect(departmentsForExpenses(actor), actor.role).rejects.toMatchObject({ code: "FORBIDDEN" });
+  }
 });

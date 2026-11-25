@@ -316,6 +316,28 @@ export const vendorMilestones = pgTable("vendor_milestones", {
   index("vendor_milestones_request_idx").on(t.vendorRequestId),
 ]);
 
+/**
+ * One transfer against a vendor milestone (7.3). A milestone may be paid in parts;
+ * its `paid_paise` is the running total of these and `paid_at` is set only once
+ * they reach the planned amount. See 0016_vendor_payments.sql.
+ */
+export const vendorPayments = pgTable("vendor_payments", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  festId: uuid("fest_id").notNull().references(() => fests.id),
+  vendorRequestId: uuid("vendor_request_id").notNull().references(() => vendorRequests.id),
+  milestoneId: uuid("milestone_id").notNull().references(() => vendorMilestones.id),
+  amountPaise: paise("amount_paise").notNull(),
+  paidAt: ts("paid_at").notNull(),
+  paidBy: uuid("paid_by").references(() => users.id),
+  paymentReference: text("payment_reference").notNull(),
+  proofAttachmentId: uuid("proof_attachment_id").references(() => attachments.id),
+  createdAt: ts("created_at").notNull().defaultNow(),
+}, (t) => [
+  check("vendor_payments_amount_positive", sql`${t.amountPaise} > 0`),
+  index("vendor_payments_request_idx").on(t.vendorRequestId),
+  index("vendor_payments_milestone_idx").on(t.milestoneId),
+]);
+
 export const incomeEntries = pgTable("income_entries", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   festId: uuid("fest_id").notNull().references(() => fests.id),

@@ -78,6 +78,7 @@ export type Action =
   | "reimbursement.approve" | "reimbursement.recordPayment" | "reimbursement.hold"
   | "vendor.manage" | "vendor.delete" | "vendorRequest.create" | "vendorRequest.edit"
   | "vendorRequest.approve" | "vendorRequest.confirmDelivery" | "vendorRequest.recordPayment"
+  | "expense.forAnyDepartment"
   | "income.manage"
   // writes — everything else
   | "ticket.create" | "ticket.triage" | "ticket.work" | "ticket.close" | "ticket.plan"
@@ -344,13 +345,33 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
       );
 
     case "vendorRequest.approve":
-      return finance && resource.submitterId !== actor.id;
+      /*
+       * Including a request the Finance HOD raised themselves — by decision, so
+       * Finance can raise vendor payments for any department without a second
+       * Finance HOD to approve them. The service makes that approval carry a note
+       * saying why, and Management is told (5.2).
+       */
+      return finance;
 
     case "vendorRequest.confirmDelivery":
       return finance || (hod && own);
 
+    case "expense.forAnyDepartment":
+      /*
+       * The Department expenses section (9): the Finance HOD adds expense claims and
+       * vendor payment requests against any department's budget. The writes behind
+       * it are still `lineItem.spendAgainst` and `vendorRequest.create`, which
+       * already let Finance charge any department; this only decides who is offered
+       * the section. Management is not — it may not originate vendor spend.
+       */
+      return finance;
+
     case "vendorRequest.recordPayment":
-      return management;
+      // Management, or the Finance HOD — including on a vendor request Finance
+      // raised and approved itself (5.2's documented exception; Management is told
+      // of every vendor payment). Management never raises one, so "not your own"
+      // only ever bites on them in principle.
+      return finance || (management && resource.submitterId !== actor.id);
 
     /* -------------------------------------------------------------- tickets */
     case "ticket.create":

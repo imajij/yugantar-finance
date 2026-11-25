@@ -9,15 +9,17 @@ const INPUT = "mt-1 w-full rounded-lg px-3 py-2.5 text-sm bg-[var(--yg-bg-app)] 
 
 interface Props {
   vendors: { id: string; name: string }[];
-  lineItems: { id: string; name: string; availablePaise: number }[];
+  lineItems: { id: string; name: string; departmentName: string; availablePaise: number }[];
   canApprove: boolean;
+  /** Finance may charge any department; the list is then grouped by department. */
+  anyDepartment: boolean;
 }
 
 /**
  * PRD 7.3 — the MVP shape is advance + balance. The split is a percentage so the
  * two milestones always add up to the total, which the service insists on.
  */
-export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
+export function VendorRequestForm({ vendors, lineItems, canApprove, anyDepartment }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +65,13 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
   }
 
   if (lineItems.length === 0) {
-    return <p className="text-sm text-text-muted">Your department has no open line items to charge this to.</p>;
+    return (
+      <p className="text-sm text-text-muted">
+        {anyDepartment
+          ? "No department has an open line item to charge this to yet."
+          : "Your department has no open line items to charge this to."}
+      </p>
+    );
   }
 
   return (
@@ -79,15 +87,29 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
         <textarea name="description" required minLength={5} maxLength={1000} rows={3} className={INPUT} />
       </Field>
 
-      <Field label="Line item" required hint={chosen ? `${formatPaise(chosen.availablePaise)} available` : undefined}>
+      <Field
+        label="Line item"
+        required
+        hint={chosen
+          ? `${anyDepartment ? `${chosen.departmentName} · ` : ""}${formatPaise(chosen.availablePaise)} available`
+          : anyDepartment ? "Any department's — the request is charged to that department's budget." : undefined}
+      >
         <select
           name="line_item_id" required value={lineItemId} className={INPUT}
           onChange={(e) => setLineItemId(e.target.value)}
         >
           <option value="" disabled>Choose a line item</option>
-          {lineItems.map((i) => (
-            <option key={i.id} value={i.id}>{i.name} — {formatPaise(i.availablePaise)} left</option>
-          ))}
+          {anyDepartment
+            ? [...new Set(lineItems.map((i) => i.departmentName))].map((dept) => (
+              <optgroup key={dept} label={dept}>
+                {lineItems.filter((i) => i.departmentName === dept).map((i) => (
+                  <option key={i.id} value={i.id}>{i.name} — {formatPaise(i.availablePaise)} left</option>
+                ))}
+              </optgroup>
+            ))
+            : lineItems.map((i) => (
+              <option key={i.id} value={i.id}>{i.name} — {formatPaise(i.availablePaise)} left</option>
+            ))}
         </select>
       </Field>
 
@@ -132,7 +154,8 @@ export function VendorRequestForm({ vendors, lineItems, canApprove }: Props) {
 
       {canApprove && (
         <p className="text-xs text-text-muted">
-          You can approve vendor payments, but not one you raised yourself.
+          You can approve this yourself once it is raised, with a note saying why — Management
+          is told when you do.
         </p>
       )}
 

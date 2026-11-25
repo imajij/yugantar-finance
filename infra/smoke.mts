@@ -634,21 +634,47 @@ const ms = (detail.json?.milestones ?? []) as { id: string; kind: string; planne
 const advanceId = required("advance milestone id", String(ms.find((m) => m.kind === "ADVANCE")?.id ?? ""));
 const balanceId = required("balance milestone id", String(ms.find((m) => m.kind === "BALANCE")?.id ?? ""));
 
-// A payment settles its own milestone, in full, or it is not a payment.
-await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
-  as: management, expect: [400, 422],
-  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 1, paid_at: "2026-11-20", payment_reference: "UTR-X" },
-  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (part payment refused)",
-});
 await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
   as: management, expect: [400, 422],
   body: { action: "RECORD_ADVANCE", milestone_id: balanceId, paid_paise: 6000000, paid_at: "2026-11-20", payment_reference: "UTR-X" },
   label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (wrong milestone refused)",
 });
+
+// The Finance HOD pays part of the advance (7.3, 5.2): recorded, and the rest owed.
+const partAdvance = await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: finance,
+  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 1000000, paid_at: "2026-11-19", payment_reference: "UTR-ADV-1" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (Finance, part payment)",
+});
+rows.push({
+  group, method: "POST", path: "a part-paid advance leaves the request approved", as: "finance",
+  status: partAdvance.status, expected: "content",
+  ok: partAdvance.json?.status === "APPROVED",
+  note: String(partAdvance.json?.status ?? "?"),
+});
 await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
-  as: management,
-  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 4000000, paid_at: "2026-11-20", payment_reference: "UTR-ADV" },
-  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE",
+  as: finance, expect: [400, 422],
+  body: { action: "RECORD_ADVANCE", milestone_id: advanceId, paid_paise: 3000000, paid_at: "2026-11-20", payment_reference: "UTR-X" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_ADVANCE (already part-paid, refused)",
+});
+await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: finance, expect: [400, 422],
+  body: { action: "RECORD_REMAINING", milestone_id: advanceId, paid_paise: 3000001, paid_at: "2026-11-20", payment_reference: "UTR-X" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_REMAINING (more than is owed, refused)",
+});
+const restAdvance = await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
+  as: finance,
+  body: {
+    action: "RECORD_REMAINING", milestone_id: advanceId, paid_paise: 3000000, paid_at: "2026-11-20",
+    payment_reference: "UTR-ADV-2", proof_attachment_id: await receiptFor(finance, "OTHER"),
+  },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_REMAINING (with its receipt)",
+});
+rows.push({
+  group, method: "POST", path: "the remaining payment settles the advance", as: "finance",
+  status: restAdvance.status, expected: "content",
+  ok: restAdvance.json?.status === "ADVANCE_PAID",
+  note: String(restAdvance.json?.status ?? "?"),
 });
 
 await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
@@ -664,11 +690,11 @@ await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
   label: "/api/v1/vendor-requests/{id}/transitions RELEASE_BALANCE",
 });
 
-// The one that closed a ₹60,000 balance for a rupee.
+// More than is owed is never a payment.
 await hit("POST", `/api/v1/vendor-requests/${vr2Id}/transitions`, {
   as: management, expect: [400, 422],
-  body: { action: "RECORD_BALANCE", milestone_id: balanceId, paid_paise: 100, paid_at: "2026-11-28", payment_reference: "UTR-X" },
-  label: "/api/v1/vendor-requests/{id}/transitions RECORD_BALANCE (token payment refused)",
+  body: { action: "RECORD_BALANCE", milestone_id: balanceId, paid_paise: 6000001, paid_at: "2026-11-28", payment_reference: "UTR-X" },
+  label: "/api/v1/vendor-requests/{id}/transitions RECORD_BALANCE (overpayment refused)",
 });
 const stillOpen = await hit("GET", `/api/v1/vendor-requests/${vr2Id}`, {
   as: finance, label: "/api/v1/vendor-requests/{id} (after the refusal)",

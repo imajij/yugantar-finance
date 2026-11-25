@@ -12,6 +12,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { notify } from "@/lib/services/notifications";
 import { formatPaise } from "@/lib/money";
+import { PAYABLE_MILESTONE } from "@/lib/queries/vendor-payable";
 import { recordRun, type JobResult } from "./index";
 
 interface DigestRow {
@@ -45,9 +46,7 @@ async function digestFacts(): Promise<DigestRow[]> {
         where r.fest_id = f.id and r.deleted_at is null and r.status = 'APPROVED')
       + (select count(*)::int from vendor_milestones m
            join vendor_requests vr on vr.id = m.vendor_request_id
-         where vr.fest_id = f.id and vr.deleted_at is null and m.paid_at is null
-           and ((m.kind = 'ADVANCE' and vr.status = 'APPROVED')
-             or (m.kind <> 'ADVANCE' and vr.status = 'BALANCE_APPROVED')))                as pending_payments,
+         where vr.fest_id = f.id and vr.deleted_at is null and ${PAYABLE_MILESTONE})       as pending_payments,
       (select coalesce(sum(r.amount_paise), 0)::bigint from reimbursement_requests r
         where r.fest_id = f.id and r.deleted_at is null and r.status = 'APPROVED')        as payable_paise,
       (select count(*)::int from flags fl

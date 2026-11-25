@@ -113,6 +113,13 @@
       "when": 1788000000000,
       "tag": "0015_claim_payment_proof",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1788010000000,
+      "tag": "0016_vendor_payments",
+      "breakpoints": true
     }
   ]
 }
