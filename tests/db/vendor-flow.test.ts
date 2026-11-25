@@ -15,6 +15,13 @@ import {
 } from "@/lib/services/vendors";
 import { lineItemTotals } from "@/lib/queries/budget";
 import { departmentsForExpenses, expensesAddedForOthers } from "@/lib/queries/department-expenses";
+import { addVendorDocuments, addVendorRequestDocuments, listVendorDocuments } from "@/lib/services/vendor-documents";
+import { attachmentUrl as urlFor, removeAttachment as removeFile } from "@/lib/services/attachments";
+import type { SessionUser } from "@/lib/session";
+
+// The attachment service takes a signed-in user; these fixtures are bare actors.
+const removeAttachment = (a: Actor, id: string) => removeFile(a as SessionUser, id);
+const attachmentUrl = (a: Actor, id: string) => urlFor(a as SessionUser, id);
 import { dropFests } from "@/lib/test-support";
 
 afterAll(() => dropFests(db, "vend-"));
@@ -629,4 +636,59 @@ test("Department expenses lists the other departments and what Finance added for
   for (const actor of [techHod, member, mgmt]) {
     await expect(departmentsForExpenses(actor), actor.role).rejects.toMatchObject({ code: "FORBIDDEN" });
   }
+});
+
+/*
+ * Documents added later. A vendor request gains a revised invoice after approval,
+ * on its timeline, and keeps it: taking a file off a submitted request is refused.
+ */
+test("documents can be added to a vendor request after it is raised, and stay on it", async () => {
+  const req = await createVendorRequest(techHod, request({ submit: true }));
+  await transitionVendorRequest(finance, req.id, "APPROVE");
+
+  const invoice = await attachment(finance, "OTHER");
+  await expect(addVendorRequestDocuments(finance, req.id, { attachmentIds: [invoice], kind: "INVOICE" }))
+    .resolves.toEqual({ added: 1 });
+
+  const detail = await getVendorRequestDetail(finance, req.id);
+  expect(detail.attachments.find((a) => a.id === invoice)?.purpose).toBe("INVOICE");
+  expect(detail.timeline.some((e) => e.action === "vendor_request.document.add" && e.reason?.includes("(invoice)"))).toBe(true);
+
+  // The department's head may add too; Management and Members may not.
+  const po = await attachment(techHod, "OTHER");
+  await expect(addVendorRequestDocuments(techHod, req.id, { attachmentIds: [po], kind: "PO" })).resolves.toEqual({ added: 1 });
+  for (const actor of [mgmt, member]) {
+    const f = await attachment(actor, "OTHER");
+    await expect(addVendorRequestDocuments(actor, req.id, { attachmentIds: [f], kind: "OTHER" }), actor.role)
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+  }
+
+  // Added is final once the request is past its draft: nobody quietly takes it back off.
+  await expect(removeAttachment(finance, invoice)).rejects.toMatchObject({ code: expect.stringMatching(/FORBIDDEN|VALIDATION_ERROR/) });
+
+  // Somebody else's upload cannot be bound by you.
+  const theirs = await attachment(techHod, "OTHER");
+  await expect(addVendorRequestDocuments(finance, req.id, { attachmentIds: [theirs], kind: "OTHER" }))
+    .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+});
+
+/*
+ * A vendor's own papers. They carry its bank account, so only Finance and
+ * Management see them; only Finance files or removes them.
+ */
+test("a vendor's documents are Finance's to file and Finance and Management's to see", async () => {
+  const mou = await attachment(finance, "OTHER");
+  await addVendorDocuments(finance, vendorId, { attachmentIds: [mou], kind: "MOU" });
+
+  expect((await listVendorDocuments(finance, vendorId)).map((d) => [d.id, d.purpose])).toEqual([[mou, "MOU"]]);
+  expect(await listVendorDocuments(mgmt, vendorId)).toHaveLength(1);
+  await expect(listVendorDocuments(techHod, vendorId)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await expect(attachmentUrl(techHod, mou)).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+  const hodFile = await attachment(techHod, "OTHER");
+  await expect(addVendorDocuments(techHod, vendorId, { attachmentIds: [hodFile], kind: "OTHER" }))
+    .rejects.toMatchObject({ code: "FORBIDDEN" });
+
+  await removeAttachment(finance, mou);
+  expect(await listVendorDocuments(finance, vendorId)).toHaveLength(0);
 });

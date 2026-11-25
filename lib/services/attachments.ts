@@ -29,6 +29,7 @@ export const MAX_PER_ENTITY: Partial<Record<EntityType, number>> = {
   REIMBURSEMENT: 5,
   LINE_ITEM: 10,
   VENDOR_REQUEST: 10,
+  VENDOR: 20,
   TICKET: 5,
   INCOME_ENTRY: 5,
   MESSAGE: 5,
@@ -64,7 +65,9 @@ export async function assertCanSee(actor: SessionUser, row: AttachmentRow): Prom
 
   const type = row.entityType as EntityType;
   const resource = await resolveEntity(actor.festId, type, row.entityId);
-  if (!can(actor, VIEW_ACTION[type], resource)) {
+  // A vendor's documents carry its bank account, so they are seen by those who see that.
+  const action = type === "VENDOR" ? "vendor.document.view" : VIEW_ACTION[type];
+  if (!can(actor, action, resource)) {
     throw new ApiError("FORBIDDEN", "You cannot see the record this file belongs to");
   }
 }
@@ -77,6 +80,7 @@ async function assertCanRemove(actor: SessionUser, row: AttachmentRow): Promise<
     const resource = await resolveEntity(actor.festId, "LINE_ITEM", row.entityId);
     if (can(actor, "lineItem.document.manage", resource)) return;
   }
+  if (row.entityType === "VENDOR" && can(actor, "vendor.document.manage", { festId: actor.festId })) return;
 
   if (row.uploadedBy !== actor.id) {
     throw new ApiError("FORBIDDEN", "Only the person who uploaded a file can remove it");
@@ -347,7 +351,7 @@ export async function removeAttachment(actor: SessionUser, id: string) {
  * Runs inside the creating transaction so a request never exists without its receipt.
  */
 export async function bindAttachments(
-  tx: Tx, actor: SessionUser, ids: string[], type: EntityType, entityId: string,
+  tx: Tx, actor: Pick<SessionUser, "id" | "festId">, ids: string[], type: EntityType, entityId: string,
 ): Promise<number> {
   if (ids.length === 0) return 0;
 

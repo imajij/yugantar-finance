@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { formatPaise } from "@/lib/money";
 import { Required } from "@/components/ui";
+import { FileUpload, type Uploaded } from "@/components/file-upload";
 
 const INPUT = "mt-1 w-full rounded-lg px-3 py-2.5 text-sm bg-[var(--yg-bg-app)] border border-[var(--yg-surface-2)] text-[var(--yg-text)]";
 
@@ -26,6 +27,7 @@ export function VendorRequestForm({ vendors, lineItems, canApprove, anyDepartmen
   const [total, setTotal] = useState("");
   const [advancePct, setAdvancePct] = useState(50);
   const [lineItemId, setLineItemId] = useState("");
+  const [documents, setDocuments] = useState<Uploaded[]>([]);
 
   const totalPaise = Math.round(Number(total || 0) * 100);
   const advancePaise = Math.round((totalPaise * advancePct) / 100);
@@ -52,6 +54,7 @@ export function VendorRequestForm({ vendors, lineItems, canApprove, anyDepartmen
           { kind: "BALANCE", planned_paise: balancePaise },
         ],
         expected_delivery_on: String(f.get("expected_delivery_on") ?? "") || null,
+        attachment_ids: documents.map((d) => d.id),
         submit: true,
       }),
     });
@@ -143,6 +146,15 @@ export function VendorRequestForm({ vendors, lineItems, canApprove, anyDepartmen
       <Field label="Expected delivery" hint="Optional — drives the overdue-delivery flag.">
         <input name="expected_delivery_on" type="date" className={INPUT} />
       </Field>
+
+      <FileUpload
+        files={documents}
+        onChange={setDocuments}
+        max={10}
+        purpose="QUOTE"
+        label="Quote, invoice or MoU"
+        hint="What the vendor sent, so whoever approves can check the amount. JPG, PNG, HEIC or PDF, up to 10 MB each. More can be added later from the request."
+      />
 
       <button
         type="submit" disabled={busy || totalPaise <= 0}

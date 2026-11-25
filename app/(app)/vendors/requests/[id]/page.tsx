@@ -10,6 +10,7 @@ import { RaiseConcern } from "@/components/raise-flag";
 import { TransitionActions } from "@/components/transitions";
 import { Timeline } from "@/components/timeline";
 import { CommentThread } from "@/components/comments";
+import { AddDocuments } from "@/components/add-documents";
 import { RecordVendorPayment, type Payable } from "./record-payment";
 
 const PAYMENT_ACTIONS = ["RECORD_ADVANCE", "RECORD_BALANCE", "RECORD_REMAINING"];
@@ -68,6 +69,9 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
 
   // Linked through the API rather than to a signed URL minted here — the signature
   // is short-lived and would go stale on a page somebody left open.
+  // Adding is allowed after submission; taking a file off is not (attachments.ts).
+  const canAddDocuments = can(user, "vendorRequest.document.add", resource);
+
   const files = r.attachments
     .filter((a) => a.storageKey)
     .map((a) => ({ id: a.id, name: a.fileName ?? "file", purpose: a.purpose }));
@@ -217,9 +221,12 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
         </Card>
       )}
 
-      {files.length > 0 && (
+      {(files.length > 0 || canAddDocuments) && (
         <Card className="mt-4">
           <h2 className="font-display text-sm">Documents</h2>
+          {files.length === 0 && (
+            <p className="mt-2 text-sm text-text-muted">No quote or invoice is attached yet.</p>
+          )}
           <ul className="mt-2 space-y-1 text-sm">
             {files.map((f) => (
               <li key={f.id}>
@@ -231,13 +238,27 @@ export default async function VendorRequestPage({ params }: { params: Promise<{ 
                 >
                   {f.name}
                 </a>
-                <span className="ml-2 text-xs text-text-muted">{f.purpose?.toLowerCase()}</span>
+                <span className="ml-2 text-xs text-text-muted">{DOCUMENT_KIND[f.purpose ?? ""] ?? f.purpose?.toLowerCase()}</span>
               </li>
             ))}
           </ul>
           <p className="mt-2 text-xs text-text-muted">
             Documents are kept for the life of the fest. Each open is checked and logged.
           </p>
+          {canAddDocuments && (
+            <AddDocuments
+              endpoint={`/api/v1/vendor-requests/${r.id}/documents`}
+              kinds={[
+                { value: "INVOICE", label: "Invoice" },
+                { value: "QUOTE", label: "Quote" },
+                { value: "PO", label: "Purchase order" },
+                { value: "DELIVERY_PROOF", label: "Delivery proof" },
+                { value: "OTHER", label: "Something else" },
+              ]}
+              max={10 - files.length}
+              hint="A revised invoice, a purchase order, a delivery note. Added files stay on the request and show on its timeline. JPG, PNG, HEIC or PDF, up to 10 MB each."
+            />
+          )}
         </Card>
       )}
 
@@ -277,3 +298,8 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     </div>
   );
 }
+
+const DOCUMENT_KIND: Record<string, string> = {
+  QUOTE: "quote", INVOICE: "invoice", PO: "purchase order", DELIVERY_PROOF: "delivery proof",
+  PAYMENT_PROOF: "payment receipt", OTHER: "document",
+};

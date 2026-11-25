@@ -31,6 +31,8 @@ function humanAction(action: string): string {
   if (action.endsWith(".update")) return "Edited";
   if (action.endsWith(".submit")) return "Submitted";
   if (action.endsWith(".tranche.record")) return "Money received";
+  if (action.endsWith(".document.add")) return "Documents added";
+  if (action === "attachment.remove") return "Document removed";
   return action;
 }
 

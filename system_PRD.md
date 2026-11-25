@@ -314,6 +314,8 @@ Covers anything where money goes to an outside party in stages — sound/light r
 - A payment is marked as paying its milestone in full or in part. A part payment moves only what was paid from Committed to Spent; the rest stays Committed and owed, and the milestone offers a "remaining payment" — with its own reference, date and receipt — until it is paid off. Each payment is kept separately (`vendor_payments`). A payment can never exceed what is owed on the milestone; settling for less than agreed is still done by reducing the approved value at release, with a reason.
 - An invoice total that differs from the approved value raises a High flag (F9) before balance release.
 - A refund received on a cancelled request is recorded against the line item and reduces Spent.
+- Documents. The request form takes the vendor's quote, invoice or MoU (up to 10 files). After the request is raised, whoever raised it, its department's HOD and Finance can add more (an invoice, purchase order, delivery proof or other), each marked with what it is and recorded on the request's timeline. Files can be added in any state but removed only while the request is a draft or sent back, so the set a reviewer relied on never shrinks.
+- A vendor's own papers (MoU, GST certificate, bank proof) are kept on the vendor, up to 20. Finance files and removes them; Finance and Management see them. Department HODs do not, because these documents carry the vendor's bank details (20.7).
 
 ### 7.4 Income tracking
 
@@ -1508,6 +1510,8 @@ Transition actions (7.2):
 | GET | `/vendor-requests` | H own dept; F, Mg all | Filters: `status`, `department_id`, `vendor_id`, `overdue=1` |
 | POST | `/vendor-requests` | H, F | `vendor_id | vendor: {…}`, `line_item_id, description, total_value_paise, milestones: [{ kind, planned_paise }], expected_delivery_on, attachment_ids[]` (quote / PO). `submit: true` to submit directly |
 | GET | `/vendor-requests/{id}` | as list | Full record with milestones |
+| POST | `/vendor-requests/{id}/documents` | requester, H own dept, F | `attachment_ids[]`, `kind: INVOICE | QUOTE | PO | DELIVERY_PROOF | OTHER`. Adds files in any state, audited on the request's timeline |
+| GET · POST | `/vendors/{id}/documents` | GET F, Mg · POST F | The vendor's own papers. POST: `attachment_ids[]`, `kind: MOU | INVOICE | QUOTE | OTHER`. Removed with DELETE `/attachments/{id}` (F) |
 | PATCH | `/vendor-requests/{id}` | requester, in DRAFT / SENT_BACK | Any field including milestones |
 | POST | `/vendor-requests/{id}/transitions` | see table | State change |
 

@@ -79,6 +79,7 @@ export type Action =
   | "vendor.manage" | "vendor.delete" | "vendorRequest.create" | "vendorRequest.edit"
   | "vendorRequest.approve" | "vendorRequest.confirmDelivery" | "vendorRequest.recordPayment"
   | "expense.forAnyDepartment"
+  | "vendorRequest.document.add" | "vendor.document.view" | "vendor.document.manage"
   | "income.manage"
   // writes — everything else
   | "ticket.create" | "ticket.triage" | "ticket.work" | "ticket.close" | "ticket.plan"
@@ -355,6 +356,24 @@ export function can(actor: Actor, action: Action, resource: Resource = {}): bool
 
     case "vendorRequest.confirmDelivery":
       return finance || (hod && own);
+
+    case "vendorRequest.document.add":
+      /*
+       * Adding a document to a vendor request after it was raised — a revised
+       * invoice, a purchase order, a delivery note. Whoever raised it, its
+       * department's head, and Finance. Adding only: taking a file off a submitted
+       * request is still refused (attachments.ts), and each addition is on the
+       * request's timeline, so a reviewer can see the set grew.
+       */
+      return finance || (hod && own) || resource.submitterId === actor.id;
+
+    case "vendor.document.view":
+      // A vendor's own papers — MoU, invoices, GST and bank proof — carry its bank
+      // account, so they follow the bank details (20.7), not `vendor.view`.
+      return finance || management;
+
+    case "vendor.document.manage":
+      return finance;
 
     case "expense.forAnyDepartment":
       /*

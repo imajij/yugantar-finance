@@ -70,6 +70,13 @@ const MATRIX: [Action, Resource, Actor[]][] = [
   // The Department expenses section: Finance adds spend to any department's budget.
   ["expense.forAnyDepartment", { festId: FEST }, [finance]],
   ["expense.forAnyDepartment", { festId: FEST, departmentId: LOGISTICS }, [finance]],
+  // Adding a document to a vendor request: its department's head and Finance (and
+  // whoever raised it — below). Never Management, never a Member.
+  ["vendorRequest.document.add", techResource, [hod, finance]],
+  ["vendorRequest.document.add", { festId: FEST, departmentId: TECH, submitterId: member.id }, [member, hod, finance]],
+  // A vendor's own papers carry its bank account, so they follow the bank details.
+  ["vendor.document.view", { festId: FEST }, [finance, mgmt]],
+  ["vendor.document.manage", { festId: FEST }, [finance]],
   ["user.manage", { festId: FEST }, [finance]],
   ["expenseType.manage", { festId: FEST }, [finance]],
   ["flag.view", techResource, [hod, finance, superAdmin]],
@@ -182,7 +189,7 @@ describe("department scoping", () => {
       "reimbursement.approve", "reimbursement.endorse", "reimbursement.recordPayment",
       "reimbursement.hold", "fest.manage", "user.manage", "income.manage", "flag.resolve",
       "lineItem.markReviewed", "vendorRequest.approve", "department.manage",
-      "vendor.bankDetails.view",
+      "vendor.bankDetails.view", "vendor.document.view",
     ] as const) {
       expect(can(superAdmin, action, techResource), action).toBe(false);
     }
